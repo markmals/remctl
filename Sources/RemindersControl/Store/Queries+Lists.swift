@@ -102,16 +102,55 @@ public func normalizeListLookupName(_ name: String) -> String {
     return String(parts).trimmingCharacters(in: .whitespaces)
 }
 
+extension RemindersStore {
+    /// q_sections(list_pk): a list's sections, ordered by Z_PK.
+    public func sectionsForList(_ pk: Int) -> [Row] {
+        (try? queue.read { try Row.fetchAll($0, sql:
+            "SELECT Z_PK, ZDISPLAYNAME, ZLIST, ZCKIDENTIFIER FROM ZREMCDBASESECTION WHERE ZMARKEDFORDELETION = 0 AND ZLIST = ? ORDER BY Z_PK", arguments: [pk]) }) ?? []
+    }
+
+    /// q_section_memberships: reminder ZCKIDENTIFIER -> section ZDISPLAYNAME (from the list membership blob).
+    public func sectionMemberships(_ pk: Int) -> [String: String] {
+        let blobRow = try? queue.read { try Row.fetchOne($0, sql:
+            "SELECT ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [pk]) }
+        guard let blob = blobRow?.blobString("ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA"),
+              let data = blob.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let memberships = obj["memberships"] as? [[String: Any]] else { return [:] }
+        // section ckid -> display name (separate read, sequential — not nested)
+        let secRows = (try? queue.read { try Row.fetchAll($0, sql:
+            "SELECT ZCKIDENTIFIER, ZDISPLAYNAME FROM ZREMCDBASESECTION WHERE ZLIST = ? AND ZMARKEDFORDELETION = 0", arguments: [pk]) }) ?? []
+        var g2n: [String: String] = [:]
+        for r in secRows { if let ck = r.string("ZCKIDENTIFIER") { g2n[ck] = r.string("ZDISPLAYNAME") } }
+        var result: [String: String] = [:]
+        for m in memberships {
+            guard let groupID = m["groupID"] as? String, let memberID = m["memberID"] as? String,
+                  let name = g2n[groupID] else { continue }
+            result[memberID] = name
+        }
+        return result
+    }
+
+    /// Whether a list (by Z_PK) is a grocery list.
+    public func listIsGroceries(_ pk: Int) -> Bool {
+        ((try? queue.read { try Int.fetchOne($0, sql:
+            "SELECT ZSHOULDCATEGORIZEGROCERYITEMS FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [pk]) }) ?? nil ?? 0) != 0
+    }
+}
+
 /// Command-level helper mirroring resolve_required_list_target_or_die — throws CLIError
-/// (Dispatch.runRead prints "Error: <msg>" + exit 1). Returns the resolved list Z_PK.
-public func resolveRequiredListTarget(store: RemindersStore, name: String?, listId: Int?) throws -> Int {
+/// (Dispatch.runRead prints "Error: <msg>" + exit 1). Returns the resolved list.
+public func resolveRequiredListTarget(store: RemindersStore, name: String?, listId: Int?) throws -> (id: Int, title: String, objectUUID: String?) {
+    if name == nil && listId == nil {
+        throw CLIError("pass a list name or --list-id.")
+    }
     if name != nil && listId != nil {
         throw CLIError("pass either a list name or --list-id, not both.")
     }
     let requested = listId != nil ? "id \(listId!)" : (name ?? "")
     switch store.resolveListRef(name: name, listId: listId) {
-    case .found(let id, _, _):
-        return id
+    case .found(let id, let title, let uuid):
+        return (id, title, uuid)
     case .ambiguous(let candidates):
         let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
         throw CLIError("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)")

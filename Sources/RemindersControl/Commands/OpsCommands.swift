@@ -19,7 +19,7 @@ struct Export: ParsableCommand {
         Dispatch.runRead { store in
             let items: [Row]
             if list != nil || listId != nil {
-                let pk = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+                let pk = try resolveRequiredListTarget(store: store, name: list, listId: listId).id
                 items = store.reminders(listPk: pk, completed: true, topLevel: false, limit: 10000)
             } else {
                 items = store.reminders(completed: true, topLevel: false, limit: 10000)

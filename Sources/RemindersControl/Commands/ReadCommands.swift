@@ -1,5 +1,7 @@
 import ArgumentParser
 import Foundation
+import GRDB
+import Foundation
 
 let readCommands: [ParsableCommand.Type] = [
     Today.self, Upcoming.self, Overdue.self, Search.self, Flagged.self, Urgent.self,
@@ -438,9 +440,81 @@ struct Stats: ParsableCommand {
 }
 
 struct Show: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "show", abstract: "Show a single reminder.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("show") }
+    static let configuration = CommandConfiguration(commandName: "show", abstract: "Show reminders in a list.")
+    @OptionGroup var opts: ReadDisplayOptions
+    @Argument(help: "List name") var list: String?
+    @Option(name: .long, help: "Show a list by stable numeric ID") var listId: Int?
+    @Flag(name: .long, help: "Include completed reminders") var completed = false
+
+    /// Extract the "section" string value from a serialized reminder, if present.
+    private func sectionValue(_ obj: [(String, JSONValue)]) -> String? {
+        for (k, v) in obj where k == "section" { if case let .string(s) = v { return s } }
+        return nil
+    }
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+            let pk = target.id
+            let isGroceries = store.listIsGroceries(pk)
+            let items = store.reminders(listPk: pk, completed: completed, topLevel: true)
+            let secs = store.sectionsForList(pk)
+            let memberships = secs.isEmpty ? [:] : store.sectionMemberships(pk)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                var objs = serializeReminders(items, store: store, memberships: memberships)
+                if isGroceries {
+                    objs = objs.map { obj in
+                        if let section = sectionValue(obj), let emoji = groceryCategoryEmoji(section) {
+                            return obj + [("sectionEmoji", .string(emoji))]
+                        }
+                        return obj
+                    }
+                }
+                Dispatch.printJSON(.array(objs.map { .object($0) }), ensureAscii: false)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(items, ansi: ansi), ansi: ansi))
+                return
+            }
+            if items.isEmpty {
+                print("No \(completed ? "" : "active ")reminders in '\(safeDisplay(target.title))'")
+                return
+            }
+            let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })
+            func line(_ r: Row, indent: String) -> String {
+                let p = r.int("Z_PK") ?? 0
+                return fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose, indent: indent)
+            }
+            var heading = colorListName(target.title, ansi: ansi)
+            if isGroceries { heading += " \(Constants.groceryListMarker)" }
+            print("\(ansi.bold(heading)):")
+            if !secs.isEmpty {
+                var secItems: [String: [Row]] = [:]
+                var unsectioned: [Row] = []
+                for item in items {
+                    if let sn = item.string("ZCKIDENTIFIER").flatMap({ memberships[$0] }) {
+                        secItems[sn, default: []].append(item)
+                    } else {
+                        unsectioned.append(item)
+                    }
+                }
+                for item in unsectioned { print(line(item, indent: "")) }
+                for sn in secs.map({ $0.string("ZDISPLAYNAME") ?? "" }) {
+                    guard let group = secItems[sn] else { continue }
+                    let h = safeDisplay(formatGrocerySectionName(sn, isGroceries: isGroceries))
+                    print("\n  \(ansi.bold("[\(h)]"))")
+                    for item in group { print(line(item, indent: "  ")) }
+                }
+            } else {
+                for item in items { print(line(item, indent: "")) }
+            }
+            let n = items.count
+            print("\n\(n) reminder\(n == 1 ? "" : "s")")
+        }
+    }
 }
 
 struct Info: ParsableCommand {
