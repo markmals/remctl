@@ -44,7 +44,14 @@ let package = Package(
         ),
         .testTarget(
             name: "RemindersControlTests",
-            dependencies: ["RemindersControl"]
+            dependencies: ["RemindersControl"],
+            // Explicit lowercase path. The repo still carries the old Python
+            // suite in `tests/`, so the default `Tests/` lookup is ambiguous on
+            // case-insensitive macOS and would not resolve on a case-sensitive
+            // filesystem (the files are git-tracked under lowercase `tests/`).
+            // Pinning the real path keeps the build deterministic everywhere.
+            // Phase 5 removes the Python suite and can restore the `Tests/` norm.
+            path: "tests/RemindersControlTests"
         ),
     ]
 )
