@@ -95,6 +95,7 @@ public enum OrderedJSON {
             }
         }
         let result = parseValue(); skipWS()
+        guard i == scalars.count else { return nil }
         return result
     }
 }

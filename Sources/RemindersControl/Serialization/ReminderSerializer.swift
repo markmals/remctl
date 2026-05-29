@@ -49,8 +49,14 @@ public func recurrenceFromRow(_ row: ReminderRow, ts: (Double) -> String?) -> [(
         // Python: `if isinstance(item, dict) and item.get("dayOfTheWeek")` — 0 is falsey, skipped.
         let nums: [JSONValue] = items.compactMap { item in
             guard case let .object(pairs) = item,
-                  let dow = pairs.first(where: { $0.0 == "dayOfTheWeek" })?.1,
-                  case let .int(n) = dow, n != 0 else { return nil }
+                  let dow = pairs.first(where: { $0.0 == "dayOfTheWeek" })?.1 else { return nil }
+            let n: Int
+            switch dow {
+            case let .int(i): n = i
+            case let .double(d): n = Int(d)
+            default: return nil
+            }
+            guard n != 0 else { return nil }
             return .int(n)
         }
         out.append(("daysOfWeek", .array(nums)))
