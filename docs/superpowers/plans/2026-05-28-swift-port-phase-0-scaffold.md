@@ -512,7 +512,7 @@ import ArgumentParser
 
 let writeCommands: [ParsableCommand.Type] = [
     Add.self, Edit.self, Done.self, Undone.self, Delete.self,
-    Flag.self, Unflag.self, Link.self, Open.self,
+    FlagCmd.self, Unflag.self, Link.self, Open.self,
 ]
 
 struct Add: ParsableCommand {
@@ -545,7 +545,8 @@ struct Delete: ParsableCommand {
     func run() throws { throw NotImplemented("delete") }
 }
 
-struct Flag: ParsableCommand {
+// `FlagCmd` not `Flag` — `Flag` is ArgumentParser's property-wrapper type.
+struct FlagCmd: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "flag", abstract: "Flag a reminder.")
     @OptionGroup var output: JSONOptions
     func run() throws { throw NotImplemented("flag") }
@@ -946,7 +947,7 @@ Create `Sources/RemindersControl/Commands/OpsCommands.swift`:
 import ArgumentParser
 
 let opsCommands: [ParsableCommand.Type] = [
-    Export.self, Import.self, Completion.self, Doctor.self, Onboard.self, Permissions.self, Setup.self,
+    Export.self, Import.self, CompletionCmd.self, Doctor.self, Onboard.self, Permissions.self, Setup.self,
 ]
 
 struct Export: ParsableCommand {
@@ -961,7 +962,8 @@ struct Import: ParsableCommand {
     func run() throws { throw NotImplemented("import") }
 }
 
-struct Completion: ParsableCommand {
+// `CompletionCmd` not `Completion` — keeps clear of ArgumentParser completion machinery.
+struct CompletionCmd: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "completion", abstract: "Print a shell completion script.")
     @OptionGroup var output: JSONOptions
     func run() throws { throw NotImplemented("completion") }
