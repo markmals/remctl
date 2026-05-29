@@ -36,6 +36,36 @@ import Foundation
     }
 }
 
+@Suite struct PathsTests {
+    @Test func storeDirHonorsEnvOverride() {
+        #expect(Paths.resolveStoreDir(env: ["REMCTL_STORE_DIR": "/tmp/custom-store"]).path == "/tmp/custom-store")
+    }
+    @Test func storeDirEmptyEnvIsUnset() {
+        #expect(Paths.resolveStoreDir(env: ["REMCTL_STORE_DIR": ""]).path
+            .hasSuffix("Library/Group Containers/group.com.apple.reminders/Container_v1/Stores"))
+    }
+    @Test func storeDirDefault() {
+        #expect(Paths.resolveStoreDir(env: [:]).path
+            .hasSuffix("Library/Group Containers/group.com.apple.reminders/Container_v1/Stores"))
+    }
+    @Test func configDirPrecedence() {
+        #expect(Paths.resolveConfigDir(env: ["REMCTL_CONFIG_DIR": "/c"]).path == "/c")
+        #expect(Paths.resolveConfigDir(env: ["XDG_CONFIG_HOME": "/x"]).path == "/x/remctl")
+        #expect(Paths.resolveConfigDir(env: [:]).path.hasSuffix(".config/remctl"))
+    }
+    @Test func findMainDBPicksLargest() throws {
+        let tmp = try makeTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        try Data(count: 10).write(to: tmp.appendingPathComponent("Data-A.sqlite"))
+        try Data(count: 9999).write(to: tmp.appendingPathComponent("Data-B.sqlite"))
+        try "x".data(using: .utf8)!.write(to: tmp.appendingPathComponent("ignore.txt"))
+        #expect(Paths.findMainDBPath(storeDir: tmp)?.lastPathComponent == "Data-B.sqlite")
+    }
+    @Test func findMainDBThrowsWhenNone() throws {
+        let tmp = try makeTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        #expect(throws: RemindersDBUnavailable.self) { _ = try Paths.findMainDB(storeDir: tmp) }
+    }
+}
+
 @Suite struct DateWindowTests {
     private func cal() -> Calendar {
         var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "Europe/Rome")!; return c
