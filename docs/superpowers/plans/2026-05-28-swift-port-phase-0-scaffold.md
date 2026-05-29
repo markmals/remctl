@@ -138,6 +138,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 This proves the single hardest build risk — linking `/System/Library/PrivateFrameworks/ReminderKit` into the binary — before any private logic is ported (that is Phase 3).
 
+> **Execution note (added during execution):** SwiftPM errors if any declared target has no source files. The `RemindersControl` library and `remctl` executable targets stay empty until Task 3, so the first `swift build`/`swift test` cannot succeed until Task 3's sources also exist. Therefore **Tasks 2 and 3 are implemented together in one bring-up pass**, and the `swift test` verification steps below are run after Task 3's sources are in place.
+
 **Files:**
 - Create: `Sources/ReminderKitPrivate/include/ReminderKitPrivate.h`
 - Create: `Sources/ReminderKitPrivate/ReminderKitPrivate.m`
@@ -215,6 +217,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 3: Library root command, global options, executable entry point
+
+> **Execution note:** Implemented together with Task 2 (see Task 2's execution note) so the first build has all four targets populated. The combined bring-up runs `swift test` once at the end.
 
 **Files:**
 - Create: `Sources/RemindersControl/GlobalOptions.swift`
