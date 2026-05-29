@@ -44,7 +44,10 @@ let package = Package(
         ),
         .testTarget(
             name: "RemindersControlTests",
-            dependencies: ["RemindersControl"],
+            // ReminderKitPrivate is listed explicitly because PrivateLinkTests
+            // imports it directly; relying on the transitive edge through
+            // RemindersControl would break if that edge ever changes.
+            dependencies: ["RemindersControl", "ReminderKitPrivate"],
             // Explicit lowercase path. The repo still carries the old Python
             // suite in `tests/`, so the default `Tests/` lookup is ambiguous on
             // case-insensitive macOS and would not resolve on a case-sensitive
