@@ -172,6 +172,52 @@ import GRDB
     }
 }
 
+@Suite struct ExtrasQueryTests {
+    private func store(_ build: (Database) throws -> Void) throws -> (RemindersStore, URL) {
+        let dir = try FixtureDB.tempStore { db in try FixtureDB.createRemindersSchema(db); try build(db) }
+        return (try RemindersStore.open(storeDir: dir), dir)
+    }
+    @Test func hashtagsForReminder() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDHASHTAGLABEL (Z_PK,ZNAME) VALUES (1,'work'),(2,'home');
+            INSERT INTO ZREMCDOBJECT (Z_PK,ZREMINDER3,ZHASHTAGLABEL) VALUES (10,42,1),(11,42,2);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.hashtags(pk: 42) == ["work","home"])  // row order
+        #expect(s.hashtags(pk: 99) == [])
+    }
+    @Test func attachmentsUnionImageAndFile() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDSAVEDATTACHMENT (Z_PK,ZREMINDER,ZFILENAME,ZUTI,ZATTACHMENTTYPERAWVALUE,ZMARKEDFORDELETION) VALUES (1,42,'a.pdf','com.adobe.pdf','file',0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,ZREMINDER2,ZFILENAME,ZUTI,ZWIDTH,ZHEIGHT,ZMARKEDFORDELETION) VALUES (2,42,'b.png','public.png',100,100,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rows = s.attachments(pk: 42)
+        // ORDER BY ZFILENAME -> a.pdf, b.png
+        #expect(rows.map { $0.string("ZFILENAME")! } == ["a.pdf","b.png"])
+        #expect(rows[0].string("ZATTACHMENTTYPERAWVALUE") == "file")
+        #expect(rows[1].string("ZATTACHMENTTYPERAWVALUE") == "image")  // derived from ZWIDTH/ZHEIGHT
+    }
+    @Test func alarmsRelativeTriggerJoin() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            -- alarm object (Z_ENT=15) referencing a trigger object via ZTRIGGER
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (5,15,42,6,0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,ZTIMEINTERVAL,ZMARKEDFORDELETION) VALUES (6,-600,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rows = s.alarms(pk: 42)
+        #expect(rows.count == 1)
+        #expect(rows[0].int("alarm_id") == 5)
+        #expect(rows[0].double("time_interval") == -600)
+    }
+}
+
 @Suite struct StoreOpenTests {
     @Test func opensReadOnlyAndProbesColumns() throws {
         let dir = try FixtureDB.tempStore { try FixtureDB.createRemindersSchema($0) }

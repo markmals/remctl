@@ -31,3 +31,33 @@ extension RemindersStore {
         }
     }
 }
+
+extension RemindersStore {
+    /// q_hashtags — tag names for one reminder via ZREMCDOBJECT.ZREMINDER3 join ZREMCDHASHTAGLABEL.
+    public func hashtags(pk: Int) -> [String] {
+        (try? queue.read { try String.fetchAll($0, sql:
+            "SELECT h.ZNAME FROM ZREMCDOBJECT o JOIN ZREMCDHASHTAGLABEL h ON o.ZHASHTAGLABEL = h.Z_PK WHERE o.ZREMINDER3 = ?",
+            arguments: [pk]) }) ?? []
+    }
+
+    /// q_attachments — UNION ALL of saved attachments + ZREMCDOBJECT image/file rows, ORDER BY ZFILENAME.
+    public func attachments(pk: Int) -> [Row] {
+        let sql = "SELECT ZFILENAME, ZUTI, ZATTACHMENTTYPERAWVALUE FROM ZREMCDSAVEDATTACHMENT WHERE ZREMINDER = ? AND ZMARKEDFORDELETION = 0 " +
+            "UNION ALL " +
+            "SELECT ZFILENAME, ZUTI, CASE WHEN ZWIDTH IS NOT NULL OR ZHEIGHT IS NOT NULL THEN 'image' ELSE 'file' END AS ZATTACHMENTTYPERAWVALUE " +
+            "FROM ZREMCDOBJECT WHERE ZREMINDER2 = ? AND ZFILENAME IS NOT NULL AND ZFILENAME != '' AND ZMARKEDFORDELETION = 0 " +
+            "ORDER BY ZFILENAME"
+        return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk, pk]) }) ?? []
+    }
+
+    /// q_alarms — alarm objects (Z_ENT=15) LEFT JOIN their trigger object, ORDER BY a.Z_PK.
+    public func alarms(pk: Int) -> [Row] {
+        let sql = "SELECT a.Z_PK AS alarm_id, a.ZTRIGGER AS trigger_id, t.Z_ENT AS trigger_entity, t.ZTIMEINTERVAL AS time_interval, " +
+            "t.ZDATECOMPONENTSDATA AS date_components, t.ZTITLE AS location_title, t.ZLATITUDE AS latitude, t.ZLONGITUDE AS longitude, " +
+            "t.ZRADIUS AS radius, t.ZADDRESS AS address, t.ZPROXIMITY AS proximity " +
+            "FROM ZREMCDOBJECT a LEFT JOIN ZREMCDOBJECT t ON a.ZTRIGGER = t.Z_PK " +
+            "WHERE a.ZREMINDER = ? AND a.Z_ENT = \(Zent.alarm) AND a.ZMARKEDFORDELETION = 0 AND (t.Z_PK IS NULL OR t.ZMARKEDFORDELETION = 0) " +
+            "ORDER BY a.Z_PK"
+        return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk]) }) ?? []
+    }
+}
