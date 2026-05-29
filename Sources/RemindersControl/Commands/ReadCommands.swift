@@ -517,8 +517,125 @@ struct Show: ParsableCommand {
     }
 }
 
+/// Human date format for `info`: "%b %d, %Y at %I:%M %p" -> e.g. "May 23, 2026 at 10:00 AM".
+private func infoDateString(_ appleSeconds: Double) -> String {
+    let date = Date(timeIntervalSince1970: appleSeconds + AppleEpoch.offset)
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.dateFormat = "MMM dd, yyyy 'at' hh:mm a"
+    return f.string(from: date)
+}
+
 struct Info: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "info", abstract: "Show detailed reminder info.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("info") }
+    @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+    @Flag(name: .long, help: "Disable ANSI color") var noColor = false
+
+    func run() throws {
+        Dispatch.runRead { store in
+            guard let r = store.reminder(pk: id) else {
+                FileHandle.standardError.write(Data("Error: #\(id) not found\n".utf8))
+                Foundation.exit(1)
+            }
+            let subs = store.reminders(completed: true, parentPk: id)
+            let tags = store.hashtags(pk: id)
+            let richURL = store.richLink(pk: id)
+            var sec: String? = nil
+            if let listPk = r.int("ZLIST"), listPk != 0 {
+                sec = r.string("ZCKIDENTIFIER").flatMap { store.sectionMemberships(listPk)[$0] }
+            }
+
+            if json {
+                var d = serializeReminder(r, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
+                                          section: sec, subtaskCounts: [id: store.subtaskCount(pk: id)],
+                                          hashtags: [id: tags], richLink: { store.richLink(pk: id) })
+                let atts = attachmentRowsToJSON(store.attachments(pk: id))
+                if !atts.isEmpty { d.append(("attachments", .array(atts))) }
+                let alarms = alarmRowsToJSON(store.alarms(pk: id))
+                if !alarms.isEmpty { d.append(("alarms", .array(alarms))) }
+                if !subs.isEmpty {
+                    var subObjs = serializeReminders(subs, store: store)
+                    for i in subObjs.indices {
+                        let spk = subs[i].int("Z_PK") ?? 0
+                        let sa = attachmentRowsToJSON(store.attachments(pk: spk))
+                        if !sa.isEmpty { subObjs[i].append(("attachments", .array(sa))) }
+                        let sal = alarmRowsToJSON(store.alarms(pk: spk))
+                        if !sal.isEmpty { subObjs[i].append(("alarms", .array(sal))) }
+                    }
+                    d.append(("subtasks", .array(subObjs.map { .object($0) })))
+                }
+                Dispatch.printJSON(.object(d), ensureAscii: true)
+                return
+            }
+
+            let ansi = Ansi.resolve(noColorFlag: noColor)
+            let listName = r.string("list_name")
+            print("\(ansi.bold("Reminder")) \(colorByList("#\(id)", listName: listName, ansi: ansi))")
+            print("  Title:     \(safeDisplay(r.string("ZTITLE")))")
+            print("  List:      \(colorListName(listName, ansi: ansi))")
+            if let sec, !sec.isEmpty { print("  Section:   \(ansi.bold(safeDisplay(sec)))") }
+            let completed = (r.int("ZCOMPLETED") ?? 0) != 0
+            print("  Status:    \(completed ? ansi.green("Completed") : ansi.yellow("Active"))")
+            let pri = r.int("ZPRIORITY") ?? 0
+            var priDisplay = Constants.priorityName[pri] ?? "none"
+            if pri == 1 { priDisplay = ansi.red(priDisplay) }
+            else if pri == 5 { priDisplay = ansi.yellow(priDisplay) }
+            else if pri == 9 { priDisplay = ansi.green(priDisplay) }
+            print("  Priority:  \(priDisplay)")
+            print("  Flagged:   \((r.int("ZFLAGGED") ?? 0) != 0 ? ansi.yellow("Yes") : "No")")
+            print("  Urgent:    \((r.int("ZISURGENTSTATEENABLEDFORCURRENTUSER") ?? 0) != 0 ? ansi.red("Yes") : "No")")
+            if let due = r.double("ZDUEDATE"), due != 0 { print("  Due:       \(infoDateString(due))") }
+            let early = dueDateDeltaAlertsFromRow(r, ts: { AppleEpoch.ts($0) })
+            if !early.isEmpty {
+                let labels = early.compactMap { pairs -> String? in
+                    for (k, v) in pairs where k == "label" { if case let .string(s) = v { return s } }; return nil
+                }.joined(separator: ", ")
+                print("  Early:     \(ansi.cyan(labels))")
+            }
+            if let rec = recurrenceFromRow(r, ts: { AppleEpoch.ts($0) }) {
+                let summary = recurrenceSummary(rec)
+                if !summary.isEmpty { print("  Repeats:   \(ansi.magenta(summary))") }
+            }
+            if let c = r.double("ZCREATIONDATE"), c != 0 { print("  Created:   \(infoDateString(c))") }
+            if let cd = r.double("ZCOMPLETIONDATE"), cd != 0 { print("  Completed: \(infoDateString(cd))") }
+            if let notes = r.string("ZNOTES"), !notes.isEmpty { print("  Notes:     \(safeDisplay(notes))") }
+            let url = r.string("ZICSURL").flatMap { $0.isEmpty ? nil : $0 } ?? richURL
+            if let url, !url.isEmpty { print("  URL:       \(safeDisplay(url))") }
+            if !tags.isEmpty {
+                let tagStr = tags.map { ansi.magenta("#" + safeDisplay($0)) }.joined(separator: ", ")
+                print("  Tags:      \(tagStr)")
+            }
+            if let pp = r.int("ZPARENTREMINDER"), pp != 0 {
+                let p = store.reminder(pk: pp)
+                let suffix = p.map { " (\(safeDisplay($0.string("ZTITLE"))))" } ?? ""
+                print("  Parent:    #\(pp)\(suffix)")
+            }
+            if !subs.isEmpty {
+                print("  Subtasks (\(subs.count)):")
+                let (sc, ht) = store.preloadExtras(subs.compactMap { $0.int("Z_PK") })
+                for s in subs {
+                    let spk = s.int("Z_PK") ?? 0
+                    print(fmt(s, tags: ht[spk] ?? [], subtaskCount: sc[spk] ?? 0, ansi: ansi, indent: "    "))
+                }
+            }
+            let atts = store.attachments(pk: id)
+            if !atts.isEmpty {
+                print("  Attachments (\(atts.count)):")
+                for a in atts {
+                    let fn = a.string("ZFILENAME").flatMap { $0.isEmpty ? nil : $0 } ?? "untitled"
+                    let ty = a.string("ZATTACHMENTTYPERAWVALUE").flatMap { $0.isEmpty ? nil : $0 } ?? "?"
+                    print("    - \(safeDisplay(fn)) (\(safeDisplay(ty)))")
+                }
+            }
+            let alarms = alarmRowsToJSON(store.alarms(pk: id))
+            if !alarms.isEmpty {
+                print("  Alarms (\(alarms.count)):")
+                for alarm in alarms { print("    - \(safeDisplay(alarmHumanLabel(alarm)))") }
+            }
+            if let ck = r.string("ZCKIDENTIFIER"), !ck.isEmpty {
+                print("  Deep link: \(ansi.dim(Constants.deepLinkReminderPrefix + ck))")
+            }
+        }
+    }
 }
