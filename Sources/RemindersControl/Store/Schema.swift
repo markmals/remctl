@@ -20,7 +20,7 @@ extension RemindersStore {
         reminderHasColumn("ZDISPLAYDATEDATE") ? "\(alias).ZDISPLAYDATEDATE" : "NULL"
     }
 
-    /// 11 correlated subqueries on ZREMCDOBJECT (Z_ENT=34, FK ZREMINDER4). Aliases are read by the serializer.
+    /// 10 correlated subqueries on ZREMCDOBJECT (Z_ENT=34, FK ZREMINDER4). Aliases are read by the serializer.
     var recurrenceCols: String {
         let pairs: [(String, String)] = [
             ("ZFREQUENCY", "recurrence_frequency"), ("ZINTERVAL", "recurrence_interval"),
