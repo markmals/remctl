@@ -2,7 +2,7 @@ import ArgumentParser
 
 /// Root command for the `remctl` CLI. Subcommand groups are assembled in
 /// `allSubcommands`; each group lives in its own file under `Commands/`.
-public struct RemCTL: AsyncParsableCommand {
+public struct RemindersControl: AsyncParsableCommand {
     public init() {}
 
     public static let configuration = CommandConfiguration(
