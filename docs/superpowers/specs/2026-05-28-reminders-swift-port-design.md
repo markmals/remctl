@@ -1,9 +1,9 @@
 # RemCTL → Swift Port — Design Spec
 
 - **Date:** 2026-05-28
-- **Status:** Draft (pending user review)
+- **Status:** Approved (2026-05-28)
 - **Author:** Mark Malstrom (mark@malstrom.me)
-- **Branch:** `reminders-swift-port`
+- **Branch:** `swift-port`
 - **Companion:** [`2026-05-28-reminders-cli-contract.md`](2026-05-28-reminders-cli-contract.md) — generated per-command/module/schema parity reference.
 
 ## 1. Goal
@@ -16,12 +16,12 @@ Non-goals: changing what RemCTL can do. This is a port at functional + JSON-cont
 
 | Area             | Decision                                                                      | Rationale                                                                                      |
 | ---------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Packaging        | SwiftPM package **`RemindersControl`** → one executable **`reminders`**       | Lets us use Swift Argument Parser idiomatically; one binary replaces the single Python script. |
-| CLI name         | `remctl` → **`reminders`**                                                    | Per owner direction. Formula, completion file, config dir, env vars follow.                    |
+| Packaging        | SwiftPM package **`RemindersControl`** → one executable **`remctl`**       | Lets us use Swift Argument Parser idiomatically; one binary replaces the single Python script. |
+| CLI name         | **`remctl`** (unchanged)                                                      | Kept for back-compat: env vars stay `REMCTL_*`, config stays `~/.config/remctl`. Package is `RemindersControl`. |
 | Write path       | Fold **everything in-process** (EventKit + private ReminderKit)               | One binary; no subprocess hops.                                                                |
 | `--private` flag | **Removed.** Formerly-private capabilities become first-class/unconditional   | Owner direction: the gate "doesn't seem necessary."                                            |
 | Fidelity         | Functional + JSON-contract parity; human-output polish permitted              | Existing tests/docs are the conformance spec.                                                  |
-| SQLite           | **GRDB.swift** (read-only/immutable)                                          | Owner direction; over a raw `libsqlite3` system target.                                        |
+| SQLite           | **GRDB.swift** (read-only, `?mode=ro`)                                        | Owner direction; over a raw `libsqlite3` system target.                                        |
 | Private Obj-C    | Reuse `remctl-private.m` as an internal **`ReminderKitPrivate`** Obj-C target | Don't re-derive 1,429 lines of fragile private-API glue.                                       |
 | Tests            | Port `tests/*.py` to **Swift Testing**                                        | Single-language verification surface.                                                          |
 | Distribution     | **Homebrew** via `markmals/homebrew-tap`, CI-built bottles                    | Owner's existing tap + bottle pipeline.                                                        |
@@ -29,17 +29,17 @@ Non-goals: changing what RemCTL can do. This is a port at functional + JSON-cont
 
 ## 3. Architecture
 
-One SwiftPM package, one product binary `reminders`. macOS-only.
+One SwiftPM package, one product binary `remctl`. macOS-only.
 
 ```text
-RemindersControl/                swift build -c release → ONE binary `reminders`
+RemindersControl/                swift build -c release → ONE binary `remctl`
 ├─ Package.swift                 swift-tools-version pinned for macos-15 + macos-26 runners
 │                                deps: swift-argument-parser, GRDB.swift
 │                                linker: -framework EventKit, AppKit,
 │                                        -F/System/Library/PrivateFrameworks -framework ReminderKit
 ├─ Sources/
-│  ├─ reminders/                 executable target (Swift)
-│  │   ├─ Reminders.swift        ParsableCommand root + 45 subcommands
+│  ├─ remctl/                    executable target (Swift)
+│  │   ├─ RemCTL.swift           ParsableCommand root + 45 subcommands
 │  │   ├─ Commands/              one file per command group
 │  │   ├─ Runtime/               ← remctl_runtime.py   (paths, env, URL-safety, date windows)
 │  │   ├─ Serialization/         ← remctl_serialization.py (Reminder→JSON, recurrence, early reminders)
@@ -83,7 +83,7 @@ Each Swift unit replaces a specific Python source, so parity is checkable file-b
 | `sqlite3`                                                            | GRDB read-only `DatabaseQueue`, `?mode=ro` open.                                                                                                          |
 | optional `parsedatetime`                                             | Foundation `NSDataDetector` for natural-language dates + explicit ISO/relative parsing. **Same graceful fallback** when a phrase won't parse.             |
 | `argparse`                                                           | Swift Argument Parser.                                                                                                                                    |
-| `completion`/`setup` machinery                                       | ArgumentParser native completion-script generation, **shimmed** so `reminders completion zsh` still emits a script (`install.sh` and the tap rely on it). |
+| `completion`/`setup` machinery                                       | ArgumentParser native completion-script generation, **shimmed** so `remctl completion zsh` still emits a script (`install.sh` and the tap rely on it). |
 | runtime `swift -` asset extraction (`list-symbols --preview/--html`) | done in-process against RemindersUICore.                                                                                                                  |
 | `subprocess` to bridge/private                                       | direct in-process API calls.                                                                                                                              |
 
@@ -94,7 +94,7 @@ These are the deliberate deviations. Everything else is parity.
 1. **`--private` removed.** Capabilities formerly gated behind `--private` (rich URL/subtask/image attachments, real flag/urgent state, Early Reminders, location alarms, list appearance/pin, Groceries metadata, smart-list CRUD, templates) become first-class. Where a command currently forks public-vs-private on the flag, the Swift version defaults to the **richer** behavior:
     - `--url`: creates a real rich attachment for safe `http(s)` targets (subject to the existing `is_safe_remote_url` gate); falls back to a notes URL for non-`http(s)`/unsafe targets.
     - The full per-command fork list will be enumerated from the contract reference and is a spec-review checkpoint (§9).
-2. **Rename `remctl` → `reminders`.** Binary, completion file (`_reminders`), config dir (`~/.config/reminders`), and env vars (`REMCTL_*` → `REMINDERS_*`) follow. Helper-path env vars (`REMCTL_BRIDGE_PATH`, `REMCTL_PRIVATE_PATH`, `REMCTL_PERMISSIONS_PATH`) **retire** — those helpers are folded in. `REMINDERS_STORE_DIR`, `REMINDERS_CONFIG_DIR`, and `NO_COLOR` remain. (Confirm at §9.)
+2. **No CLI rename.** Binary stays `remctl`, completion file `_remctl`, config dir `~/.config/remctl`, env vars `REMCTL_*` — full back-compat for existing users. Only the **helper-path** env vars (`REMCTL_BRIDGE_PATH`, `REMCTL_PRIVATE_PATH`, `REMCTL_PERMISSIONS_PATH`) **retire**, since those helpers are folded into the one binary. `REMCTL_STORE_DIR`, `REMCTL_CONFIG_DIR`, and `NO_COLOR` remain. The **package** is `RemindersControl`; the executable product is `remctl`.
 3. **Human-output polish** is permitted where Swift idioms improve readability; JSON shape stays at strict parity for automation.
 
 ## 6. Risks & mitigations
@@ -111,13 +111,13 @@ These are the deliberate deviations. Everything else is parity.
 
 **Tap:** `markmals/homebrew-tap` (existing). Its `test-bot` (matrix `macos-15`, `macos-26`) builds bottles on PRs; `pr-pull` (label `pr-pull`) commits bottles and pushes. Both reused unchanged.
 
-**New formula `Formula/reminders.rb`** — Swift source build:
+**New formula `Formula/remctl.rb`** — Swift source build:
 
 ```ruby
-class Reminders < Formula
+class Remctl < Formula
   desc "Power-user CLI for Apple Reminders"
-  homepage "https://github.com/<owner>/remctl"
-  url "https://github.com/<owner>/remctl/releases/download/vX.Y.Z/reminders-vX.Y.Z-vendored.tar.gz"
+  homepage "https://github.com/markmals/remctl"
+  url "https://github.com/markmals/remctl/releases/download/vX.Y.Z/remctl-vX.Y.Z-vendored.tar.gz"
   sha256 "..."
   license "MIT"
   depends_on :macos
@@ -125,23 +125,23 @@ class Reminders < Formula
 
   def install
     system "swift", "build", "--disable-sandbox", "-c", "release"
-    bin.install ".build/release/reminders"
-    generate_completions_from_executable(bin/"reminders", "completion")
+    bin.install ".build/release/remctl"
+    generate_completions_from_executable(bin/"remctl", "completion")
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/reminders --version")
+    assert_match version.to_s, shell_output("#{bin}/remctl --version")
   end
 end
 ```
 
-**Hermetic release tarball (CI, no committed artifacts).** A tag-triggered release workflow **in the RemCTL repo** runs `swift package resolve`, bundles the resolved dependency checkouts + `Package.resolved` into a source tarball, and uploads it as the GitHub Release asset that the formula's `url` points at. `swift build` then runs fully offline inside Homebrew's sandbox. Nothing vendored is committed to the repo.
+**Hermetic release tarball (CI, no committed artifacts).** A tag-triggered release workflow **in the RemCTL repo (`github.com/markmals/remctl`)** runs `swift package resolve`, bundles the resolved dependency checkouts + `Package.resolved` into a source tarball, and uploads it as the GitHub Release asset that the formula's `url` points at. `swift build` then runs fully offline inside Homebrew's sandbox. Nothing vendored is committed to the repo.
 
-**Optional `update-reminders.yml`** in the tap mirrors `update-vite-plus.yml` to bump the formula `url`/`sha256` on new releases.
+**Optional `update-remctl.yml`** in the tap mirrors `update-vite-plus.yml` to bump the formula `url`/`sha256` on new releases.
 
 **`install.sh`** retained as a lean non-Homebrew source-install fallback (`swift build -c release` + copy), with Homebrew as the documented primary path.
 
-> Open: the formula `url` owner/repo (`viticci/remctl` vs a `markmals` fork) and the new major tag — confirm at §9.
+> Source repo: `github.com/markmals/remctl` (your fork). New major tag default `v2.0.0` (confirmed at release).
 
 ## 8. Phases
 
@@ -149,22 +149,22 @@ Bottom-up, reads-first. Each phase produces a working binary subset verified aga
 
 | Phase                               | Scope                                                                                                                                                                                                                                                                                                           | Acceptance                                                               |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **0 — Scaffold**                    | `Package.swift` (ArgumentParser + GRDB), command skeleton with all 45 subcommand stubs, `--version` global, `--json` as a **shared per-subcommand** option (matching Python: there is **no** global `--json`/`--store`/`--config`), color suppressed via `NO_COLOR`, fold the 3 helpers in as targets, CI green | `swift build` + `swift test` run; `reminders --help` lists all commands. |
+| **0 — Scaffold**                    | `Package.swift` (ArgumentParser + GRDB), command skeleton with all 45 subcommand stubs, `--version` global, `--json` as a **shared per-subcommand** option (matching Python: there is **no** global `--json`/`--store`/`--config`), color suppressed via `NO_COLOR`, fold the 3 helpers in as targets, CI green | `swift build` + `swift test` run; `remctl --help` lists all commands. |
 | **1 — Reads**                       | `Runtime` + `Serialization` + `Store` (GRDB) + `Output`; all read/inspect commands (today, upcoming, overdue, search, flagged, urgent, tags, subtasks, sections, stats, show, info, lists, smart-lists, templates, template-info, list-symbols, export)                                                         | Human + JSON output matches Python for the shared fixture DB.            |
 | **2 — EventKit writes**             | add, edit, done, undone, delete, flag, unflag, link, list-create, list-edit, list-rename, list-delete (EventKit ops), recurrence, alarms, move-between-lists                                                                                                                                                    | Writes verified against Reminders; JSON/exit parity.                     |
 | **3 — Private writes + SmartLists** | `SmartLists`; formerly-private writes (rich url/subtasks/images, urgent, Early Reminders, location alarms, list appearance/pin, groceries, smart-list create/edit/delete, template create/apply/delete)                                                                                                         | Verified materialization in Reminders.app; `--private` removed cleanly.  |
 | **4 — Permissions & ops**           | Permissions AppKit GUI, doctor (+`--for-agent`), onboard, setup, completion, RemindersUICore asset extraction (`list-symbols --preview/--html`)                                                                                                                                                                 | `doctor` + guided FDA flow work; completions install.                    |
-| **5 — Tests, tools, distribution**  | Swift Testing port of `tests/*.py`; `scripts/*.py` → `Tools/`; `Formula/reminders.rb` + hermetic release workflow + tap CI; `install.sh` rewrite; docs update                                                                                                                                                   | `swift test` passes; a tagged release produces installable bottles.      |
+| **5 — Tests, tools, distribution**  | Swift Testing port of `tests/*.py`; `scripts/*.py` → `Tools/`; `Formula/remctl.rb` + hermetic release workflow + tap CI; `install.sh` rewrite; docs update                                                                                                                                                   | `swift test` passes; a tagged release produces installable bottles.      |
 
 ## 9. Open items for spec review
 
-1. **Per-command `--private` fork behavior** — the contract reference annotates every formerly-gated option with `[was --private]`; confirm the chosen default for each (default: the richer behavior).
-2. **Env var / config rename** — confirm `REMCTL_*` → `REMINDERS_*` and `~/.config/remctl` → `~/.config/reminders` (vs. keeping `remctl` names for back-compat).
-3. **Formula source repo/owner + new major tag** — `viticci/remctl` vs a `markmals` fork; tag name (e.g. `v2.0.0`).
-4. **Human-output polish scope** — how far to deviate from current human formatting (default: minimal).
+1. **Per-command `--private` fork behavior** — **Accepted:** default to the richer behavior. The contract reference annotates every formerly-gated option with `[was --private]`; revisit only if a specific command needs the public fallback.
+2. **Env var / config naming** — **Resolved:** keep `REMCTL_*` and `~/.config/remctl` (full back-compat); package is `RemindersControl`, binary `remctl`.
+3. **Formula source repo + tag** — **Resolved:** `github.com/markmals/remctl` (your fork); major tag default `v2.0.0`, confirmed at release.
+4. **Human-output polish scope** — **Accepted:** minimal deviation from current human formatting.
 
 > The contract reference flags **19 `INSUFFICIENT DATA` items** — concrete constant tables to copy verbatim from the Python source during implementation (the 71-entry `list-symbols` catalog, grocery-category emoji map, smart-list built-in type→display-name map, priority/proximity/alarm-unit enums, recurrence weekday numbering, Apple-epoch→ISO timezone behavior, `CUSTOM_SMART_LIST_TYPE`). None block the design; each is a copy-from-source task for its phase.
 
 ## 10. Testing strategy
 
-Swift Testing. Black-box CLI tests drive the `reminders` binary as a subprocess and assert human + JSON parity against the contract reference; unit tests cover `Runtime`/`Serialization`/`SmartLists`/`Store`. Where practical, port diffs against the current `remctl` output for the same fixture DB during each phase. CI `test do` block stays limited to `--version`/`--help` (runners lack Full Disk Access and a Reminders store).
+Swift Testing. Black-box CLI tests drive the `remctl` binary as a subprocess and assert human + JSON parity against the contract reference; unit tests cover `Runtime`/`Serialization`/`SmartLists`/`Store`. Where practical, port diffs against the current `remctl` output for the same fixture DB during each phase. CI `test do` block stays limited to `--version`/`--help` (runners lack Full Disk Access and a Reminders store).

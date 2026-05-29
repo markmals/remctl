@@ -1,6 +1,6 @@
-# RemCTL → `reminders` — CLI Parity Contract
+# RemCTL → Swift (`remctl`) — CLI Parity Contract
 
-> Generated parity reference for the Swift port (package `RemindersControl`, binary `reminders`). The source of truth is the current Python at HEAD (`remctl` 1.0.3). Produced by a 13-reader recon pass over the CLI, shared modules, the three folded-in helpers, and the test suite. Companion to [`2026-05-28-reminders-swift-port-design.md`](2026-05-28-reminders-swift-port-design.md).
+> Generated parity reference for the Swift port (package `RemindersControl`, binary `remctl`). The source of truth is the current Python at HEAD (`remctl` 1.0.3). Produced by a 13-reader recon pass over the CLI, shared modules, the three folded-in helpers, and the test suite. Companion to [`2026-05-28-reminders-swift-port-design.md`](2026-05-28-reminders-swift-port-design.md).
 
 ## Contents
 
