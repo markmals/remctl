@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 
 let readCommands: [ParsableCommand.Type] = [
     Today.self, Upcoming.self, Overdue.self, Search.self, Flagged.self, Urgent.self,
@@ -7,62 +8,433 @@ let readCommands: [ParsableCommand.Type] = [
 
 struct Today: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "today", abstract: "List reminders due today.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("today") }
+    @OptionGroup var opts: ReadDisplayOptions
+    @Flag(name: .long, help: "Exclude overdue items") var noOverdue = false
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.dueToday(includeOverdue: !noOverdue, now: now)
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "yyyy-MM-dd"
+                print("Nothing due today (\(fmt.string(from: now)))")
+                return
+            }
+            let sodTs = AppleEpoch.toTs(DateWindows.startOfDay(now))
+            let overdue = rows.filter { ($0.double("ZDUEDATE") ?? 0) < sodTs }
+            let overduePKs = Set(overdue.compactMap { $0.int("Z_PK") })
+            let due = rows.filter { !overduePKs.contains($0.int("Z_PK") ?? -1) }
+
+            if !overdue.isEmpty {
+                print(ansi.red("Overdue (\(overdue.count)):"))
+                for r in overdue {
+                    let pk = r.int("Z_PK") ?? 0
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  "))
+                }
+                print("")
+            }
+            if !due.isEmpty {
+                print(ansi.bold("Due Today (\(due.count)):"))
+                for r in due {
+                    let pk = r.int("Z_PK") ?? 0
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  "))
+                }
+            }
+            print("\n\(rows.count) total")
+        }
+    }
 }
 
 struct Upcoming: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "upcoming", abstract: "List upcoming reminders.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("upcoming") }
+    @OptionGroup var opts: ReadDisplayOptions
+    @Argument(help: "Number of days to look ahead") var days: Int = 7
+
+    func run() throws {
+        guard (1...3650).contains(days) else {
+            FileHandle.standardError.write(Data("Error: upcoming days must be between 1 and 3650.\n".utf8))
+            throw ExitCode(1)
+        }
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.upcoming(days: days, now: now)
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                print("Nothing due in the next \(days) days")
+                return
+            }
+            print(ansi.bold("Upcoming (\(days) days):"))
+
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: now)
+            let tomorrow = cal.date(byAdding: .day, value: 1, to: today)!
+
+            // Group by local day string
+            var keyOrder: [String] = []
+            var groupMap: [String: (label: String, items: [ReminderRow])] = [:]
+
+            for r in rows {
+                guard let dueVal = r.double("ZDUEDATE"), dueVal != 0 else { continue }
+                let dt = Date(timeIntervalSince1970: dueVal + AppleEpoch.offset)
+                let dtDay = cal.startOfDay(for: dt)
+                let dayKey: String
+                let comps = cal.dateComponents([.year, .month, .day], from: dtDay)
+                dayKey = String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
+                if groupMap[dayKey] == nil {
+                    let dayLabel: String
+                    if dtDay == today { dayLabel = "Today" }
+                    else if dtDay == tomorrow { dayLabel = "Tomorrow" }
+                    else {
+                        let lf = DateFormatter()
+                        lf.dateFormat = "EEEE, MMM dd"
+                        dayLabel = lf.string(from: dtDay)
+                    }
+                    groupMap[dayKey] = (label: dayLabel, items: [])
+                    keyOrder.append(dayKey)
+                }
+                groupMap[dayKey]!.items.append(r)
+            }
+
+            for key in keyOrder.sorted() {
+                guard let grp = groupMap[key] else { continue }
+                print("\n  \(ansi.bold(grp.label)):")
+                for r in grp.items {
+                    let pk = r.int("Z_PK") ?? 0
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "    "))
+                }
+            }
+            print("\n\(rows.count) upcoming")
+        }
+    }
 }
 
 struct Overdue: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "overdue", abstract: "List overdue reminders.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("overdue") }
+    @OptionGroup var opts: ReadDisplayOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.overdue(now: now)
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                print("No overdue reminders")
+                return
+            }
+            print(ansi.red(ansi.bold("Overdue (\(rows.count)):")))
+            for r in rows {
+                let pk = r.int("Z_PK") ?? 0
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+            }
+            print("\n\(rows.count) overdue")
+        }
+    }
 }
 
 struct Search: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "search", abstract: "Search reminders by text.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("search") }
+    @OptionGroup var opts: ReadDisplayOptions
+    @Argument(help: "Search query") var query: String
+    @Flag(name: .long, help: "Include completed reminders") var completed = false
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.search(query, completed: completed)
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                print("No reminders matching '\(safeDisplay(query))'")
+                return
+            }
+            print("Search: \(ansi.bold(safeDisplay(query)))")
+            for r in rows {
+                let pk = r.int("Z_PK") ?? 0
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose))
+            }
+            let n = rows.count
+            print("\n\(n) result\(n == 1 ? "" : "s")")
+        }
+    }
 }
 
 struct Flagged: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "flagged", abstract: "List flagged reminders.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("flagged") }
+    @OptionGroup var opts: ReadDisplayOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.flagged()
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                print("No flagged reminders")
+                return
+            }
+            print(ansi.bold("Flagged:"))
+            for r in rows {
+                let pk = r.int("Z_PK") ?? 0
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+            }
+            let n = rows.count
+            print("\n\(n) flagged")
+        }
+    }
 }
 
 struct Urgent: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "urgent", abstract: "List urgent reminders.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("urgent") }
+    @OptionGroup var opts: ReadDisplayOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let now = Date()
+            let rows = store.urgent()
+            let pks = rows.compactMap { $0.int("Z_PK") }
+            let (counts, tags) = store.preloadExtras(pks)
+            let ansi = opts.ansi()
+
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                return
+            }
+            if rows.isEmpty {
+                print("No urgent reminders")
+                return
+            }
+            print(ansi.bold("Urgent:"))
+            for r in rows {
+                let pk = r.int("Z_PK") ?? 0
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+            }
+            let n = rows.count
+            print("\n\(n) urgent")
+        }
+    }
 }
 
 struct Tags: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "tags", abstract: "List tags / reminders by tag.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("tags") }
+    @OptionGroup var opts: JSONOnlyOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let ansi = opts.ansi()
+            let names = store.allTagNames()
+
+            if opts.json {
+                Dispatch.printJSON(.array(names.map { .object([("name", .string($0))]) }), ensureAscii: true)
+                return
+            }
+            if names.isEmpty {
+                print("No tags found")
+                return
+            }
+            print(ansi.bold("Tags:"))
+            for name in names {
+                print("  \(ansi.magenta("#" + safeDisplay(name)))")
+            }
+            let n = names.count
+            print("\n\(n) tag\(n == 1 ? "" : "s")")
+        }
+    }
 }
 
 struct Subtasks: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "subtasks", abstract: "Show a reminder's subtasks.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("subtasks") }
+    @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+    @Flag(name: [.short, .long], help: "Verbose output (accepted, no-op)") var verbose = false
+
+    func run() throws {
+        Dispatch.runRead { store in
+            guard let parent = store.reminder(pk: id) else {
+                FileHandle.standardError.write(Data("Error: #\(id) not found\n".utf8))
+                Foundation.exit(1)
+            }
+            let subs = store.reminders(completed: true, parentPk: id)
+            let subPks = subs.compactMap { $0.int("Z_PK") }
+            let (sc, ht) = store.preloadExtras(subPks)
+
+            if json {
+                var d = serializeReminder(
+                    parent,
+                    ts: { AppleEpoch.ts($0) },
+                    priorityNames: Constants.priorityName,
+                    subtaskCounts: [id: store.subtaskCount(pk: id)],
+                    hashtags: [id: store.hashtags(pk: id)],
+                    richLink: { store.richLink(pk: id) }
+                )
+                let childObjs = serializeReminders(subs, store: store)
+                d.append(("subtasks", .array(childObjs.map { .object($0) })))
+                Dispatch.printJSON(.object(d), ensureAscii: true)
+                return
+            }
+            print("Parent: \(safeDisplay(parent.string("ZTITLE")))")
+            if subs.isEmpty {
+                print("  No subtasks")
+            } else {
+                let ansi = Ansi.resolve(noColorFlag: false)
+                for s in subs {
+                    let pk = s.int("Z_PK") ?? 0
+                    print(fmt(s, tags: ht[pk] ?? [], subtaskCount: sc[pk] ?? 0, ansi: ansi, indent: "  "))
+                }
+                let n = subs.count
+                print("\n\(n) subtask\(n == 1 ? "" : "s")")
+            }
+        }
+    }
 }
 
 struct Sections: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "sections", abstract: "Show list sections.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("sections") }
+    @OptionGroup var opts: JSONOnlyOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let ansi = opts.ansi()
+            let rows = store.sectionsAll()
+
+            if opts.json {
+                // Build ordered object: keys are list names in first-seen order
+                var keyOrder: [String] = []
+                var groupMap: [String: [JSONValue]] = [:]
+                for r in rows {
+                    let ln = r.string("list_name") ?? "?"
+                    if groupMap[ln] == nil {
+                        keyOrder.append(ln)
+                        groupMap[ln] = []
+                    }
+                    let dn = r.string("ZDISPLAYNAME")
+                    groupMap[ln]!.append(dn.map { .string($0) } ?? .null)
+                }
+                let pairs: [(String, JSONValue)] = keyOrder.map { ln in
+                    (ln, .array(groupMap[ln] ?? []))
+                }
+                Dispatch.printJSON(.object(pairs), ensureAscii: true)
+                return
+            }
+            if rows.isEmpty {
+                print("No sections found")
+                return
+            }
+            var cur: String? = nil
+            for r in rows {
+                let ln = r.string("list_name") ?? "?"
+                if ln != cur {
+                    if cur != nil { print("") }
+                    print("\(ansi.bold(colorListName(ln, ansi: ansi))):")
+                    cur = ln
+                }
+                print("  - \(safeDisplay(r.string("ZDISPLAYNAME")))")
+            }
+            let n = rows.count
+            print("\n\(n) section\(n == 1 ? "" : "s")")
+        }
+    }
 }
 
 struct Stats: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "stats", abstract: "Show reminder statistics.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("stats") }
+    @OptionGroup var opts: JSONOnlyOptions
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let ansi = opts.ansi()
+            let now = Date()
+            let total = store.statTotal()
+            let active = store.statActive()
+            let flagged = store.statFlagged()
+            let urgent = store.statUrgent()
+            let overdue = store.statOverdue(now: now)
+            let lists = store.statListCount()
+            let sections = store.statSectionCount()
+
+            if opts.json {
+                let pairs: [(String, JSONValue)] = [
+                    ("total", .int(total)),
+                    ("active", .int(active)),
+                    ("completed", .int(total - active)),
+                    ("overdue", .int(overdue)),
+                    ("flagged", .int(flagged)),
+                    ("urgent", .int(urgent)),
+                    ("lists", .int(lists)),
+                    ("sections", .int(sections)),
+                ]
+                Dispatch.printJSON(.object(pairs), ensureAscii: true)
+                return
+            }
+            print(ansi.bold("Reminders Stats"))
+            print("  Total:      \(total)")
+            print("  Active:     \(ansi.green(String(active)))")
+            print("  Completed:  \(ansi.dim(String(total - active)))")
+            print("  Overdue:    \(overdue != 0 ? ansi.red(String(overdue)) : "0")")
+            print("  Flagged:    \(flagged != 0 ? ansi.yellow(String(flagged)) : "0")")
+            print("  Urgent:     \(urgent != 0 ? ansi.red(String(urgent)) : "0")")
+            print("  Lists:      \(lists)")
+            print("  Sections:   \(sections)")
+        }
+    }
 }
 
 struct Show: ParsableCommand {
