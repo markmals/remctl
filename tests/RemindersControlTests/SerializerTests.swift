@@ -131,6 +131,40 @@ func romeCalendar() -> Calendar {
         let obj = serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName)
         #expect(!obj.contains { $0.0 == "displayDate" })
     }
+    // Verifies that JSON columns stored as BLOB (as seen on live Apple Reminders stores)
+    // are parsed correctly — parity with Python _json_blob bytes path.
+    @Test func blobStoredJSONColumnsAreParsed() throws {
+        let alertsJSON = #"{"dueDateDeltaAlerts":[{"dueDateDeltaUnit":0,"dueDateDeltaCount":-15}]}"#
+        let dowJSON = #"[{"weekNumber":0,"dayOfTheWeek":2}]"#
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L')")
+            // Bind BLOB (Data) to the envelope columns to force BLOB storage class.
+            try db.execute(
+                sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZDUEDATEDELTAALERTSDATA) VALUES (1,'t',10,1,0,0,?)",
+                arguments: [Data(alertsJSON.utf8)])
+            try db.execute(
+                sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER4,ZMARKEDFORDELETION,ZFREQUENCY,ZINTERVAL,ZDAYSOFTHEWEEK) VALUES (50,34,1,0,1,1,?)",
+                arguments: [Data(dowJSON.utf8)])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try RemindersStore.open(storeDir: dir)
+        let cols = store.remCols()
+        let rows = try store.queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE r.Z_PK = 1")
+        }
+        let obj = serializeReminder(rows[0], ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName)
+        let keys = obj.map { $0.0 }
+        #expect(keys.contains("earlyReminder"), "earlyReminder must be present when ZDUEDATEDELTAALERTSDATA is BLOB")
+        #expect(keys.contains("earlyReminders"), "earlyReminders must be present when ZDUEDATEDELTAALERTSDATA is BLOB")
+        #expect(keys.contains("recurrence"), "recurrence must be present when recurrence row exists")
+        if case let .object(rec)? = obj.first(where: { $0.0 == "recurrence" })?.1 {
+            #expect(rec.contains { $0.0 == "daysOfWeek" }, "daysOfWeek must be present when ZDAYSOFTHEWEEK is BLOB")
+        } else {
+            Issue.record("recurrence key missing from serialized reminder")
+        }
+    }
+
     // serializeReminders end-to-end with a fixture store
     @Test func serializeRemindersBatchTagsAndSubtaskCount() throws {
         let dir = try FixtureDB.tempStore { db in

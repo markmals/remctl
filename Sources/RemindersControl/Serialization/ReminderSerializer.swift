@@ -42,7 +42,7 @@ public func recurrenceFromRow(_ row: ReminderRow, ts: (Double) -> String?) -> [(
 
     // daysOfWeek: detailed passthrough (order-preserved) + derived ints.
     // Python emits both keys whenever days_of_week is truthy (non-empty list).
-    if let detailed = orderedJSONBlob(row.string("recurrence_days_of_week")),
+    if let detailed = orderedJSONBlob(row.blobString("recurrence_days_of_week")),
        case let .array(items) = detailed, !items.isEmpty {
         out.append(("daysOfWeekDetailed", detailed))
         // derive ints from each object's dayOfTheWeek (skip falsey / non-dict).
@@ -66,7 +66,7 @@ public func recurrenceFromRow(_ row: ReminderRow, ts: (Double) -> String?) -> [(
                          ("recurrence_days_of_year", "daysOfYear"),
                          ("recurrence_weeks_of_year", "weeksOfYear"),
                          ("recurrence_set_positions", "setPositions")] {
-        if let v = orderedJSONBlob(row.string(alias)), !isEmptyJSON(v) { out.append((key, v)) }
+        if let v = orderedJSONBlob(row.blobString(alias)), !isEmptyJSON(v) { out.append((key, v)) }
     }
     if let count = row.int("recurrence_count"), count != 0 { out.append(("count", .int(count))) }
     if let end = row.double("recurrence_end_date"), end != 0, let iso = ts(end) { out.append(("endDate", .string(iso))) }
@@ -75,7 +75,7 @@ public func recurrenceFromRow(_ row: ReminderRow, ts: (Double) -> String?) -> [(
 
 /// Port of `due_date_delta_alerts_from_row`. Returns array of ordered alert objects.
 public func dueDateDeltaAlertsFromRow(_ row: ReminderRow, ts: (Double) -> String?) -> [[(String, JSONValue)]] {
-    guard let payload = jsonBlob(row.string("ZDUEDATEDELTAALERTSDATA")) as? [String: Any],
+    guard let payload = jsonBlob(row.blobString("ZDUEDATEDELTAALERTSDATA")) as? [String: Any],
           let alerts = payload["dueDateDeltaAlerts"] as? [Any] else { return [] }
     var result: [[(String, JSONValue)]] = []
     for case let alert as [String: Any] in alerts {

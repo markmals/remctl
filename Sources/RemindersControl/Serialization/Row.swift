@@ -20,3 +20,13 @@ extension GRDB.Row: ReminderRow {
     public func double(_ key: String) -> Double? { has(key) ? self[key] : nil }
     public func data(_ key: String) -> Data? { has(key) ? self[key] : nil }
 }
+
+extension ReminderRow {
+    /// Read a JSON-blob column tolerantly: TEXT if present, else BLOB decoded as UTF-8 (lossy,
+    /// like Python `errors="replace"`). Mirrors Python `_json_blob` accepting both str and bytes.
+    public func blobString(_ key: String) -> String? {
+        if let s = string(key) { return s }
+        if let d = data(key) { return String(decoding: d, as: UTF8.self) }
+        return nil
+    }
+}
