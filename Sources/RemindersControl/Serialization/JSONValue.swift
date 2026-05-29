@@ -53,8 +53,13 @@ public indirect enum JSONValue {
         let pad = indent.map { String(repeating: " ", count: $0 * childLevel) }
         let closePad = indent.map { String(repeating: " ", count: $0 * level) }
         for i in 0..<count {
-            if i == 0 { if let pad { out += "\n" + pad } }
-            else { out += indent == nil ? ", " : ",\n" + (pad ?? "") }
+            if i == 0 {
+                if let pad { out += "\n" + pad }
+            } else if let pad {
+                out += ",\n" + pad
+            } else {
+                out += ", "
+            }
             element(i, &out, childLevel)
         }
         if let closePad { out += "\n" + closePad }
