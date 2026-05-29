@@ -1,0 +1,67 @@
+import GRDB
+import Foundation
+@testable import RemindersControl
+
+/// Builds CoreData-shaped SQLite DBs for tests.
+enum FixtureDB {
+    /// In-memory writable queue for unit tests on queries/serializers.
+    static func inMemory(_ build: (Database) throws -> Void) throws -> DatabaseQueue {
+        let q = try DatabaseQueue()
+        try q.write { try build($0) }
+        return q
+    }
+
+    /// Temp dir containing a populated Data-test.sqlite; returns the dir (for REMCTL_STORE_DIR / RemindersStore.open).
+    static func tempStore(_ build: (Database) throws -> Void) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remctl-fixt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("Data-test.sqlite").path
+        let q = try DatabaseQueue(path: path)
+        try q.write { try build($0) }
+        return dir
+    }
+
+    /// CoreData-shaped schema used by most reminder/list/section tests. Column names are exact.
+    static func createRemindersSchema(_ db: Database) throws {
+        try db.execute(sql: """
+        CREATE TABLE ZREMCDBASELIST (
+          Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZNAME TEXT, ZCKIDENTIFIER TEXT,
+          ZMARKEDFORDELETION INTEGER DEFAULT 0, ZSMARTLISTTYPE TEXT, ZFILTERDATA BLOB,
+          ZCOLOR BLOB, ZBADGEEMBLEM TEXT, ZISPINNEDBYCURRENTUSER INTEGER, ZPINNEDDATE REAL,
+          ZSHOULDCATEGORIZEGROCERYITEMS INTEGER, ZSHOULDAUTOCATEGORIZEITEMS INTEGER,
+          ZSHOULDSUGGESTCONVERSIONTOGROCERYLIST INTEGER, ZGROCERYLOCALEID TEXT,
+          ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA TEXT,
+          ZMINIMUMSUPPORTEDAPPVERSION INTEGER, ZEFFECTIVEMINIMUMSUPPORTEDAPPVERSION INTEGER
+        );
+        CREATE TABLE ZREMCDREMINDER (
+          Z_PK INTEGER PRIMARY KEY, ZTITLE TEXT, ZNOTES TEXT, ZCOMPLETED INTEGER DEFAULT 0,
+          ZFLAGGED INTEGER DEFAULT 0, ZPRIORITY INTEGER DEFAULT 0,
+          ZISURGENTSTATEENABLEDFORCURRENTUSER INTEGER, ZDUEDATEDELTAALERTSDATA TEXT,
+          ZDUEDATE REAL, ZDISPLAYDATEDATE REAL, ZALLDAY INTEGER, ZCOMPLETIONDATE REAL,
+          ZCREATIONDATE REAL, ZPARENTREMINDER INTEGER, ZLIST INTEGER, ZICSURL TEXT,
+          ZCKIDENTIFIER TEXT, ZMARKEDFORDELETION INTEGER DEFAULT 0, ZACCOUNT INTEGER
+        );
+        CREATE TABLE ZREMCDOBJECT (
+          Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZMARKEDFORDELETION INTEGER DEFAULT 0,
+          ZREMINDER INTEGER, ZREMINDER2 INTEGER, ZREMINDER3 INTEGER, ZREMINDER4 INTEGER,
+          ZHASHTAGLABEL INTEGER, ZURL TEXT, ZFILENAME TEXT, ZUTI TEXT, ZWIDTH REAL, ZHEIGHT REAL,
+          ZTRIGGER INTEGER, ZTIMEINTERVAL REAL, ZDATECOMPONENTSDATA BLOB, ZTITLE TEXT,
+          ZLATITUDE REAL, ZLONGITUDE REAL, ZRADIUS REAL, ZADDRESS TEXT, ZPROXIMITY INTEGER,
+          ZFREQUENCY INTEGER, ZINTERVAL INTEGER, ZOCCURRENCECOUNT INTEGER, ZENDDATE REAL,
+          ZDAYSOFTHEWEEK TEXT, ZDAYSOFTHEMONTH TEXT, ZMONTHSOFTHEYEAR TEXT, ZDAYSOFTHEYEAR TEXT,
+          ZWEEKSOFTHEYEAR TEXT, ZSETPOSITIONS TEXT
+        );
+        CREATE TABLE ZREMCDHASHTAGLABEL (Z_PK INTEGER PRIMARY KEY, ZNAME TEXT);
+        CREATE TABLE ZREMCDBASESECTION (
+          Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZDISPLAYNAME TEXT, ZLIST INTEGER,
+          ZCKIDENTIFIER TEXT, ZMARKEDFORDELETION INTEGER DEFAULT 0, ZTEMPLATE INTEGER,
+          ZCANONICALNAME TEXT, ZCREATIONDATE REAL
+        );
+        CREATE TABLE ZREMCDSAVEDATTACHMENT (
+          Z_PK INTEGER PRIMARY KEY, ZREMINDER INTEGER, ZFILENAME TEXT, ZUTI TEXT,
+          ZATTACHMENTTYPERAWVALUE TEXT, ZMARKEDFORDELETION INTEGER DEFAULT 0
+        );
+        """)
+    }
+}
