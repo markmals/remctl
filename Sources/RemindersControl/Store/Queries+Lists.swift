@@ -54,6 +54,36 @@ extension RemindersStore {
     }
 }
 
+extension RemindersStore {
+    /// Dynamic column set for q_lists (mirrors list_select_columns).
+    func listSelectColumns() -> [String] {
+        var cols = ["Z_PK", "ZNAME", "ZCKIDENTIFIER"]
+        let t = tableColumnNames("ZREMCDBASELIST")
+        for c in ["ZBADGEEMBLEM", "ZCOLOR", "ZISPINNEDBYCURRENTUSER", "ZPINNEDDATE",
+                  "ZSHOULDCATEGORIZEGROCERYITEMS", "ZSHOULDAUTOCATEGORIZEITEMS",
+                  "ZSHOULDSUGGESTCONVERSIONTOGROCERYLIST", "ZGROCERYLOCALEID",
+                  "ZAUTOCATEGORIZATIONLOCALCORRECTIONSCHECKSUM"] where t.contains(c) {
+            cols.append(c)
+        }
+        if t.contains("ZAUTOCATEGORIZATIONLOCALCORRECTIONSASDATA") {
+            cols.append("length(ZAUTOCATEGORIZATIONLOCALCORRECTIONSASDATA) AS ZAUTOCATEGORIZATIONLOCALCORRECTIONSASDATA_LENGTH")
+        }
+        return cols
+    }
+
+    /// q_lists: named user lists (Z_ENT=3), ORDER BY ZNAME (binary).
+    public func lists() -> [Row] {
+        let cols = listSelectColumns().joined(separator: ", ")  // OUTSIDE the read (reentrancy)
+        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' ORDER BY ZNAME"
+        return (try? queue.read { try Row.fetchAll($0, sql: sql) }) ?? []
+    }
+
+    /// Count of live sections for a list (q_sections list_pk count, for the human lists view).
+    public func sectionCountForList(_ pk: Int) -> Int {
+        (try? queue.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM ZREMCDBASESECTION WHERE ZMARKEDFORDELETION = 0 AND ZLIST = ?", arguments: [pk]) ?? 0 }) ?? 0
+    }
+}
+
 /// Port of normalize_list_lookup_name: NFKC + casefold, keep alnum, collapse mark/punct/symbol/space
 /// runs to a single space, strip. (Swift `lowercased()` approximates Python `casefold()`; Character
 /// classes approximate Unicode categories M/P/S/Z — sufficient for realistic list names.)

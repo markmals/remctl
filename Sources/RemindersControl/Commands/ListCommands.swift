@@ -8,8 +8,44 @@ let listCommands: [ParsableCommand.Type] = [
 
 struct Lists: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lists", abstract: "List all lists.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("lists") }
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+    @Option(name: .long, help: "Output format") var format: OutputFormat?
+    @Flag(name: .long, help: "Disable ANSI color") var noColor = false
+
+    func run() throws {
+        let effJSON = json || format == .json
+        Dispatch.runRead { store in
+            let rows = store.lists()
+            if effJSON {
+                Dispatch.printJSON(.array(rows.map { .object(listToDict($0)) }), ensureAscii: false)
+                return
+            }
+            let ansi = Ansi.resolve(noColorFlag: noColor)
+            if format == .table {
+                let trows = rows.map { r -> TableRow in
+                    let name = safeDisplay(r.string("ZNAME"))
+                    let title = isGroceryListRow(r) ? "\(name) \(Constants.groceryListMarker)" : name
+                    return TableRow(id: "\(r.int("Z_PK") ?? 0)", title: title, list: "", due: "", repeatText: "", pri: "")
+                }
+                print(fmtTable(trows, ansi: ansi))
+                return
+            }
+            print(ansi.bold("Reminder Lists:"))
+            for r in rows {
+                let pk = r.int("Z_PK") ?? 0
+                var listName = colorListName(r.string("ZNAME"), ansi: ansi)
+                if isGroceryListRow(r) { listName += " \(Constants.groceryListMarker)" }
+                let idDim = ansi.dim("(id: \(pk))")
+                let secCount = store.sectionCountForList(pk)
+                let secInfo = secCount >= 1 ? ansi.dim(" [\(secCount) sections]") : ""
+                let pinned = r.has("ZISPINNEDBYCURRENTUSER") && (r.int("ZISPINNEDBYCURRENTUSER") ?? 0) != 0
+                let pinInfo = pinned ? ansi.dim(" [pinned]") : ""
+                print("  \(listName) \(idDim)\(secInfo)\(pinInfo)")
+            }
+            let n = rows.count
+            print("\n\(n) list\(n == 1 ? "" : "s")")
+        }
+    }
 }
 
 struct ListCreate: ParsableCommand {
