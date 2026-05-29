@@ -36,6 +36,70 @@ import GRDB
     }
 }
 
+@Suite struct ReminderQueryTests {
+    private func store(_ build: (Database) throws -> Void) throws -> (RemindersStore, URL) {
+        let dir = try FixtureDB.tempStore { db in try FixtureDB.createRemindersSchema(db); try build(db) }
+        return (try RemindersStore.open(storeDir: dir), dir)
+    }
+    @Test func topLevelExcludesCompletedAndChildren() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'L',0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZPARENTREMINDER) VALUES (1,'top',10,1,0,0,NULL);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZPARENTREMINDER) VALUES (2,'done',10,1,1,0,NULL);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZPARENTREMINDER) VALUES (3,'child',10,1,0,0,1);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rows = s.reminders(listPk: 10, completed: false, topLevel: true)
+        #expect(rows.map { $0.int("Z_PK")! } == [1])  // 2 completed, 3 is a child -> excluded
+    }
+    @Test func remindersWithCompletedTrueIncludesDone() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (1,'a',1,0,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (2,'b',1,1,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.reminders(completed: true).map { $0.int("Z_PK")! }.sorted() == [1,2])
+    }
+    @Test func reminderByPkFiltersDeletedAndNullAccount() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (1,'ok',1,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (2,'del',1,1);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (3,'noacct',NULL,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.reminder(pk: 1)?.string("ZTITLE") == "ok")
+        #expect(s.reminder(pk: 2) == nil)
+        #expect(s.reminder(pk: 3) == nil)
+    }
+    @Test func reminderByIdentifierIsCaseInsensitiveNewestWins() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (1,'old',1,0,'abc');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (5,'new',1,0,'ABC');
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.reminder(identifier: "AbC")?.int("Z_PK") == 5)  // newest Z_PK
+        #expect(s.reminder(identifier: "") == nil)
+    }
+    @Test func subtaskCountCountsActiveChildrenOnly() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZACCOUNT,ZMARKEDFORDELETION,ZPARENTREMINDER,ZCOMPLETED) VALUES (2,1,0,1,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZACCOUNT,ZMARKEDFORDELETION,ZPARENTREMINDER,ZCOMPLETED) VALUES (3,1,0,1,1);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.subtaskCount(pk: 1) == 1)  // one active child (3 is completed)
+    }
+}
+
 @Suite struct StoreOpenTests {
     @Test func opensReadOnlyAndProbesColumns() throws {
         let dir = try FixtureDB.tempStore { try FixtureDB.createRemindersSchema($0) }
