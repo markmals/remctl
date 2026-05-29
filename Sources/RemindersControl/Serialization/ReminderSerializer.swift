@@ -98,3 +98,70 @@ public func dueDateDeltaAlertsFromRow(_ row: ReminderRow, ts: (Double) -> String
     }
     return result
 }
+
+/// Port of serialize_reminder. Builds ordered key/value pairs for one reminder.
+public func serializeReminder(
+    _ row: ReminderRow,
+    ts: (Double) -> String?,
+    priorityNames: [Int: String],
+    section: String? = nil,
+    subtaskCounts: [Int: Int] = [:],
+    hashtags: [Int: [String]] = [:],
+    richLink: (() -> String?)? = nil
+) -> [(String, JSONValue)] {
+    let pk = row.int("Z_PK") ?? 0
+    let subtaskCount = subtaskCounts[pk] ?? 0
+    let tags = hashtags[pk] ?? []
+
+    var o: [(String, JSONValue)] = [
+        ("id", .int(pk)),
+        ("title", row.string("ZTITLE").map { .string($0) } ?? .null),
+        ("list", row.string("list_name").map { .string($0) } ?? .null),
+        ("completed", .bool((row.int("ZCOMPLETED") ?? 0) != 0)),
+        ("flagged", .bool((row.int("ZFLAGGED") ?? 0) != 0)),
+        ("urgent", .bool((row.int("ZISURGENTSTATEENABLEDFORCURRENTUSER") ?? 0) != 0)),
+        ("priority", .string(priorityNames[row.int("ZPRIORITY") ?? 0] ?? "none")),
+        ("subtaskCount", .int(subtaskCount)),
+        ("isSubtask", .bool((row.int("ZPARENTREMINDER") ?? 0) != 0)),
+    ]
+    if let section, !section.isEmpty { o.append(("section", .string(section))) }
+    if let notes = row.string("ZNOTES"), !notes.isEmpty { o.append(("notes", .string(notes))) }
+    var url = row.string("ZICSURL")
+    if (url == nil || url!.isEmpty), let r = richLink?() { url = r }
+    if let url, !url.isEmpty { o.append(("url", .string(url))) }
+    let due = row.double("ZDUEDATE")
+    if let due, due != 0, let iso = ts(due) { o.append(("dueDate", .string(iso))) }
+    if let disp = row.double("ZDISPLAYDATEDATE"), disp != 0, disp != due, let iso = ts(disp) {
+        o.append(("displayDate", .string(iso)))
+    }
+    if row.has("ZALLDAY"), let ad = row.int("ZALLDAY") { o.append(("allDay", .bool(ad != 0))) }
+    if let c = row.double("ZCREATIONDATE"), c != 0, let iso = ts(c) { o.append(("createdDate", .string(iso))) }
+    if let cd = row.double("ZCOMPLETIONDATE"), cd != 0, let iso = ts(cd) { o.append(("completionDate", .string(iso))) }
+    if let parent = row.int("ZPARENTREMINDER"), parent != 0 { o.append(("parentID", .int(parent))) }
+    if !tags.isEmpty { o.append(("tags", .array(tags.map { .string($0) }))) }
+    if let rec = recurrenceFromRow(row, ts: ts) { o.append(("recurrence", .object(rec))) }
+    let early = dueDateDeltaAlertsFromRow(row, ts: ts)
+    if !early.isEmpty {
+        o.append(("earlyReminder", .object(early[0])))
+        o.append(("earlyReminders", .array(early.map { .object($0) })))
+    }
+    if let ck = row.string("ZCKIDENTIFIER"), !ck.isEmpty {
+        o.append(("deepLink", .string(Constants.deepLinkReminderPrefix + ck)))
+    }
+    return o
+}
+
+/// Batch serialize. Preloads subtaskCounts + hashtags; binds rich-link url fallback to the store.
+/// memberships maps a reminder's ZCKIDENTIFIER -> section display name (empty if none).
+public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
+                               memberships: [String: String] = [:]) -> [[(String, JSONValue)]] {
+    let pks = rows.compactMap { $0.int("Z_PK") }
+    let (subtaskCounts, hashtags) = store.preloadExtras(pks)
+    return rows.map { row in
+        let section = row.string("ZCKIDENTIFIER").flatMap { memberships[$0] }
+        let pk = row.int("Z_PK") ?? 0
+        return serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
+            section: section, subtaskCounts: subtaskCounts, hashtags: hashtags,
+            richLink: { store.richLink(pk: pk) })
+    }
+}
