@@ -35,3 +35,27 @@ import Foundation
         #expect(AppleEpoch.tsForce(0.5, calendar: utcCal()) == "2001-01-01T00:00:00.500000")
     }
 }
+
+@Suite struct DateWindowTests {
+    private func cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "Europe/Rome")!; return c
+    }
+    private func d(_ y: Int, _ mo: Int, _ da: Int, _ h: Int = 0, _ mi: Int = 0) -> Date {
+        cal().date(from: DateComponents(year: y, month: mo, day: da, hour: h, minute: mi))!
+    }
+    @Test func startOfDayTruncates() {
+        #expect(DateWindows.startOfDay(d(2026,4,18,14,30), calendar: cal()) == d(2026,4,18,0,0))
+    }
+    @Test func dueTodayWindowIsSodToSodPlusOne() {
+        let (a,b) = DateWindows.dueTodayWindow(d(2026,4,18,14,30), calendar: cal())
+        #expect(a == d(2026,4,18)); #expect(b == d(2026,4,19))
+    }
+    @Test func upcomingWindowAddsDaysPlusOne() {
+        let (a,b) = DateWindows.upcomingWindow(days: 7, now: d(2026,4,18,14,30), calendar: cal())
+        #expect(a == d(2026,4,18)); #expect(b == d(2026,4,26)) // sod + 8 days
+    }
+    @Test func upcomingDefaultDaysIsSeven() {
+        let (a,b) = DateWindows.upcomingWindow(now: d(2026,4,18,14,30), calendar: cal())
+        #expect(a == d(2026,4,18)); #expect(b == d(2026,4,26))
+    }
+}
