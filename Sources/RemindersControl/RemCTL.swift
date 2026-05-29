@@ -15,4 +15,10 @@ public struct RemCTL: AsyncParsableCommand {
 
 /// Every subcommand type, assembled from the per-group arrays. Populated across
 /// Tasks 4–9; starts empty so the package builds after this task.
-let allSubcommands: [ParsableCommand.Type] = []
+let allSubcommands: [ParsableCommand.Type] =
+    readCommands
+    + writeCommands
+    + listCommands
+    + smartListCommands
+    + templateCommands
+    + opsCommands
