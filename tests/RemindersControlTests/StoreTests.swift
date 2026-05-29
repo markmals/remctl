@@ -100,6 +100,78 @@ import GRDB
     }
 }
 
+@Suite struct ReadQueryTests {
+    private func store(_ build: (Database) throws -> Void) throws -> (RemindersStore, URL) {
+        let dir = try FixtureDB.tempStore { db in try FixtureDB.createRemindersSchema(db); try build(db) }
+        return (try RemindersStore.open(storeDir: dir), dir)
+    }
+    // A reminder must belong to a list (l.Z_PK IS NOT NULL) — insert a list 10 in each fixture.
+    @Test func searchEscapesPercentLiteral() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (1,'100% done',10,1,0,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (2,'plain',10,1,0,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // literal '%' must match only the title containing '%', NOT match-all
+        #expect(s.search("%").map { $0.int("Z_PK")! } == [1])
+    }
+    @Test func searchExcludesCompletedByDefault() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (1,'milk',10,1,0,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (2,'milk done',10,1,1,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.search("milk").map { $0.int("Z_PK")! } == [1])
+        #expect(Set(s.search("milk", completed: true).map { $0.int("Z_PK")! }) == [1,2])
+    }
+    @Test func flaggedOrdersDueNullsLast() throws {
+        // due epoch values: r1 has due, r2 has NULL due -> r1 before r2
+        let due = AppleEpoch.toTs(Date(timeIntervalSince1970: 978307200 + 1000))
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZFLAGGED,ZDUEDATE) VALUES (1,'has-due',10,1,0,0,1,\(due));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZFLAGGED,ZDUEDATE) VALUES (2,'no-due',10,1,0,0,1,NULL);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZFLAGGED) VALUES (3,'unflagged',10,1,0,0,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.flagged().map { $0.int("Z_PK")! } == [1,2])  // 3 excluded; due NULLS LAST -> 1 then 2
+    }
+    @Test func dueTodayIncludesOverduePastItems() throws {
+        // now = fixed; an item due yesterday is included when includeOverdue (default)
+        let cal = Calendar.current
+        let now = cal.date(from: DateComponents(year: 2026, month: 4, day: 18, hour: 12))!
+        let yesterday = AppleEpoch.toTs(cal.date(byAdding: .day, value: -1, to: now)!)
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZDUEDATE) VALUES (1,'overdue',10,1,0,0,\(yesterday));
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.dueToday(includeOverdue: true, now: now).map { $0.int("Z_PK")! } == [1])
+        #expect(s.dueToday(includeOverdue: false, now: now).isEmpty)  // not in [sod, eod)
+    }
+    @Test func urgentMatchesUrgentColumn() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZISURGENTSTATEENABLEDFORCURRENTUSER) VALUES (1,'u',10,1,0,0,1);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZISURGENTSTATEENABLEDFORCURRENTUSER) VALUES (2,'n',10,1,0,0,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.urgent().map { $0.int("Z_PK")! } == [1])
+    }
+}
+
 @Suite struct StoreOpenTests {
     @Test func opensReadOnlyAndProbesColumns() throws {
         let dir = try FixtureDB.tempStore { try FixtureDB.createRemindersSchema($0) }
