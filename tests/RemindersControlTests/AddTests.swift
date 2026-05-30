@@ -233,13 +233,50 @@ import GRDB
     }
 
     @Test func titleRequiredEmpty() async throws {
+        // An empty title is rejected with the bridge's exact string (EventKitWriter.create
+        // would throw the same), exit 1, writer never reached.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "   ", json: false, store: s, writer: m)
+            try await Add.perform(title: "", json: false, store: s, writer: m)
         }
         #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("title must not be empty"))
+        #expect(out.stderr == "Error: title is required for create\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func whitespaceTitleIsAccepted() async throws {
+        // Parity: the bridge uses raw `!title.isEmpty` (no trimming), so a whitespace-only
+        // title is NOT rejected by the core; it flows through to the writer unchanged.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Add.perform(title: "   ", json: false, store: s, writer: m)
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.title == "   ")
+    }
+
+    @Test func badDueBeatsEmptyTitle() async throws {
+        // Due-validation runs first: a bad due wins (exit 2) over the empty-title check.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Add.perform(title: "", due: "notadate", json: false, store: s, writer: m)
+        }
+        #expect(out.exitCode == 2)
+        #expect(out.stderr.contains("could not parse due date"))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func stubFlagBeatsEmptyTitle() async throws {
+        // The Phase-3 stub guard (private-refusal) fires before the bridge's title rejection.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Add.perform(title: "", urgent: true, json: false, store: s, writer: m)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("Phase 3"))
+        #expect(out.stderr.contains("--urgent"))
         #expect(m.calls.isEmpty)
     }
 

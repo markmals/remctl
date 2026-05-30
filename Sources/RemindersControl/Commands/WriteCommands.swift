@@ -58,11 +58,6 @@ struct Add: AsyncParsableCommand {
         now: Date = Date(), calendar: Calendar = .current
     ) async throws -> WriteOutcome {
 
-        // Title must be non-empty (argparse requires the positional; reject an empty/blank value).
-        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw WriteError("title must not be empty.")
-        }
-
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
         var dueDate: Date? = nil
         if let due, !due.isEmpty {
@@ -108,6 +103,12 @@ struct Add: AsyncParsableCommand {
         if !image.isEmpty { throw phase3("--image") }
         if urgent != nil { throw phase3("--urgent") }
         if earlyReminder != nil { throw phase3("--early-reminder") }
+
+        // 2b. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
+        //     (remctl-bridge.swift:359) that EventKitWriter.create reproduces — NO trimming,
+        //     so a whitespace-only title is accepted. Runs AFTER due-validation (exit 2 wins)
+        //     and the Phase-3 stub guard (private-refusal fires first), matching parity.
+        if title.isEmpty { throw WriteError("title is required for create") }
 
         // 3. List resolution (only when a list name / id was given). EventKit uses the
         //    default list otherwise. Capture the resolution method for the resolvedList output.
