@@ -25,4 +25,11 @@ import Foundation
         b.due = .set(Date(timeIntervalSince1970: 0))
         #expect(a != b)
     }
+    @Test func dueClearIsModeledOnReminderWrite() async throws {
+        let m = MockWriter()
+        var w = ReminderWrite(); w.due = .clear
+        _ = try await m.update(id: "X", w)
+        #expect(m.calls == [.update(id: "X", w)])
+        if case .clear = w.due {} else { Issue.record("due should be .clear") }
+    }
 }

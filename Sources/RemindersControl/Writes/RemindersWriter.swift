@@ -1,6 +1,6 @@
 import Foundation
 
-/// Due-date intent on a write: set to a date, or explicitly clear. nil (absent) = leave unchanged.
+/// Due-date intent on a write. nil (the ReminderWrite.due being nil) = leave unchanged; .set = set; .clear = remove the due date (the canonical clear signal; mirrors the bridge's dueExplicitlyNull). EventKitWriter maps .clear -> reminder.dueDateComponents = nil.
 public enum DueWrite: Equatable { case set(Date); case clear }
 
 public enum AlarmWrite: Equatable {
@@ -71,7 +71,7 @@ public struct WriteError: Error, Equatable {
 public protocol RemindersWriter {
     func authorize() async throws -> AuthSummary
     func create(_ write: ReminderWrite) async throws -> WriteResult
-    func update(id: String, _ write: ReminderWrite, clearDue: Bool) async throws -> WriteResult
+    func update(id: String, _ write: ReminderWrite) async throws -> WriteResult
     func delete(id: String) async throws -> WriteResult
     func complete(id: String) async throws -> WriteResult
     func uncomplete(id: String) async throws -> WriteResult

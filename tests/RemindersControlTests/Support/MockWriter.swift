@@ -5,7 +5,7 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
     enum Call: Equatable {
         case authorize
         case create(ReminderWrite)
-        case update(id: String, ReminderWrite, clearDue: Bool)
+        case update(id: String, ReminderWrite)
         case delete(id: String)
         case complete(id: String)
         case uncomplete(id: String)
@@ -24,7 +24,7 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
     }
     func authorize() async throws -> AuthSummary { calls.append(.authorize); return AuthSummary(calendarCount: 1, defaultList: "Reminders") }
     func create(_ w: ReminderWrite) async throws -> WriteResult { calls.append(.create(w)); return try resultOr("created") }
-    func update(id: String, _ w: ReminderWrite, clearDue: Bool) async throws -> WriteResult { calls.append(.update(id: id, w, clearDue: clearDue)); return try resultOr("updated") }
+    func update(id: String, _ w: ReminderWrite) async throws -> WriteResult { calls.append(.update(id: id, w)); return try resultOr("updated") }
     func delete(id: String) async throws -> WriteResult { calls.append(.delete(id: id)); return try resultOr("deleted") }
     func complete(id: String) async throws -> WriteResult { calls.append(.complete(id: id)); return try resultOr("completed") }
     func uncomplete(id: String) async throws -> WriteResult { calls.append(.uncomplete(id: id)); return try resultOr("uncompleted") }
