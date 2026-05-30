@@ -136,10 +136,99 @@ struct ListCreate: AsyncParsableCommand {
     }
 }
 
-struct ListEdit: ParsableCommand {
+struct ListEdit: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list-edit", abstract: "Edit a list's appearance.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("list-edit") }
+
+    @Argument(help: "List name to edit") var name: String?
+    @Option(name: .long, help: "Edit a list by stable numeric ID") var listId: Int?
+    @Option(name: .customLong("new-name"), help: "New list name") var newName: String?
+    @Option(name: .long, help: "List color name or #RRGGBB hex") var color: String?
+    @Option(name: .long, help: "Official Reminders list symbol name") var symbol: String?
+    @Option(name: .long, help: "Emoji badge") var emoji: String?
+    @Flag(name: .long, help: "Set list type to Groceries") var groceries = false
+    @Flag(name: .long, help: "Set list type to Standard") var standard = false
+    @Option(name: .customLong("grocery-locale"), help: "Groceries locale identifier, e.g. en_US") var groceryLocale: String?
+    @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
+
+    func run() async throws {
+        let args = self
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+            try await Self.perform(
+                name: args.name, listId: args.listId, newName: args.newName,
+                color: args.color, symbol: args.symbol, emoji: args.emoji,
+                groceries: args.groceries, standard: args.standard,
+                groceryLocale: args.groceryLocale, json: args.json,
+                store: store, private: priv)
+        })
+    }
+
+    /// Testable core (no print/exit). Mirrors `cmd_list_edit` (remctl:6137).
+    static func perform(
+        name: String?, listId: Int?,
+        newName: String?, color: String?, symbol: String?, emoji: String?,
+        groceries: Bool, standard: Bool, groceryLocale: String?,
+        json: Bool,
+        store: RemindersStore, private priv: PrivateWriter
+    ) async throws -> WriteOutcome {
+        // 1. Structural validation (symbol XOR emoji, unknown symbol, bad color, groceries XOR standard, etc.)
+        //    CLIErrors from these validators propagate out and are mapped by WriteDispatch.perform to
+        //    "Error: <msg>" exit 1.
+        try validateListAppearanceArgs(
+            color: color, symbol: symbol, emoji: emoji,
+            groceries: groceries, standard: standard, groceryLocale: groceryLocale)
+
+        // 2. No-change guard: at least one edit flag must be supplied.
+        let hasChange = newName != nil || color != nil || symbol != nil || emoji != nil
+            || groceries || standard || (groceryLocale != nil && !(groceryLocale!.isEmpty))
+        if !hasChange {
+            return .error("pass at least one of --new-name, --color, --symbol, --emoji, --groceries, --standard, or --grocery-locale.")
+        }
+
+        // 3. Resolve the target list. CLIErrors (not-both / no-target / not-found / ambiguous) propagate.
+        let target = try resolveRequiredListTarget(store: store, name: name, listId: listId)
+
+        // 4. Require a stable CloudKit identifier.
+        guard let ckid = store.listCkid(pk: target.id), !ckid.isEmpty else {
+            return .error("target list has no stable CloudKit identifier.")
+        }
+
+        // 5. Build the appearance payload and invoke the private writer.
+        let appearance = buildListAppearance(
+            newName: newName, color: color, symbol: symbol, emoji: emoji,
+            groceries: groceries, standard: standard, groceryLocale: groceryLocale)
+
+        let result: PrivateResult
+        do {
+            result = try await priv.setListAppearance(listId: ckid, appearance: appearance)
+        } catch let e as WriteError {
+            return .error(e.message)
+        } catch {
+            return .error("\(error)")
+        }
+
+        guard result.status == "updated" else {
+            return .error(result.message ?? "private helper failed")
+        }
+
+        // 6. output_name = --new-name if given, else the RESOLVED current title.
+        let outputName = newName ?? target.title
+
+        // 7. Output.
+        if json {
+            var privatePairs: [(String, JSONValue)] = [("status", .string(result.status))]
+            for key in result.fields.keys.sorted() {
+                privatePairs.append((key, result.fields[key]!))
+            }
+            let obj: JSONValue = .object([
+                ("status", .string("updated")),
+                ("id", .int(target.id)),
+                ("name", .string(outputName)),
+                ("private", .object(privatePairs)),
+            ])
+            return .ok(obj.serialized(indent: nil, ensureAscii: false) + "\n")
+        }
+        return .ok("Updated list: \(safeDisplay(outputName))\n")
+    }
 }
 
 struct ListPin: AsyncParsableCommand {
