@@ -30,18 +30,11 @@ public final class ReminderKitWriter: PrivateWriter {
 
     /// Returns `true` when the error message indicates a transient ReminderKit
     /// helper-communication failure. Mirrors Python `private_helper_error_is_transient`.
-    ///
-    /// The full ReminderKit string is
-    /// "Couldn’t communicate with a helper application." (curly apostrophe),
-    /// but we match the shorter substring with BOTH apostrophe variants to be safe.
     public static func isTransient(message: String?) -> Bool {
         guard let msg = message else { return false }
-        // Curly apostrophe (U+2019) — the actual ReminderKit error string
-        if msg.contains("communicate with a helper application") { return true }
-        // Belt-and-suspenders: also match with a straight apostrophe, in case a
-        // different OS version normalises the string.
-        if msg.contains("communicate with a helper application") { return true }
-        return false
+        // ReminderKit’s transient XPC error reads "Couldn’t communicate with a helper application."
+        // The matched substring is apostrophe-free, so it matches both the curly-U+2019 and straight forms.
+        return msg.contains("communicate with a helper application")
     }
 
     // MARK: - Response unmarshalling
@@ -49,7 +42,7 @@ public final class ReminderKitWriter: PrivateWriter {
     /// Converts an `Any` value from an `NSDictionary` response into a `JSONValue`.
     ///
     /// - `NSString`            → `.string`
-    /// - `NSNumber` (bool)     → `.bool`   (detected via `CFGetTypeID` / `objCType`)
+    /// - `NSNumber` (bool)     → `.bool`   (CFBoolean singleton identity)
     /// - `NSNumber` (integer)  → `.int`
     /// - `NSNumber` (floating) → `.double`
     /// - `NSArray`             → `.array`
@@ -62,14 +55,13 @@ public final class ReminderKitWriter: PrivateWriter {
         if any is NSNull { return .null }
 
         if let num = any as? NSNumber {
-            // Distinguish Bool from numeric NSNumber by inspecting the ObjC type encoding.
-            // NSNumber wrapping a BOOL has objCType == "c" (char) AND CFTypeID matching
-            // CFBoolean. Using objCType is simpler and avoids the CoreFoundation cast.
-            let typeChar = String(cString: num.objCType)
-            if typeChar == "B" || num === (kCFBooleanTrue as AnyObject) || num === (kCFBooleanFalse as AnyObject) {
+            // @YES/@NO (ObjC) and NSNumber(value: Bool) (Swift) are the CFBoolean singletons —
+            // identity is the only reliable bool discriminator on macOS (objCType is "c", not "B").
+            if num === (kCFBooleanTrue as AnyObject) || num === (kCFBooleanFalse as AnyObject) {
                 return .bool(num.boolValue)
             }
             // Differentiate integer vs floating-point encodings.
+            let typeChar = String(cString: num.objCType)
             let floatTypes: Set<String> = ["f", "d"]
             if floatTypes.contains(typeChar) {
                 return .double(num.doubleValue)
