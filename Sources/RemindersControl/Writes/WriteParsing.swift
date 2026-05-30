@@ -285,7 +285,14 @@ public enum WriteParsing {
     }
 
     /// NSDataDetector best-effort fallback for natural-language phrases the explicit
-    /// grammar misses (design §4). Uses the injected `now`/time zone as reference.
+    /// grammar misses (design §4).
+    ///
+    /// **Intentionally now-independent**: NSDataDetector has no reference-date API, so it
+    /// resolves under-specified phrases (e.g. "12:30am") against the real system clock.
+    /// The injected `now`/`calendar` govern only the explicit grammar above, which covers
+    /// all parity-critical cases. The `_ = now; _ = calendar` lines below are deliberate —
+    /// they are not a bug; they silence the "unused parameter" warning while making this
+    /// design decision visible at the call site.
     private static func dataDetectorDate(_ s: String, now: Date, calendar: Calendar) -> Date? {
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else {
             return nil
@@ -299,7 +306,7 @@ public enum WriteParsing {
         // and prevents picking up an incidental time substring out of a string the
         // explicit grammar already handled-and-rejected (e.g. "today at 25:00").
         guard match.range == range else { return nil }
-        _ = now; _ = calendar
+        _ = now; _ = calendar   // intentional — see doc-comment above
         return match.date
     }
 
