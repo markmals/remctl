@@ -37,6 +37,16 @@ public enum WriteDispatch {
         catch { return .error("\(error)") }
     }
 
+    /// Opens the read store + the production writer and runs `body`, mapping any thrown error to a
+    /// WriteOutcome. The standard shell for write commands that resolve a Z_PK against the read store.
+    public static func runShell(_ body: @escaping (RemindersStore, RemindersWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+        await perform {
+            let store = try RemindersStore.open()
+            let writer = WriterFactory.make()
+            return try await body(store, writer)
+        }
+    }
+
     /// Emit a WriteOutcome from the ArgumentParser shell (writes streams + exits). Never returns.
     public static func emit(_ outcome: WriteOutcome) -> Never {
         if !outcome.stdout.isEmpty { FileHandle.standardOutput.write(Data(outcome.stdout.utf8)) }

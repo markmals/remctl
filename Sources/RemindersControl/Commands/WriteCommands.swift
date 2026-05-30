@@ -24,12 +24,9 @@ struct Done: AsyncParsableCommand {
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
-        let outcome = await WriteDispatch.perform {
-            let store = try RemindersStore.open()
-            let writer = WriterFactory.make()
-            return try await Self.perform(id: id, json: json, store: store, writer: writer)
-        }
-        WriteDispatch.emit(outcome)
+        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+            try await Self.perform(id: id, json: json, store: store, writer: writer)
+        })
     }
 
     /// Testable core (no print/exit). Tests call this with a FixtureDB store + MockWriter.
@@ -50,12 +47,9 @@ struct Undone: AsyncParsableCommand {
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
-        let outcome = await WriteDispatch.perform {
-            let store = try RemindersStore.open()
-            let writer = WriterFactory.make()
-            return try await Self.perform(id: id, json: json, store: store, writer: writer)
-        }
-        WriteDispatch.emit(outcome)
+        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+            try await Self.perform(id: id, json: json, store: store, writer: writer)
+        })
     }
 
     /// Testable core (no print/exit). Tests call this with a FixtureDB store + MockWriter.

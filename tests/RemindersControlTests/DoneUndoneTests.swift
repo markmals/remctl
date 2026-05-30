@@ -27,6 +27,7 @@ import GRDB
         let out = try await Done.perform(id: 42, json: true, store: s, writer: m)
         #expect(out.stdout == #"{"status": "completed", "id": 42, "title": "Pay rent"}"# + "\n")
         #expect(out.exitCode == 0)
+        #expect(m.calls == [.complete(id: "ABC")])
     }
     @Test func doneNotFound() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
@@ -42,6 +43,13 @@ import GRDB
         let m = MockWriter()
         let out = await WriteDispatch.perform { try await Done.perform(id: 7, json: false, store: s, writer: m) }
         #expect(out.stderr.contains("no stable identifier")); #expect(out.stderr.contains("complete it")); #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+    }
+    @Test func undoneNotFound() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform { try await Undone.perform(id: 99, json: false, store: s, writer: m) }
+        #expect(out.stderr == "Error: #99 not found\n"); #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
     }
     @Test func undoneHumanAndJSON() async throws {
