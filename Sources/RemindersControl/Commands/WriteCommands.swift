@@ -628,95 +628,150 @@ func reminderDeepLink(_ ckid: String) -> String {
     "x-apple-reminderkit://REMCDReminder/\(ckid)"
 }
 
+/// `link` is a pure READ command (port of `cmd_link`, remctl:5905). It is NOT an EventKit write:
+/// it never resolves an identifier for writing, never refuses on a NULL ckid, and never errors on
+/// not-found (it warns and continues). It mirrors `cmd_link` exactly:
+///   * accepts variadic IDs OR a list target (`-l/--list` / `--list-id`), not both;
+///   * a list target expands to that list's top-level reminders (respecting `--completed`);
+///   * for each id, a missing reminder warns to stderr (non-fatal) and a NULL ckid is silently skipped;
+///   * `--json` emits a JSON *array* (indent=2, ensure_ascii=true, like `json.dumps(..., indent=2)`)
+///     of `{id, title, link}`; human emits two lines per result (`#<id> <title>` + dim link).
 struct Link: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "link", abstract: "Print a reminder's deep link.")
-    @Argument(help: "Reminder ID") var id: Int
+    static let configuration = CommandConfiguration(commandName: "link", abstract: "Get deep link(s) for reminders.")
+    @Argument(help: "Reminder IDs") var ids: [Int] = []
+    @Option(name: [.short, .long], help: "Get links for all active reminders in a list") var list: String?
+    @Option(name: .long, help: "Get links for all active reminders in a list by stable numeric ID") var listId: Int?
+    @Flag(name: .long, help: "Include completed reminders") var completed = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+    @Flag(name: .long, help: "Disable ANSI color") var noColor = false
 
     func run() async throws {
-        let id = self.id, json = self.json
+        let ids = self.ids, list = self.list, listId = self.listId
+        let completed = self.completed, json = self.json
+        let ansi = Ansi.resolve(noColorFlag: noColor)
         // link is READ-ONLY: no writer needed. WriteDispatch.perform maps thrown
-        // WriteError / RemindersDBUnavailable to a WriteOutcome the same way runShell does.
+        // CLIError / RemindersDBUnavailable to a WriteOutcome ("Error: <msg>", exit 1).
         let outcome = await WriteDispatch.perform {
             let store = try RemindersStore.open()
-            return try Self.perform(id: id, json: json, store: store)
+            return try Self.perform(ids: ids, list: list, listId: listId,
+                                    completed: completed, json: json, store: store, ansi: ansi)
         }
         WriteDispatch.emit(outcome)
     }
 
-    /// Testable core (no print/exit). Pure read + format — constructs the deep link from the
-    /// reminder's ZCKIDENTIFIER and emits the human two-line / JSON-object form. No writer, no launcher.
-    static func perform(id: Int, json: Bool, store: RemindersStore) throws -> WriteOutcome {
-        // Resolve pk -> (title, ckid). Reuses the standard write resolution so not-found
-        // (#<id> not found, exit 1) and no-stable-identifier refusal share the canonical messages.
-        let (title, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "link it")
-        let link = reminderDeepLink(ckid)   // x-apple-reminderkit://REMCDReminder/<ckid>
-        if json {
-            // cmd_link's per-item JSON dict keys (remctl:5929): id, title, link. Indent=2 like cmd_link.
-            let obj: JSONValue = .object([
-                ("id", .int(id)),
-                ("title", .string(title)),
-                ("link", .string(link)),
-            ])
-            return .ok(obj.serialized(indent: 2, ensureAscii: true) + "\n")
+    /// Testable core (no print/exit). Pure read + format — mirrors `cmd_link` (remctl:5905) step for step.
+    static func perform(ids: [Int], list: String?, listId: Int?, completed: Bool,
+                        json: Bool, store: RemindersStore, ansi: Ansi) throws -> WriteOutcome {
+        var ids = ids
+        // 1. IDs and a list target are mutually exclusive (remctl:5910).
+        if !ids.isEmpty && (list != nil || listId != nil) {
+            throw CLIError("pass reminder IDs or a list target, not both.")
         }
-        // cmd_link human form (remctl:5934-5935): line 1 `#<id> <title>`, line 2 two-space-indented
-        // link (rendered dim in a TTY; plain when ANSI is disabled).
-        let out = "#\(id) \(safeDisplay(title))\n  \(link)\n"
-        return .ok(out)
+        // 2. A list target expands to that list's top-level reminders (remctl:5913-5916).
+        //    resolveRequiredListTarget's own errors (not found / ambiguous) pass through.
+        if list != nil || listId != nil {
+            let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+            let items = store.reminders(listPk: target.id, completed: completed, topLevel: true)
+            ids = items.compactMap { $0.int("Z_PK") }
+        }
+        // 3. Nothing to do (remctl:5917-5919). NOTE: cmd_link prints this line WITHOUT an "Error: "
+        //    prefix (unlike the "not both" message), so return the bare stderr rather than a CLIError.
+        if ids.isEmpty {
+            return WriteOutcome(stderr: "No reminders specified.\n", exitCode: 1)
+        }
+        // 4. Resolve each id. Missing -> warn (non-fatal); NULL ckid -> silently skip (remctl:5921-5927).
+        var results: [(id: Int, title: String, link: String, listName: String?)] = []
+        var warnings = ""
+        for rid in ids {
+            guard let r = store.reminder(pk: rid) else {
+                warnings += "Warning: #\(rid) not found\n"
+                continue
+            }
+            guard let ckid = r.string("ZCKIDENTIFIER"), !ckid.isEmpty else { continue }
+            let link = reminderDeepLink(ckid)   // x-apple-reminderkit://REMCDReminder/<ckid>
+            results.append((id: rid, title: r.string("ZTITLE") ?? "", link: link, listName: r.string("list_name")))
+        }
+        // 5. Output.
+        if json {
+            // cmd_link JSON: a *list* of {id,title,link} with internal _list_name stripped,
+            // emitted via json.dumps(..., indent=2) (ensure_ascii defaults to TRUE) (remctl:5931).
+            let arr: JSONValue = .array(results.map { r in
+                .object([
+                    ("id", .int(r.id)),
+                    ("title", .string(r.title)),
+                    ("link", .string(r.link)),
+                ])
+            })
+            return WriteOutcome(stdout: arr.serialized(indent: 2, ensureAscii: true) + "\n",
+                                stderr: warnings, exitCode: 0)
+        }
+        // cmd_link human form (remctl:5933-5935): per result, line 1 `<colored #id> <title>`,
+        // line 2 two-space-indented dim link. Id coloring is reminder_id_text == colorByList.
+        var out = ""
+        for r in results {
+            out += "\(colorByList("#\(r.id)", listName: r.listName, ansi: ansi)) \(safeDisplay(r.title))\n"
+            out += "  \(ansi.dim(r.link))\n"
+        }
+        return WriteOutcome(stdout: out, stderr: warnings, exitCode: 0)
     }
 }
 
+/// `open` is a READ + launcher command (port of `cmd_open`, remctl:5937). It has NO `--json` flag and
+/// NO failure/return-code handling — `cmd_open` ignores `subprocess.run`'s return code. The launcher
+/// is injected as `launch([String]) -> Void` so tests record the argv without spawning a process.
+/// Three branches, mirroring `cmd_open`'s `if hasattr(a,'id') and a.id` (note: Python treats `id == 0`
+/// as falsy, so `open 0` is the generic "open the app" branch):
+///   * id given and != 0, found, has ckid  -> launch deep link, print `Opened #<id> in Reminders.app`
+///   * id given and != 0, found, NULL ckid  -> launch `-a Reminders`, print `Opened Reminders.app (no deep link available)`
+///   * id given and != 0, NOT found         -> `Error: #<id> not found`, exit 1 (launcher not called)
+///   * no id (or id == 0)                    -> launch `-a Reminders`, print `Opened Reminders.app`
 struct Open: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "open", abstract: "Open a reminder in Reminders.app.")
-    @Argument(help: "Reminder ID") var id: Int
-    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+    static let configuration = CommandConfiguration(commandName: "open", abstract: "Open reminder in Reminders.app (or just open the app).")
+    @Argument(help: "Reminder ID (opens specific reminder via deep link)") var id: Int?
 
     func run() async throws {
-        let id = self.id, json = self.json
+        let id = self.id
         let outcome = await WriteDispatch.perform {
-            let store = try RemindersStore.open()
-            return try Self.perform(id: id, json: json, store: store, launch: Self.launchWithOpen)
+            // The store is only needed for the specific-reminder branch; open it lazily there.
+            return try Self.perform(id: id, store: { try RemindersStore.open() }, launch: Self.launchWithOpen)
         }
         WriteDispatch.emit(outcome)
     }
 
-    /// Default launcher: invoke `/usr/bin/open <url>` (the macOS launcher — NOT osascript) and
-    /// return its exit status. Mirrors cmd_open's `subprocess.run(["open", link])` (remctl:5946).
-    static func launchWithOpen(_ url: String) -> Int32 {
+    /// Default launcher: invoke `/usr/bin/open <args...>` (the macOS launcher — NOT osascript).
+    /// Mirrors cmd_open's `subprocess.run(["open", ...])` (remctl:5946/5949/5953): the return code
+    /// is ignored, so this returns Void.
+    static func launchWithOpen(_ args: [String]) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = [url]
+        proc.arguments = args
         do {
             try proc.run()
             proc.waitUntilExit()
-            return proc.terminationStatus
         } catch {
-            return 1
+            // cmd_open ignores subprocess failures; match that — nothing to report.
         }
     }
 
-    /// Testable core (no print/exit). Resolves pk -> ckid, builds the same deep link as `link`,
-    /// and launches it via the injected `launch` closure (returns the launcher's exit status).
-    /// A non-zero status is mapped to a WriteError. `launch` is injected so tests can record the
-    /// URL and simulate success/failure without spawning a process.
-    static func perform(id: Int, json: Bool, store: RemindersStore, launch: (String) -> Int32) throws -> WriteOutcome {
-        let (title, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "open it")
-        let link = reminderDeepLink(ckid)   // x-apple-reminderkit://REMCDReminder/<ckid>
-        let status = launch(link)
-        if status != 0 {
-            throw WriteError("failed to open reminder (open exited \(status))")
+    /// Testable core (no print/exit). `store` is a deferred opener so the no-id branch never touches
+    /// the DB; `launch` is injected so tests can record the argv. Mirrors `cmd_open` (remctl:5937).
+    static func perform(id: Int?, store: () throws -> RemindersStore, launch: ([String]) -> Void) throws -> WriteOutcome {
+        // Python: `if hasattr(a, 'id') and a.id:` — id of 0 is falsy, so it falls to the generic branch.
+        if let id, id != 0 {
+            let s = try store()
+            guard let r = s.reminder(pk: id) else {
+                // Specific-reminder not-found is FATAL here (unlike link's warn) — remctl:5941-5943.
+                throw CLIError("#\(id) not found")
+            }
+            if let ckid = r.string("ZCKIDENTIFIER"), !ckid.isEmpty {
+                launch([reminderDeepLink(ckid)])   // x-apple-reminderkit://REMCDReminder/<ckid>
+                return .ok("Opened #\(id) in Reminders.app\n")
+            }
+            launch(["-a", "Reminders"])
+            return .ok("Opened Reminders.app (no deep link available)\n")
         }
-        if json {
-            let obj: JSONValue = .object([
-                ("status", .string("opened")),
-                ("id", .int(id)),
-                ("title", .string(title)),
-                ("link", .string(link)),
-            ])
-            return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
-        }
-        // cmd_open human form for the deep-link branch (remctl:5947): `Opened #<id> in Reminders.app`.
-        return .ok("Opened #\(id) in Reminders.app\n")
+        // No id (or id == 0): just open the app (remctl:5955-5957).
+        launch(["-a", "Reminders"])
+        return .ok("Opened Reminders.app\n")
     }
 }
