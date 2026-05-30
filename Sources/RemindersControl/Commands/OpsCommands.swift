@@ -64,8 +64,11 @@ struct Import: AsyncParsableCommand {
                 path: path,
                 readFile: { p in
                     let url = URL(fileURLWithPath: p)
+                    // Return nil ONLY when the file does not exist (triggers "not found" error).
+                    // When the file exists but is unreadable, return Data() (empty) so the JSON
+                    // decode step fails with "Failed to read JSON:" — matching Python's IOError path.
                     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-                    return try? Data(contentsOf: url)
+                    return (try? Data(contentsOf: url)) ?? Data()
                 },
                 json: json, store: store, writer: writer)
         })

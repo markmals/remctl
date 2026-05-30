@@ -177,6 +177,41 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
+    @Test func importUnreadableFileFailsWithJsonError() async throws {
+        // When a file EXISTS but cannot be read (simulated by returning Data() — empty bytes),
+        // the error must be "Failed to read JSON: ..." NOT "File '...' not found".
+        // This matches Python's IOError path (remctl:6328-6336) vs the not-found path.
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "/some/existing/but/unreadable.json",
+            readFile: { _ in Data() },             // file exists but unreadable → empty bytes sentinel
+            json: false, store: s, writer: m, now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.hasPrefix("Error: Failed to read JSON: "))
+        #expect(!out.stderr.contains("not found"))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func importNonObjectElementsSkipped() async throws {
+        // Non-object array elements (int, string, null) are treated as title-less: each emits
+        // "Warning: Skipping item without title" and increments errors. The one valid object-with-title
+        // ("Good") is still created. Array: [1, "x", null, {"title":"Good"}] → 1 created, 3 errors.
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[1, "x", null, {"title":"Good"}]"#),
+            json: false, store: s, writer: m, now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        #expect(createCount(m) == 1)
+        #expect(out.stdout.hasSuffix("\nImported 1/4 reminders (3 errors)\n"))
+        // Each of the 3 non-object elements emits its own warning line.
+        let warningCount = out.stderr.components(separatedBy: "Warning: Skipping item without title").count - 1
+        #expect(warningCount == 3)
+        #expect(out.stderr.contains("Warning: Skipping item without title"))
+    }
+
     @Test func importBadJson() async throws {
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()

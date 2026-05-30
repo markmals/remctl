@@ -24,7 +24,8 @@ public enum WriteDispatch {
         guard let row = store.reminder(pk: id) else { throw WriteError("#\(id) not found") }
         let title = row.string("ZTITLE")
         guard let ckid = row.string("ZCKIDENTIFIER"), !ckid.isEmpty else {
-            throw WriteError("The reminder has no stable identifier. Refusing unsafe title-based fallback for #\(id) ('\(title ?? "(untitled)")') while trying to \(op).")
+            let shownTitle = safeDisplay((title?.isEmpty == false ? title : nil) ?? "(untitled)")
+            throw WriteError("The reminder has no stable identifier. Refusing unsafe title-based fallback for #\(id) ('\(shownTitle)') while trying to \(op).")
         }
         return (title ?? "", ckid)
     }
