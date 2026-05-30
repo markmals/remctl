@@ -35,6 +35,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("EventKit"),
                 .linkedFramework("AppKit"),
+                .linkedFramework("CoreLocation"),
             ]
         ),
         // Thin executable: @main wrapper over the library root command.
