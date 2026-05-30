@@ -609,16 +609,94 @@ struct Delete: AsyncParsableCommand {
     }
 }
 
-struct FlagCmd: ParsableCommand {
+struct FlagCmd: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "flag", abstract: "Flag a reminder.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("flag") }
+    @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+
+    func run() async throws {
+        let id = self.id, json = self.json
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
+            try await FlagCmd.performFlag(id: id, flagged: true, json: json,
+                                         store: store, writer: writer, private: priv)
+        })
+    }
 }
 
-struct Unflag: ParsableCommand {
+struct Unflag: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "unflag", abstract: "Unflag a reminder.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("unflag") }
+    @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+
+    func run() async throws {
+        let id = self.id, json = self.json
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
+            try await FlagCmd.performFlag(id: id, flagged: false, json: json,
+                                         store: store, writer: writer, private: priv)
+        })
+    }
+}
+
+extension FlagCmd {
+    /// Shared core for `flag` and `unflag`. Parameterised by `flagged`.
+    ///
+    /// Strategy (mirrors cmd_flag / cmd_unflag in the Python CLI):
+    ///   1. PRIMARY: `PrivateWriter.setFlagged` — touches the real ZFLAGGED column.
+    ///   2. FALLBACK: EventKit priority-proxy via `RemindersWriter.update(id:flagged:)`.
+    ///   3. BOTH FAILED → throw the identifier-based-refusal WriteError (exit 1).
+    static func performFlag(
+        id: Int, flagged: Bool, json: Bool,
+        store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter
+    ) async throws -> WriteOutcome {
+        // Step 1: resolve the reminder row → (title, ckid).
+        // resolveReminderForWrite throws:
+        //   • WriteError("#<id> not found")             — not found
+        //   • WriteError("The reminder has no stable identifier. Refusing…")  — NULL ckid
+        let (title, ckid) = try WriteDispatch.resolveReminderForWrite(
+            store, id: id, op: flagged ? "flag it" : "unflag it")
+
+        // Step 2: PRIMARY — private writer (real ZFLAGGED via ReminderKit).
+        var privateSucceeded = false
+        do {
+            let r = try await priv.setFlagged(id: ckid, flagged: flagged)
+            if r.status == "updated" { privateSucceeded = true }
+        } catch {
+            // Private call threw — fall through to EventKit fallback.
+        }
+
+        // Step 3: FALLBACK — EventKit priority-proxy (lossy: 0↔1).
+        if !privateSucceeded {
+            var didFallback = false
+            do {
+                var w = ReminderWrite()
+                w.flagged = flagged
+                _ = try await writer.update(id: ckid, w)
+                didFallback = true
+            } catch {
+                // Fallback also failed — both paths failed.
+            }
+            if !didFallback {
+                // Both failed → refuse with the same message as _refuse_unsafe_title_fallback.
+                let shownTitle = safeDisplay(title.isEmpty ? "(untitled)" : title)
+                throw WriteError(
+                    "Identifier-based writes failed. Refusing unsafe title-based fallback for #\(id) " +
+                    "('\(shownTitle)') while trying to \(flagged ? "flag it" : "unflag it").")
+            }
+        }
+
+        // Step 4: success output.
+        let verb = flagged ? "flagged" : "unflagged"
+        let label = flagged ? "Flagged" : "Unflagged"
+        if json {
+            let obj: JSONValue = .object([
+                ("status", .string(verb)),
+                ("id",     .int(id)),
+                ("title",  .string(title)),
+            ])
+            return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
+        }
+        return .ok("\(label): \(safeDisplay(title))\n")
+    }
 }
 
 /// The reminder deep-link URL scheme, verbatim from `cmd_link`/`cmd_open` (remctl:5928/5945):
