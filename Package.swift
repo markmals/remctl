@@ -18,8 +18,14 @@ let package = Package(
             path: "Sources/ReminderKitPrivate",
             publicHeadersPath: "include",
             linkerSettings: [
+                // ReminderKitPrivate.m imports AppKit (NSImage, used to validate
+                // image attachments) on top of Foundation + the private
+                // ReminderKit framework — matching the legacy install.sh clang
+                // line `-framework Foundation -framework AppKit -framework ReminderKit`.
                 .unsafeFlags([
                     "-F", "/System/Library/PrivateFrameworks",
+                    "-framework", "Foundation",
+                    "-framework", "AppKit",
                     "-framework", "ReminderKit",
                 ]),
             ]
