@@ -2,7 +2,9 @@ import Testing
 import Foundation
 @testable import RemindersControl
 
-@Suite struct WriteBoundaryTests {
+// .serialized: these tests mutate the global WriterFactory.make; serialize to avoid
+// racing with other factory-mutating suites (e.g. DualDispatchTests).
+@Suite(.serialized) struct WriteBoundaryTests {
     @Test func mockRecordsCreateAndReturnsResult() async throws {
         let m = MockWriter(); m.resultID = "EK-42"; m.resultTitle = "Buy milk"
         var w = ReminderWrite(); w.title = "Buy milk"; w.priority = 1
