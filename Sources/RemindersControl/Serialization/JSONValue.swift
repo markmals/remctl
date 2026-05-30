@@ -1,7 +1,7 @@
 import Foundation
 
 /// Insertion-ordered JSON value mirroring Python `json.dumps` output exactly.
-public indirect enum JSONValue {
+public indirect enum JSONValue: Sendable, Equatable {
     case null
     case bool(Bool)
     case int(Int)
@@ -99,5 +99,20 @@ public indirect enum JSONValue {
             return String(format: "%.1f", d)
         }
         return String(d)
+    }
+
+    public static func == (lhs: JSONValue, rhs: JSONValue) -> Bool {
+        switch (lhs, rhs) {
+        case (.null, .null): return true
+        case (.bool(let a), .bool(let b)): return a == b
+        case (.int(let a), .int(let b)): return a == b
+        case (.double(let a), .double(let b)): return a == b
+        case (.string(let a), .string(let b)): return a == b
+        case (.array(let a), .array(let b)): return a == b
+        case (.object(let a), .object(let b)):
+            guard a.count == b.count else { return false }
+            return zip(a, b).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
+        default: return false
+        }
     }
 }
