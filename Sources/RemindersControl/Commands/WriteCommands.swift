@@ -64,10 +64,39 @@ struct Undone: AsyncParsableCommand {
     }
 }
 
-struct Delete: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "delete", abstract: "Delete reminders.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("delete") }
+struct Delete: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "delete", abstract: "Delete a reminder.")
+    @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Skip the confirmation prompt") var force = false
+    @Flag(name: .long, help: "Output machine-readable JSON") var json = false
+
+    func run() async throws {
+        let id = self.id, force = self.force, json = self.json
+        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+            try await Self.perform(id: id, force: force, json: json, store: store, writer: writer, confirm: { prompt in
+                FileHandle.standardOutput.write(Data(prompt.utf8))
+                let line = readLine() ?? ""
+                return line.lowercased().hasPrefix("y")
+            })
+        })
+    }
+
+    /// Testable core. `confirm` receives the full prompt string and returns the user's yes/no.
+    static func perform(id: Int, force: Bool, json: Bool, store: RemindersStore, writer: RemindersWriter,
+                        confirm: (_ prompt: String) -> Bool) async throws -> WriteOutcome {
+        let (title, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "delete it")
+        if !force {
+            let list = store.reminder(pk: id)?.string("list_name") ?? ""
+            let prompt = "Delete '\(safeDisplay(title))' from \(safeDisplay(list))? [y/N] "
+            guard confirm(prompt) else { return .ok("Cancelled.\n") }   // exit 0, no JSON
+        }
+        _ = try await writer.delete(id: ckid)
+        if json {
+            let obj: JSONValue = .object([("status", .string("deleted")), ("id", .int(id)), ("title", .string(title))])
+            return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
+        }
+        return .ok("Deleted: \(safeDisplay(title))\n")
+    }
 }
 
 struct FlagCmd: ParsableCommand {
