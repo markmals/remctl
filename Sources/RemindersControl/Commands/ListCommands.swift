@@ -142,16 +142,165 @@ struct ListEdit: ParsableCommand {
     func run() throws { throw NotImplemented("list-edit") }
 }
 
-struct ListPin: ParsableCommand {
+struct ListPin: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list-pin", abstract: "Pin a list.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("list-pin") }
+
+    @Argument(help: "List or smart-list name") var name: String?
+    @Option(name: .long, help: "Pin a regular list by stable numeric ID") var listId: Int?
+    @Option(name: .long, help: "Pin a smart list by stable numeric ID") var smartListId: Int?
+    @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
+
+    func run() async throws {
+        let args = self
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+            try await Self.performPin(
+                name: args.name, listId: args.listId, smartListId: args.smartListId,
+                pinned: true, json: args.json, store: store, private: priv)
+        })
+    }
+
+    /// Shared core for `list-pin` and `list-unpin`, parameterised by `pinned`.
+    /// Mirrors `_cmd_list_pin_state` (remctl:6162).
+    static func performPin(
+        name: String?, listId: Int?, smartListId: Int?,
+        pinned: Bool, json: Bool,
+        store: RemindersStore, private priv: PrivateWriter
+    ) async throws -> WriteOutcome {
+        // 1. Reject both --list-id AND --smart-list-id together.
+        if listId != nil && smartListId != nil {
+            return .error("pass either --list-id or --smart-list-id, not both.")
+        }
+
+        // 2. Require at least one of: name, --list-id, --smart-list-id.
+        let hasName = name != nil && !(name!.isEmpty)
+        if !hasName && listId == nil && smartListId == nil {
+            return .error("pass a list/smart-list name, --list-id, or --smart-list-id.")
+        }
+
+        // 3. Branch by target type.
+        let targetId: Int
+        let targetTitle: String
+        let targetKind: String   // "list" or "smart-list" (used in JSON kind + human label)
+        let ckid: String
+
+        if let smartListId {
+            // --smart-list-id path: resolve smart list by id.
+            switch store.resolveSmartListRef(name: nil, smartListId: smartListId) {
+            case .found(let id, let title, _):
+                targetId = id; targetTitle = title; targetKind = "smart-list"
+                guard let c = store.smartListCkid(pk: id), !c.isEmpty else {
+                    return .error("target smart list has no stable CloudKit identifier.")
+                }
+                ckid = c
+            case .ambiguous, .notFound:
+                return .error("smart list not found: id \(smartListId)")
+            }
+        } else if let listId {
+            // --list-id path: resolve regular list by id.
+            switch store.resolveListRef(name: nil, listId: listId) {
+            case .found(let id, let title, _):
+                targetId = id; targetTitle = title; targetKind = "list"
+                guard let c = store.listCkid(pk: id), !c.isEmpty else {
+                    return .error("target list has no stable CloudKit identifier.")
+                }
+                ckid = c
+            case .ambiguous, .notFound:
+                return .error("list not found: id \(listId)")
+            }
+        } else {
+            // Name path: dual-resolve — call BOTH resolvers.
+            let nameStr = name ?? ""
+            let listRes  = store.resolveListRef(name: nameStr, listId: nil)
+            let smartRes = store.resolveSmartListRef(name: nameStr, smartListId: nil)
+
+            // Ambiguous in EITHER kind fires before the both-match check (match Python ordering).
+            if case .ambiguous(let candidates) = listRes {
+                let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
+                return .error("multiple lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact list name or --list-id with one of: \(options)")
+            }
+            if case .ambiguous(let candidates) = smartRes {
+                let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
+                return .error("multiple smart lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact smart-list name or --smart-list-id with one of: \(options)")
+            }
+
+            let listFound  = if case .found = listRes { true } else { false }
+            let smartFound = if case .found = smartRes { true } else { false }
+
+            if listFound && smartFound {
+                return .error("\(WriteFormatting.pyRepr(nameStr)) matches both a list and a smart list. Use --list-id or --smart-list-id.")
+            }
+
+            if case .found(let id, let title, _) = listRes, listFound {
+                targetId = id; targetTitle = title; targetKind = "list"
+                guard let c = store.listCkid(pk: id), !c.isEmpty else {
+                    return .error("target list has no stable CloudKit identifier.")
+                }
+                ckid = c
+            } else if case .found(let id, let title, _) = smartRes, smartFound {
+                targetId = id; targetTitle = title; targetKind = "smart-list"
+                guard let c = store.smartListCkid(pk: id), !c.isEmpty else {
+                    return .error("target smart list has no stable CloudKit identifier.")
+                }
+                ckid = c
+            } else {
+                return .error("list or smart list not found: \(nameStr)")
+            }
+        }
+
+        // 4. Call the private writer.
+        let result: PrivateResult
+        do {
+            result = try await (targetKind == "smart-list"
+                ? priv.setSmartListPinned(smartListId: ckid, pinned: pinned)
+                : priv.setListPinned(listId: ckid, pinned: pinned))
+        } catch let e as WriteError {
+            return .error(e.message)
+        } catch {
+            return .error("\(error)")
+        }
+
+        guard result.status == "updated" else {
+            return .error(result.message ?? "private helper failed")
+        }
+
+        // 5. Output.
+        let status = pinned ? "pinned" : "unpinned"
+        if json {
+            // Build private sub-object: status first, then echoed fields (sorted by key for stability).
+            var privatePairs: [(String, JSONValue)] = [("status", .string(result.status))]
+            for key in result.fields.keys.sorted() {
+                privatePairs.append((key, result.fields[key]!))
+            }
+            let obj: JSONValue = .object([
+                ("status", .string(status)),
+                ("kind", .string(targetKind)),
+                ("id", .int(targetId)),
+                ("name", .string(targetTitle)),
+                ("private", .object(privatePairs)),
+            ])
+            return .ok(obj.serialized(indent: nil, ensureAscii: false) + "\n")
+        }
+        let label = targetKind == "smart-list" ? "smart list" : "list"   // SPACE in human output
+        return .ok("\(pinned ? "Pinned" : "Unpinned") \(label): \(safeDisplay(targetTitle))\n")
+    }
 }
 
-struct ListUnpin: ParsableCommand {
+struct ListUnpin: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list-unpin", abstract: "Unpin a list.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("list-unpin") }
+
+    @Argument(help: "List or smart-list name") var name: String?
+    @Option(name: .long, help: "Unpin a regular list by stable numeric ID") var listId: Int?
+    @Option(name: .long, help: "Unpin a smart list by stable numeric ID") var smartListId: Int?
+    @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
+
+    func run() async throws {
+        let args = self
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+            try await ListPin.performPin(
+                name: args.name, listId: args.listId, smartListId: args.smartListId,
+                pinned: false, json: args.json, store: store, private: priv)
+        })
+    }
 }
 
 struct ListRename: AsyncParsableCommand {
