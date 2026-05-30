@@ -86,6 +86,9 @@ public let officialListSymbols: [Sym] = [
     Sym("work5", "ListBadgeWork5", "★"),
 ]
 
+/// OFFICIAL_LIST_SYMBOL_NAMES (remctl:303): the set of valid badge names, for `--symbol` validation.
+public let officialListSymbolNames: Set<String> = Set(officialListSymbols.map(\.name))
+
 /// The note string emitted in `list-symbols --json` (verbatim from source).
 public let listSymbolsNote =
     "These are Reminders' bundled list badge emblems; emoji badges are separate. " +

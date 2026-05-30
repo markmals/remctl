@@ -39,9 +39,9 @@ extension RemindersStore {
         let exact = rows.filter { $0.string("ZNAME") == name }
         if exact.count == 1 { return found(exact[0]) }
         if exact.count > 1 { return candidates(exact) }
-        // tier 2: case-insensitive
-        let folded = name.lowercased()
-        let ci = rows.filter { ($0.string("ZNAME") ?? "").lowercased() == folded }
+        // tier 2: case-insensitive (Python str.casefold(), NOT .lowercased())
+        let folded = unicodeCasefold(name)
+        let ci = rows.filter { unicodeCasefold($0.string("ZNAME") ?? "") == folded }
         if ci.count == 1 { return found(ci[0]) }
         if ci.count > 1 { return candidates(ci) }
         // tier 3: normalized
@@ -84,22 +84,48 @@ extension RemindersStore {
     }
 }
 
-/// Port of normalize_list_lookup_name: NFKC + casefold, keep alnum, collapse mark/punct/symbol/space
-/// runs to a single space, strip. (Swift `lowercased()` approximates Python `casefold()`; Character
-/// classes approximate Unicode categories M/P/S/Z — sufficient for realistic list names.)
+/// True Unicode case-fold, equivalent to Python `str.casefold()` (NOT `str.lowercased()`).
+/// Uses ICU's full case-folding via `CFStringFold(.compareCaseInsensitive)`, which matches Python
+/// on the divergent cases (`ß`→`ss`, final sigma `ς`→`σ`, ligatures, `İ`→`i`+U+0307, etc.).
+public func unicodeCasefold(_ s: String) -> String {
+    let m = NSMutableString(string: s)
+    CFStringFold(m as CFMutableString, .compareCaseInsensitive, nil)
+    return m as String
+}
+
+/// Port of normalize_list_lookup_name (remctl:771): NFKC-normalize, then casefold, then iterate
+/// over Unicode SCALARS (not grapheme clusters — Python iterates codepoints): alphanumeric scalars
+/// (`str.isalnum()` == alphabetic OR numeric) are kept; scalars in general-category M/P/S/Z or
+/// whitespace collapse runs to a single space; everything else is dropped; finally strip.
 public func normalizeListLookupName(_ name: String) -> String {
     if name.isEmpty { return "" }
-    let text = name.precomposedStringWithCompatibilityMapping.lowercased()
+    let text = unicodeCasefold((name as NSString).precomposedStringWithCompatibilityMapping)
     var parts: [Character] = []
     var lastSpace = false
-    for ch in text {
-        if ch.isLetter || ch.isNumber {
-            parts.append(ch); lastSpace = false
-        } else if ch.isWhitespace || ch.isPunctuation || ch.isSymbol {
+    for sc in text.unicodeScalars {
+        let p = sc.properties
+        // Python str.isalnum(): isalpha() OR isdecimal()/isdigit()/isnumeric().
+        if p.isAlphabetic || p.numericType != nil {
+            parts.append(Character(sc)); lastSpace = false
+        } else if p.isWhitespace || isMarkPunctSymbolSep(p.generalCategory) {
             if !parts.isEmpty && !lastSpace { parts.append(" "); lastSpace = true }
         }
     }
     return String(parts).trimmingCharacters(in: .whitespaces)
+}
+
+/// Unicode general categories M*, P*, S*, Z* (the runs Python collapses to a single space).
+private func isMarkPunctSymbolSep(_ gc: Unicode.GeneralCategory) -> Bool {
+    switch gc {
+    case .nonspacingMark, .spacingMark, .enclosingMark,                                  // M*
+         .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
+         .initialPunctuation, .finalPunctuation, .otherPunctuation,                      // P*
+         .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol,                    // S*
+         .spaceSeparator, .lineSeparator, .paragraphSeparator:                           // Z*
+        return true
+    default:
+        return false
+    }
 }
 
 extension RemindersStore {
