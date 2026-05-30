@@ -12,16 +12,19 @@ public indirect enum JSONValue: Sendable, Equatable {
     case object([(String, JSONValue)])
 
     /// Serialize matching Python `json.dumps(value, indent: indent, ensure_ascii: ensureAscii)`.
-    /// - indent: nil = compact with ", "/": " separators; non-nil = pretty with that many spaces.
+    /// - indent: nil = compact; non-nil = pretty with that many spaces.
     /// - ensureAscii: true escapes non-ASCII as \uXXXX (surrogate pairs for astral); false emits literal UTF-8.
+    /// - spaceSeparators: true (default) = `": "` / `", "` (Python default compact);
+    ///   false = `":"` / `","` (Python `separators=(",",":")`, used for smart-list filterData).
+    ///   Only affects the compact path (indent == nil); ignored when indent is non-nil.
     /// Forward slashes are NEVER escaped (matches Python). No trailing newline.
-    public func serialized(indent: Int?, ensureAscii: Bool) -> String {
+    public func serialized(indent: Int?, ensureAscii: Bool, spaceSeparators: Bool = true) -> String {
         var out = ""
-        write(into: &out, indent: indent, ensureAscii: ensureAscii, level: 0)
+        write(into: &out, indent: indent, ensureAscii: ensureAscii, spaceSeparators: spaceSeparators, level: 0)
         return out
     }
 
-    private func write(into out: inout String, indent: Int?, ensureAscii: Bool, level: Int) {
+    private func write(into out: inout String, indent: Int?, ensureAscii: Bool, spaceSeparators: Bool, level: Int) {
         switch self {
         case .null: out += "null"
         case .bool(let b): out += b ? "true" : "false"
@@ -31,34 +34,35 @@ public indirect enum JSONValue: Sendable, Equatable {
         case .array(let items):
             if items.isEmpty { out += "[]"; return }
             writeContainer(into: &out, open: "[", close: "]", count: items.count,
-                           indent: indent, level: level) { i, o, childLevel in
-                items[i].write(into: &o, indent: indent, ensureAscii: ensureAscii, level: childLevel)
+                           indent: indent, spaceSeparators: spaceSeparators, level: level) { i, o, childLevel in
+                items[i].write(into: &o, indent: indent, ensureAscii: ensureAscii, spaceSeparators: spaceSeparators, level: childLevel)
             }
         case .object(let pairs):
             if pairs.isEmpty { out += "{}"; return }
             writeContainer(into: &out, open: "{", close: "}", count: pairs.count,
-                           indent: indent, level: level) { i, o, childLevel in
+                           indent: indent, spaceSeparators: spaceSeparators, level: level) { i, o, childLevel in
                 o += JSONValue.encodeString(pairs[i].0, ensureAscii: ensureAscii)
-                o += ": "
-                pairs[i].1.write(into: &o, indent: indent, ensureAscii: ensureAscii, level: childLevel)
+                o += spaceSeparators || indent != nil ? ": " : ":"
+                pairs[i].1.write(into: &o, indent: indent, ensureAscii: ensureAscii, spaceSeparators: spaceSeparators, level: childLevel)
             }
         }
     }
 
     private func writeContainer(into out: inout String, open: String, close: String, count: Int,
-                                indent: Int?, level: Int,
+                                indent: Int?, spaceSeparators: Bool, level: Int,
                                 element: (Int, inout String, Int) -> Void) {
         out += open
         let childLevel = level + 1
         let pad = indent.map { String(repeating: " ", count: $0 * childLevel) }
         let closePad = indent.map { String(repeating: " ", count: $0 * level) }
+        let itemSep = (indent == nil && !spaceSeparators) ? "," : ", "
         for i in 0..<count {
             if i == 0 {
                 if let pad { out += "\n" + pad }
             } else if let pad {
                 out += ",\n" + pad
             } else {
-                out += ", "
+                out += itemSep
             }
             element(i, &out, childLevel)
         }
