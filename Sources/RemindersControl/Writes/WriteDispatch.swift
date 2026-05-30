@@ -48,6 +48,27 @@ public enum WriteDispatch {
         }
     }
 
+    /// Opens the read store + the private writer and runs `body`, mapping any thrown error to a
+    /// WriteOutcome. The standard shell for write commands that use only the private writer.
+    public static func runShellPrivate(_ body: @escaping (RemindersStore, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+        await perform {
+            let store = try RemindersStore.open()
+            let privateWriter = PrivateWriterFactory.make()
+            return try await body(store, privateWriter)
+        }
+    }
+
+    /// Opens the read store + the production writer + the private writer and runs `body`, mapping
+    /// any thrown error to a WriteOutcome. The standard shell for write commands that need both.
+    public static func runShellBoth(_ body: @escaping (RemindersStore, RemindersWriter, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+        await perform {
+            let store = try RemindersStore.open()
+            let writer = WriterFactory.make()
+            let privateWriter = PrivateWriterFactory.make()
+            return try await body(store, writer, privateWriter)
+        }
+    }
+
     /// Emit a WriteOutcome from the ArgumentParser shell (writes streams + exits). Never returns.
     public static func emit(_ outcome: WriteOutcome) -> Never {
         if !outcome.stdout.isEmpty { FileHandle.standardOutput.write(Data(outcome.stdout.utf8)) }
