@@ -359,4 +359,179 @@ import GRDB
         #expect(u?.write.due == .clear)
         #expect(u?.write.alarm == .clear)
     }
+
+    // MARK: - Negative carry/clear: prove NO carry happens when a gate fails.
+    //
+    // The carry gate is: !explicitAlarm && newDue && oldDue && exactly-one-alarm &&
+    // that-alarm-is-absolute && alarm == oldDue (to the second). Each test below trips
+    // exactly one condition false and asserts `write.alarm == nil` (no carry was injected).
+
+    /// Seed a reminder pk 42 (ckid 'ABC', list Work id 10) with ZDUEDATE = oldInstant.
+    /// Returns the store + temp dir + a formatter producing "yyyy-MM-dd HH:mm" in the cal TZ.
+    private func reminderWithDue(_ oldInstant: Date, calendar cal: Calendar,
+                                 seedAlarms: (Database) throws -> Void) throws -> (RemindersStore, URL) {
+        let oldApple = AppleEpoch.toTs(oldInstant)
+        return try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Work',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',\(oldApple))")
+            try seedAlarms(db)
+        }
+    }
+
+    private func ymdhm(_ date: Date, _ cal: Calendar) -> String {
+        let df = DateFormatter(); df.calendar = cal; df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = cal.timeZone; df.dateFormat = "yyyy-MM-dd HH:mm"; return df.string(from: date)
+    }
+
+    /// TWO absolute alarms both == old due. Gate requires exactly ONE alarm -> no carry.
+    @Test func carrySuppressedByTwoAlarms() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let blob = dateComponentsBlob(oldInstant, calendar: cal)
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)", arguments: [blob])
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (82,\(Zent.alarm),42,83,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (83,?,0)", arguments: [blob])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.due == .set(newInstant))
+        #expect(u?.write.alarm == nil)
+    }
+
+    /// One RELATIVE alarm (ZTIMEINTERVAL set). Gate requires an absolute alarm -> no carry.
+    @Test func carrySuppressedByRelativeAlarm() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            // ZTIMEINTERVAL set -> serialized as type "relative".
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZTIMEINTERVAL,ZMARKEDFORDELETION) VALUES (81,-900,0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.due == .set(newInstant))
+        #expect(u?.write.alarm == nil)
+    }
+
+    /// One absolute alarm NOT equal to old due. Gate requires alarm == oldDue -> no carry.
+    @Test func carrySuppressedByNonMatchingAlarm() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        // Alarm at a different instant than the reminder's due date.
+        let alarmInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 8, minute: 0, second: 0))!
+        let blob = dateComponentsBlob(alarmInstant, calendar: cal)
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)", arguments: [blob])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.due == .set(newInstant))
+        #expect(u?.write.alarm == nil)
+    }
+
+    /// One absolute alarm == old due, but an EXPLICIT --alarm is also given.
+    /// explicitAlarm short-circuits the carry branch entirely; the explicit alarm wins.
+    @Test func carrySuppressedByExplicitAlarm() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let blob = dateComponentsBlob(oldInstant, calendar: cal)
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)", arguments: [blob])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), alarm: "30m", json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.due == .set(newInstant))
+        // The explicit --alarm 30m (relative, -1800s) wins; carry does NOT override it.
+        #expect(u?.write.alarm == .relativeOffset(-1800))
+    }
+
+    // MARK: - Proximity choice (parse-time, like argparse choices)
+
+    /// Valid --proximity values map to the writer's lowercase strings (arriving/leaving),
+    /// which EventKitWriter turns into .enter/.leave respectively.
+    @Test func proximityValuesMap() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m1 = MockWriter()
+        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .leaving, json: false, store: s, writer: m1)
+        #expect(updatedWrite(m1)?.write.location?.proximity == "leaving")
+
+        let (s2, dir2) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir2) }
+        let m2 = MockWriter()
+        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .arriving, json: false, store: s2, writer: m2)
+        #expect(updatedWrite(m2)?.write.location?.proximity == "arriving")
+    }
+
+    /// An invalid --proximity is rejected at the ArgumentParser layer BEFORE any core/DB access,
+    /// mirroring Python argparse `choices=["arriving","leaving"]`. Note: ArgumentParser surfaces
+    /// usage errors as EX_USAGE (64) uniformly across the whole port (e.g. `export --format bogus`
+    /// also exits 64), whereas Python's argparse uses 2 — that numeric divergence is a framework
+    /// trait of the Swift port, not specific to this option. The constraint itself is enforced:
+    /// the error names the valid choices and no write/DB call occurs.
+    @Test func invalidProximityRejected() throws {
+        let r = try CLIRunner.run(["edit", "42", "--proximity", "foo"])
+        #expect(r.exit == 64)
+        #expect(r.stderr.contains("'--proximity"))
+        #expect(r.stderr.contains("arriving"))
+        #expect(r.stderr.contains("leaving"))
+    }
+
+    // MARK: - failInvalidDueDate forwards now/calendar (deterministic example date)
+
+    /// The exit-2 invalid-due payload interpolates `today` from the injected `now`, not the
+    /// real clock. With now = 2023-11-14 (fixedNow), the first example must be "2023-11-14 15:00".
+    @Test func badDueUsesInjectedNowForExamples() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, due: "notadate", json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        }
+        #expect(out.exitCode == 2)
+        #expect(out.stderr.contains("2023-11-14 15:00"))
+        #expect(m.calls.isEmpty)
+    }
+
+    // MARK: - Validation/list-resolution precedence (mirrors cmd_edit source order)
+
+    /// cmd_edit resolves the list move (remctl:5425-5436) BEFORE due validation (remctl:5461).
+    /// So the both-list runtime check (exit 1) wins over a bad due (exit 2) on the same input.
+    @Test func bothListWinsOverBadDuePrecedence() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, list: "X", listId: 10, due: "notadate", json: false, store: s, writer: m)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: pass either a list name or --list-id, not both.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    /// Likewise list-not-found (exit 1) wins over a bad due (exit 2): list resolution runs first.
+    @Test func listNotFoundWinsOverBadDuePrecedence() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, list: "Nonexistent", due: "notadate", json: false, store: s, writer: m)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("list not found"))
+        #expect(m.calls.isEmpty)
+    }
 }

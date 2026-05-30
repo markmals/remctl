@@ -70,7 +70,7 @@ struct Add: AsyncParsableCommand {
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
             }
             parsedRecurrence = r
         }
@@ -78,7 +78,7 @@ struct Add: AsyncParsableCommand {
         var parsedAlarm: AlarmWrite? = nil
         if let alarm, !alarm.isEmpty {
             guard let al = WriteParsing.parseAlarmSpec(alarm, allowClear: false) else {
-                throw WriteError("could not parse alarm \(pyRepr(alarm)). Use 15m, 1h, 1d, or an absolute date.")
+                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm)). Use 15m, 1h, 1d, or an absolute date.")
             }
             parsedAlarm = al
         }
@@ -118,7 +118,7 @@ struct Add: AsyncParsableCommand {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             resolvedListTitle = target.title
             let requested = listId != nil ? String(listId!) : (list ?? "")
-            let method = resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
+            let method = WriteFormatting.resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
         }
 
@@ -180,7 +180,7 @@ struct Add: AsyncParsableCommand {
             ])
             return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 2)
         }
-        var s = "Error: could not parse due date \(pyRepr(value)).\n"
+        var s = "Error: could not parse due date \(WriteFormatting.pyRepr(value)).\n"
         s += "No reminder was created or changed.\n"
         s += "\n"
         s += "Use exact forms like:\n"
@@ -211,28 +211,13 @@ struct Add: AsyncParsableCommand {
     private static func phase3(_ flag: String) -> WriteError {
         WriteError("\(flag) requires the private metadata layer (Phase 3); not yet implemented.")
     }
+}
 
-    /// Determine which match tier `resolveListRef` used, to reproduce the `method` field that
-    /// the Python `resolve_list_ref` returns (Swift's `ListResolution.found` does not carry it).
-    /// `--list-id` always resolves by id. For a name, recompute the 4-tier comparison against the
-    /// resolved title (exact → case_insensitive → normalized).
-    private static func resolveMethod(store: RemindersStore, name: String?, listId: Int?, resolvedTitle: String) -> String {
-        if listId != nil { return "id" }
-        guard let name else { return "exact" }
-        if resolvedTitle == name { return "exact" }
-        if resolvedTitle.lowercased() == name.lowercased() { return "case_insensitive" }
-        return "normalized"
-    }
-
-    /// Python `repr()` of a string for error messages: single-quoted, with `'` and `\` escaped.
-    /// Mirrors the `{value!r}` formatting in `fail_invalid_due_date` / `fail_invalid_recurrence`.
-    private static func pyRepr(_ s: String) -> String {
-        if s.contains("'") && !s.contains("\"") {
-            return "\"\(s)\""
-        }
-        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        return "'\(escaped)'"
-    }
+/// Location-alarm trigger direction. Mirrors Python argparse `choices=["arriving","leaving"]`
+/// on `remctl edit --proximity` (remctl:7782): an invalid value is rejected at parse time (exit 2).
+/// The raw value is the lowercase string the EventKit writer maps (arriving→.enter, leaving→.leave).
+enum Proximity: String, ExpressibleByArgument, CaseIterable {
+    case arriving, leaving
 }
 
 struct Edit: AsyncParsableCommand {
@@ -254,7 +239,7 @@ struct Edit: AsyncParsableCommand {
     @Option(name: .long, help: "Location alarm latitude") var latitude: Double?
     @Option(name: .long, help: "Location alarm longitude") var longitude: Double?
     @Option(name: .long, help: "Location alarm radius in meters") var radius: Double = 100.0
-    @Option(name: .long, help: "Location alarm trigger direction: arriving or leaving") var proximity: String = "arriving"
+    @Option(name: .long, help: "Location alarm trigger direction: arriving or leaving") var proximity: Proximity = .arriving
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Option(name: [.short, .long], help: "Comma-separated synced tags (Phase 3)") var tags: String?
@@ -294,7 +279,7 @@ struct Edit: AsyncParsableCommand {
         notes: String? = nil, due: String? = nil, priority: String? = nil, url: String? = nil,
         recurrence: String? = nil, alarm: String? = nil,
         locationTitle: String? = nil, latitude: Double? = nil, longitude: Double? = nil,
-        radius: Double = 100.0, proximity: String = "arriving",
+        radius: Double = 100.0, proximity: Proximity = .arriving,
         tags: String? = nil, grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil, address: String? = nil,
@@ -309,52 +294,10 @@ struct Edit: AsyncParsableCommand {
         let currentDue = row.double("ZDUEDATE")
         let currentDisplay = row.double("ZDISPLAYDATEDATE")
 
-        // 2. Validate inputs (no writes). `-d clear` is special-cased; a non-clear unparseable
-        //    due is exit 2 (same fail_invalid_due_date as add). priority/alarm/recurrence -> exit 1.
-        let dueIsClear = (due == "clear")
-        var dueDate: Date? = nil
-        if let due, !due.isEmpty, !dueIsClear {
-            guard let parsed = WriteParsing.parseDue(due, now: now, calendar: calendar) else {
-                return Add.failInvalidDueDate(due, json: json)   // exit 2
-            }
-            dueDate = parsed
-        }
-
-        var priorityValue: Int? = nil
-        if let priority, !priority.isEmpty {
-            // edit has NO short aliases (allowAliases: false).
-            guard let p = WriteParsing.parsePriority(priority, allowAliases: false) else {
-                throw WriteError("priority must be high, medium, low, or none.")
-            }
-            priorityValue = p
-        }
-
-        var parsedRecurrence: RecurrenceWrite? = nil
-        if let recurrence, !recurrence.isEmpty {
-            guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
-            }
-            parsedRecurrence = r
-        }
-
-        // Alarm: clear-keywords -> .clear; else parse; bad -> exit 1.
-        let explicitAlarm = (alarm != nil && !(alarm!.isEmpty))
-        var parsedAlarm: AlarmWrite? = nil
-        var clearAlarm = false
-        if explicitAlarm {
-            if let al = WriteParsing.parseAlarmSpec(alarm!, allowClear: true, calendar: calendar) {
-                if al == .clear { clearAlarm = true } else { parsedAlarm = al }
-            } else {
-                throw WriteError("could not parse alarm \(pyRepr(alarm!)). Use 15m, 1h, 1d, an absolute date, or clear.")
-            }
-        }
-
-        // Location alarm pairing: lat+long must come as a pair.
-        if (latitude != nil) != (longitude != nil) {
-            throw WriteError("Location alarms require latitude and longitude")
-        }
-
-        // 3. Phase-3 stub guard (after validation, before any write / list resolution).
+        // 2. Phase-3 stub guard FIRST. This is the analog of Python's
+        //    `refuse_private_args_without_opt_in(a)` which runs at the very top of `cmd_edit`
+        //    (remctl:5416), before list resolution and field validation. (In Swift the row must be
+        //    resolved first — steps above — because not-found / identifier refusal need the row.)
         if tags != nil { throw phase3("--tags") }
         if grocery { throw phase3("--grocery") }
         if section != nil { throw phase3("--section") }
@@ -367,15 +310,66 @@ struct Edit: AsyncParsableCommand {
         if earlyReminder != nil { throw phase3("--early-reminder") }
         if address != nil { throw phase3("--address") }
 
-        // 4. List move. Both name+id -> exit 1 (CLIError "not both"); one -> resolve.
+        // 3. List move, resolved BEFORE field validation to match cmd_edit source order
+        //    (remctl:5425-5436 resolve the list; priority/recurrence/due/alarm validation only
+        //    follows at 5447-5478). So `edit ID --list A --list-id B -d notadate` exits 1 on the
+        //    both-list check, and `edit ID --list nonexistent -d notadate` exits 1 on list-not-found,
+        //    rather than exit 2 on the bad due. Both name+id -> exit 1 (CLIError "not both").
         var resolvedListTitle: String? = nil
         var resolution: (requested: String, title: String, id: Int, method: String)? = nil
         if list != nil || listId != nil {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             resolvedListTitle = target.title
             let requested = listId != nil ? String(listId!) : (list ?? "")
-            let method = resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
+            let method = WriteFormatting.resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
+        }
+
+        // 4. Validate inputs (no writes). Order mirrors cmd_edit: priority (5447) -> recurrence
+        //    (5454) -> due (5461) -> alarm (5470). `-d clear` is special-cased; a non-clear
+        //    unparseable due is exit 2 (same fail_invalid_due_date as add). priority/alarm/
+        //    recurrence -> exit 1. `now`/`calendar` are forwarded into the exit-2 example dates.
+        var priorityValue: Int? = nil
+        if let priority, !priority.isEmpty {
+            // edit has NO short aliases (allowAliases: false).
+            guard let p = WriteParsing.parsePriority(priority, allowAliases: false) else {
+                throw WriteError("priority must be high, medium, low, or none.")
+            }
+            priorityValue = p
+        }
+
+        var parsedRecurrence: RecurrenceWrite? = nil
+        if let recurrence, !recurrence.isEmpty {
+            guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
+            }
+            parsedRecurrence = r
+        }
+
+        let dueIsClear = (due == "clear")
+        var dueDate: Date? = nil
+        if let due, !due.isEmpty, !dueIsClear {
+            guard let parsed = WriteParsing.parseDue(due, now: now, calendar: calendar) else {
+                return Add.failInvalidDueDate(due, json: json, now: now, calendar: calendar)   // exit 2
+            }
+            dueDate = parsed
+        }
+
+        // Alarm: clear-keywords -> .clear; else parse; bad -> exit 1.
+        let explicitAlarm = (alarm != nil && !(alarm!.isEmpty))
+        var parsedAlarm: AlarmWrite? = nil
+        var clearAlarm = false
+        if explicitAlarm {
+            if let al = WriteParsing.parseAlarmSpec(alarm!, allowClear: true, calendar: calendar) {
+                if al == .clear { clearAlarm = true } else { parsedAlarm = al }
+            } else {
+                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm!)). Use 15m, 1h, 1d, an absolute date, or clear.")
+            }
+        }
+
+        // Location alarm pairing: lat+long must come as a pair.
+        if (latitude != nil) != (longitude != nil) {
+            throw WriteError("Location alarms require latitude and longitude")
         }
 
         // 5. Build the ReminderWrite from validated fields.
@@ -426,9 +420,11 @@ struct Edit: AsyncParsableCommand {
             write.alarm = parsedAlarm; hasChanges = true
         }
 
-        // Location alarm (lat+long both present, validated above).
+        // Location alarm (lat+long both present, validated above). The writer expects the
+        // lowercase proximity string ("arriving"/"leaving"); EventKitWriter maps leaving->.leave,
+        // arriving->.enter (remctl Swift EventKitWriter ~199).
         if let latitude, let longitude {
-            write.location = LocationAlarmWrite(title: locationTitle, latitude: latitude, longitude: longitude, radius: radius, proximity: proximity)
+            write.location = LocationAlarmWrite(title: locationTitle, latitude: latitude, longitude: longitude, radius: radius, proximity: proximity.rawValue)
             hasChanges = true
         }
 
@@ -529,24 +525,6 @@ struct Edit: AsyncParsableCommand {
 
     private static func phase3(_ flag: String) -> WriteError {
         WriteError("\(flag) requires the private metadata layer (Phase 3); not yet implemented.")
-    }
-
-    /// Same method-tier recompute as `Add.resolveMethod`, duplicated here (Add's is private).
-    private static func resolveMethod(store: RemindersStore, name: String?, listId: Int?, resolvedTitle: String) -> String {
-        if listId != nil { return "id" }
-        guard let name else { return "exact" }
-        if resolvedTitle == name { return "exact" }
-        if resolvedTitle.lowercased() == name.lowercased() { return "case_insensitive" }
-        return "normalized"
-    }
-
-    /// Python `repr()` of a string for error messages (single-quoted, escaping `'` and `\`).
-    private static func pyRepr(_ s: String) -> String {
-        if s.contains("'") && !s.contains("\"") {
-            return "\"\(s)\""
-        }
-        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        return "'\(escaped)'"
     }
 }
 
