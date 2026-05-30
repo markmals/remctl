@@ -32,4 +32,14 @@ import Foundation
         #expect(m.calls == [.update(id: "X", w)])
         if case .clear = w.due {} else { Issue.record("due should be .clear") }
     }
+    @Test func factoryDefaultsToEventKitWriter() {
+        #expect(WriterFactory.make() is EventKitWriter)
+    }
+    @Test func factoryIsOverridable() {
+        let saved = WriterFactory.make
+        defer { WriterFactory.make = saved }
+        let mock = MockWriter()
+        WriterFactory.make = { mock }
+        #expect(WriterFactory.make() is MockWriter)
+    }
 }
