@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import AppKit
 
 let listCommands: [ParsableCommand.Type] = [
     Lists.self, ListCreate.self, ListEdit.self, ListPin.self, ListUnpin.self,
@@ -566,7 +567,20 @@ struct ListDelete: AsyncParsableCommand {
 struct ListSymbols: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list-symbols", abstract: "List badge symbols.")
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
-    @Option(name: .long, help: "Write a standalone HTML preview contact sheet") var html: String?
+    // Python `--html nargs='?' const=''` (remctl:7831) is a three-state flag: omitted → nil;
+    // bare `--html` → write to the default path; `--html PATH` → write to PATH. ArgumentParser
+    // can't bind an optional array, so a non-producible sentinel default distinguishes omission
+    // (`htmlSentinel`) from a bare flag (`[]`) from `--html PATH` (`["PATH"]`). See `resolvedHTMLArg`.
+    @Option(name: .long, parsing: .upToNextOption,
+            help: "Write a standalone HTML preview contact sheet (optionally to PATH)") var html: [String] = Self.htmlSentinel
+    static let htmlSentinel = ["\u{0}__remctl_html_absent__"]
+
+    /// Collapse the three-state `--html` array to Python's nargs='?'/const='' value:
+    /// sentinel (omitted) → nil; [] (bare --html) → ""; ["PATH", ...] → first element.
+    var resolvedHTMLArg: String? {
+        if html == Self.htmlSentinel { return nil }
+        return html.first ?? ""
+    }
     @Flag(name: .long, help: "Generate and open the HTML preview contact sheet") var preview = false
     @Flag(name: .long, help: "Disable ANSI color") var noColor = false
 
@@ -576,14 +590,21 @@ struct ListSymbols: ParsableCommand {
     }
 
     func run() throws {
-        // --html / --preview are Phase 4 (RemindersUICore asset extraction). Preserve the
-        // mutual-exclusion error, then defer.
-        if html != nil || preview {
+        // --html / --preview: write a standalone HTML badge contact-sheet. Preserve the
+        // mutual-exclusion error, then run the testable core with the real seams.
+        let htmlArg = resolvedHTMLArg
+        if htmlArg != nil || preview {
             if json {
                 FileHandle.standardError.write(Data("Error: --json cannot be combined with --html or --preview.\n".utf8))
                 Foundation.exit(1)
             }
-            throw NotImplemented("list-symbols --preview/--html")
+            let outcome = try Self.performHTML(
+                htmlArg: htmlArg, preview: preview,
+                exportAssets: Self.exportBadgeAssets,
+                launch: Open.launchWithOpen)
+            if !outcome.stdout.isEmpty { print(outcome.stdout, terminator: "") }
+            if outcome.exitCode != 0 { throw ExitCode(outcome.exitCode) }
+            return
         }
 
         let rows = officialListSymbols
@@ -612,5 +633,71 @@ struct ListSymbols: ParsableCommand {
         for row in rows {
             print("  \(pad(row.preview, 2))  \(pad(row.name, width))  \(ansi.dim(row.asset))")
         }
+    }
+
+    struct HTMLOutcome { let stdout: String; let exitCode: Int32 }
+
+    /// Testable core for `--html`/`--preview` (ports write_list_symbols_html + the
+    /// cmd_list_symbols html branch, remctl:5035/5044). Pure of GUI side effects when
+    /// `exportAssets` and `launch` are injected.
+    ///
+    /// Path resolution mirrors Python's `--html` nargs='?' const='' → default mapping:
+    ///   * `htmlArg == nil`  (no --html; e.g. bare --preview) → default CONFIG_DIR path
+    ///   * `htmlArg == ""`   (bare --html)                    → default CONFIG_DIR path
+    ///   * `htmlArg == PATH` (--html PATH)                    → PATH with `~` expanded
+    ///
+    /// GRACEFUL-DEGRADE deviation: unlike Python (which exit-1s when Swift or the
+    /// RemindersUICore framework is absent), this ALWAYS writes a sheet and succeeds.
+    /// A missing framework simply yields an empty `exportAssets` result → glyph-only sheet.
+    static func performHTML(
+        htmlArg: String?,
+        preview: Bool,
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        exportAssets: ([String]) -> [String: Data],
+        launch: ([String]) -> Void
+    ) throws -> HTMLOutcome {
+        let rows = officialListSymbols
+        let outputURL: URL
+        if let htmlArg, !htmlArg.isEmpty {
+            outputURL = URL(fileURLWithPath: (htmlArg as NSString).expandingTildeInPath)
+        } else {
+            outputURL = Paths.resolveConfigDir(env: env).appendingPathComponent("list-symbols.html")
+        }
+
+        // Build a name→PNG dict via the injected exporter (assets that miss are simply
+        // absent → the matching card renders its fallback glyph).
+        let exported = exportAssets(rows.map { $0.asset })
+        let html = buildListSymbolsHTML(rows: rows, imageDataByAsset: exported)
+
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try html.data(using: .utf8)!.write(to: outputURL)
+
+        if preview { launch([outputURL.path]) }
+        return HTMLOutcome(stdout: "HTML preview: \(outputURL.path)\n", exitCode: 0)
+    }
+
+    /// In-process AppKit asset export (the impure half; NOT CI-tested — the
+    /// RemindersUICore private framework is absent in CI). Loads the framework bundle,
+    /// renders each `bundle.image(forResource:)` to PNG, and collects successes only.
+    /// Per-asset misses are omitted; an entirely-missing framework returns `[:]` (the
+    /// caller then writes a glyph-only sheet). Replaces Python's `swift -` subprocess.
+    static func exportBadgeAssets(_ names: [String]) -> [String: Data] {
+        let bundlePath = "/System/Library/PrivateFrameworks/RemindersUICore.framework"
+        guard let bundle = Bundle(path: bundlePath) else {
+            FileHandle.standardError.write(Data(
+                "Note: RemindersUICore framework not found; the preview uses text glyphs only.\n".utf8))
+            return [:]
+        }
+        var out: [String: Data] = [:]
+        for asset in names {
+            guard let image = bundle.image(forResource: asset),
+                  let tiff = image.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:])
+            else { continue }
+            out[asset] = png
+        }
+        return out
     }
 }
