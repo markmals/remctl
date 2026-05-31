@@ -195,8 +195,17 @@ struct Import: AsyncParsableCommand {
 // completion-script machinery; `commandName` remains "completion".
 struct CompletionCmd: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "completion", abstract: "Print a shell completion script.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("completion") }
+    @Argument(help: "Shell to generate completions for (bash, zsh, fish)") var shell: ShellChoice = .zsh
+    func run() throws {
+        let script: String
+        switch shell {
+        case .zsh:  script = CompletionScripts.zsh
+        case .bash: script = CompletionScripts.bash
+        case .fish: script = CompletionScripts.fish
+        }
+        // Use FileHandle to avoid print()'s implicit newline; script already ends with \n.
+        FileHandle.standardOutput.write(Data(script.utf8))
+    }
 }
 
 struct Doctor: ParsableCommand {
