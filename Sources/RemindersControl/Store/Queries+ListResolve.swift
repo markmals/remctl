@@ -89,4 +89,13 @@ extension RemindersStore {
             arguments: [Constants.customSmartListType, name]) }) ?? []
         return rows.map { (pk: $0.int("Z_PK") ?? 0, name: $0.string("ZNAME") ?? "", ckid: $0.string("ZCKIDENTIFIER")) }
     }
+
+    /// q_custom_smart_list_delete_matches id-path (remctl:516): the live custom smart list with this
+    /// exact Z_PK. Used by smart-list edit/delete when `--smart-list-id` is supplied.
+    public func customSmartListMatches(smartListId: Int) -> [(pk: Int, name: String, ckid: String?)] {
+        let rows = (try? queue.read { try Row.fetchAll($0, sql:
+            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND ZSMARTLISTTYPE = ? AND Z_PK = ?",
+            arguments: [Constants.customSmartListType, smartListId]) }) ?? []
+        return rows.map { (pk: $0.int("Z_PK") ?? 0, name: $0.string("ZNAME") ?? "", ckid: $0.string("ZCKIDENTIFIER")) }
+    }
 }
