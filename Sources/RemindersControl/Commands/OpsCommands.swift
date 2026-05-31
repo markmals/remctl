@@ -255,8 +255,103 @@ struct Onboard: ParsableCommand {
 
 struct Permissions: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "permissions", abstract: "Guided Full Disk Access setup.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("permissions") }
+
+    // Topic is a RAW String (not an enum) so that unsupported values produce
+    // exit 1 + our exact error message rather than ArgumentParser's exit 64.
+    // Port of `a.topic != 'full-disk-access'` guard in `cmd_permissions` (remctl:7495).
+    @Argument(help: "Permissions topic (full-disk-access).") var topic: String
+
+    @Flag(name: .long, help: "Wait for the helper to exit before returning.") var wait = false
+    @Flag(name: .long, help: "Output machine-readable JSON.") var json = false
+
+    func run() throws {
+        let outcome = try Self.perform(
+            topic: topic,
+            wait: wait,
+            json: json,
+            env: ProcessInfo.processInfo.environment
+        )
+        if !outcome.stdout.isEmpty { print(outcome.stdout, terminator: "") }
+        if !outcome.stderr.isEmpty {
+            FileHandle.standardError.write(Data(outcome.stderr.utf8))
+        }
+        if outcome.exitCode != 0 { throw ExitCode(outcome.exitCode) }
+    }
+
+    // ── Testable core ──────────────────────────────────────────────────────
+    struct Outcome { let stdout: String; let stderr: String; let exitCode: Int32 }
+
+    /// Port of `cmd_permissions` (remctl:7494). Pure of process-level GUI/clipboard
+    /// side effects when called with injected `openSettings`/`runPbcopy` closures.
+    ///
+    /// - `openSettings`: called in human mode to open System Settings (returns
+    ///   whether it launched). Injected as a no-op in JSON mode and tests.
+    /// - `runPbcopy`: called in human mode guidance to copy the runtime path to
+    ///   the clipboard. Injected as a no-op in JSON mode and tests.
+    static func perform(
+        topic: String,
+        wait: Bool,
+        json: Bool,
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        openSettings: ([String]) -> Int32 = { args in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            proc.arguments = args
+            do { try proc.run(); proc.waitUntilExit(); return proc.terminationStatus } catch { return 1 }
+        },
+        runPbcopy: (String) -> Bool = { text in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/pbcopy")
+            let pipe = Pipe(); proc.standardInput = pipe
+            do {
+                try proc.run()
+                pipe.fileHandleForWriting.write(Data(text.utf8))
+                try? pipe.fileHandleForWriting.close()
+                proc.waitUntilExit()
+                return proc.terminationStatus == 0
+            } catch { return false }
+        }
+    ) throws -> Outcome {
+        // 1. Topic validation — raw String guard (preserves exit 1 + exact message).
+        if topic != "full-disk-access" {
+            return Outcome(
+                stdout: "",
+                stderr: "Error: Unsupported permissions topic '\(topic)'\n",
+                exitCode: 1
+            )
+        }
+
+        // 2. Build targets + result dict.
+        let targets = fullDiskAccessTargetSpecs(includeCli: true, env: env)
+        let targetsValue: JSONValue = .array(targets.map { pairs in JSONValue.object(pairs) })
+        let helperPath = currentPermissionsPath(env: env)
+
+        let resultPairs: [(String, JSONValue)] = [
+            ("helper", .string(helperPath)),
+            ("available", .bool(permissionHelperAvailable())),
+            ("targets", targetsValue),
+        ]
+
+        // 3. JSON mode — serialize and return (NO GUI/Settings/clipboard).
+        if json {
+            let out = JSONValue.object(resultPairs).serialized(indent: 2, ensureAscii: false) + "\n"
+            return Outcome(stdout: out, stderr: "", exitCode: 0)
+        }
+
+        // 4. Human mode — helper always returns false (no bundled helper), so go
+        //    straight to guidance. Exit 0 even if Settings couldn't be opened.
+        _ = launchFullDiskAccessHelper(includeCli: true, wait: wait)
+        let settingsOpened = openFullDiskAccessSettings(open: openSettings)
+        let ansi = Ansi.resolve(noColorFlag: false)
+        let guidance = printFullDiskAccessGuidance(
+            settingsOpened: settingsOpened,
+            rerunCommand: "remctl doctor",
+            ansi: ansi,
+            env: env,
+            runPbcopy: runPbcopy
+        )
+        return Outcome(stdout: guidance + "\n", stderr: "", exitCode: 0)
+    }
 }
 
 struct Setup: ParsableCommand {
