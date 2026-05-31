@@ -38,16 +38,16 @@ struct Add: AsyncParsableCommand {
     @Option(name: .long, help: "URL; appended to notes") var url: String?
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
-    @Flag(name: [.short, .long], help: "Flag the reminder (Phase 3)") var flag = false
-    @Option(name: [.short, .long], help: "Comma-separated tags (Phase 3)") var tags: String?
+    @Flag(name: [.short, .long], help: "Flag the reminder") var flag = false
+    @Option(name: [.short, .long], help: "Comma-separated tags") var tags: String?
     @Flag(name: .long, help: "Categorize in a Groceries list") var grocery = false
-    @Option(name: .long, help: "Assign to an existing section (Phase 3)") var section: String?
-    @Option(name: .long, help: "Assign to a section by stable ID (Phase 3)") var sectionId: String?
-    @Option(name: .long, help: "Create a section and assign this reminder (Phase 3)") var newSection: String?
-    @Option(name: .long, help: "Add a subtask title or JSON object (repeatable, Phase 3)") var subtask: [String] = []
-    @Option(name: .long, help: "Add an image attachment path (repeatable, Phase 3)") var image: [String] = []
-    @Flag(inversion: .prefixedNo, help: "Set urgent state (Phase 3)") var urgent: Bool?
-    @Option(name: .long, help: "Early Reminder before due date, e.g. 15m, 1h, 2d (Phase 3)") var earlyReminder: String?
+    @Option(name: .long, help: "Assign to an existing section") var section: String?
+    @Option(name: .long, help: "Assign to a section by stable ID") var sectionId: String?
+    @Option(name: .long, help: "Create a section and assign this reminder") var newSection: String?
+    @Option(name: .long, help: "Add a subtask title or JSON object (repeatable)") var subtask: [String] = []
+    @Option(name: .long, help: "Add an image attachment path (repeatable)") var image: [String] = []
+    @Flag(inversion: .prefixedNo, help: "Set urgent state") var urgent: Bool?
+    @Option(name: .long, help: "Early Reminder before due date, e.g. 15m, 1h, 2d") var earlyReminder: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
@@ -310,16 +310,16 @@ struct Edit: AsyncParsableCommand {
     @Option(name: .long, help: "Location alarm trigger direction: arriving or leaving") var proximity: Proximity = .arriving
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
-    @Option(name: [.short, .long], help: "Comma-separated synced tags (Phase 3)") var tags: String?
+    @Option(name: [.short, .long], help: "Comma-separated synced tags") var tags: String?
     @Flag(name: .long, help: "Categorize in a Groceries list") var grocery = false
-    @Option(name: .long, help: "Assign to an existing section (Phase 3)") var section: String?
-    @Option(name: .long, help: "Assign to a section by stable ID (Phase 3)") var sectionId: String?
-    @Option(name: .long, help: "Create a section and assign this reminder (Phase 3)") var newSection: String?
-    @Option(name: .long, help: "Add a subtask title or JSON object (repeatable, Phase 3)") var subtask: [String] = []
-    @Option(name: .long, help: "Add an image attachment path (repeatable, Phase 3)") var image: [String] = []
-    @Flag(inversion: .prefixedNo, help: "Set the real flagged state (Phase 3)") var flagged: Bool?
-    @Flag(inversion: .prefixedNo, help: "Set urgent state (Phase 3)") var urgent: Bool?
-    @Option(name: .long, help: "Early Reminder before due date (Phase 3)") var earlyReminder: String?
+    @Option(name: .long, help: "Assign to an existing section") var section: String?
+    @Option(name: .long, help: "Assign to a section by stable ID") var sectionId: String?
+    @Option(name: .long, help: "Create a section and assign this reminder") var newSection: String?
+    @Option(name: .long, help: "Add a subtask title or JSON object (repeatable)") var subtask: [String] = []
+    @Option(name: .long, help: "Add an image attachment path (repeatable)") var image: [String] = []
+    @Flag(inversion: .prefixedNo, help: "Set the real flagged state") var flagged: Bool?
+    @Flag(inversion: .prefixedNo, help: "Set urgent state") var urgent: Bool?
+    @Option(name: .long, help: "Early Reminder before due date") var earlyReminder: String?
     @Option(name: .long, help: "Location address (not supported for location alarms)") var address: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false

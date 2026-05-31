@@ -70,10 +70,10 @@ struct ListCreate: AsyncParsableCommand {
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed. `--private` is removed
     // project-wide in Phase 2, so these always refuse.
-    @Option(name: .long, help: "Official Reminders list symbol name (Phase 3)") var symbol: String?
-    @Option(name: .long, help: "Emoji badge (Phase 3)") var emoji: String?
-    @Flag(name: .long, help: "Create as a Groceries list (Phase 3)") var groceries = false
-    @Option(name: .long, help: "Groceries locale identifier, e.g. en_US (Phase 3)") var groceryLocale: String?
+    @Option(name: .long, help: "Official Reminders list symbol name") var symbol: String?
+    @Option(name: .long, help: "Emoji badge") var emoji: String?
+    @Flag(name: .long, help: "Create as a Groceries list") var groceries = false
+    @Option(name: .long, help: "Groceries locale identifier, e.g. en_US") var groceryLocale: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
