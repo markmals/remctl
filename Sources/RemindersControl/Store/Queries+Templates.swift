@@ -30,6 +30,14 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql: sql) }) ?? []
     }
 
+    /// q_template_exact_name_count (remctl:581): live templates with this EXACT name
+    /// (case-sensitive). Used to reject duplicate template-create.
+    public func templateExactNameCount(name: String) -> Int {
+        (try? queue.read { try Int.fetchOne($0, sql:
+            "SELECT COUNT(*) FROM ZREMCDTEMPLATE WHERE ZMARKEDFORDELETION = 0 AND ZNAME = ?",
+            arguments: [name]) ?? 0 }) ?? 0
+    }
+
     /// q_template_matches by id or name.
     public func templateMatches(name: String? = nil, templateId: Int? = nil) -> [Row] {
         let cols = templateSelectColumns().joined(separator: ", ")

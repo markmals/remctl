@@ -52,6 +52,89 @@ extension RemindersStore {
         if nm.count > 1 { return candidates(nm) }
         return .notFound
     }
+
+    /// Resolve a list AND report which tier matched, mirroring `resolve_list_ref`'s `method`
+    /// (`id`/`exact`/`case_insensitive`/`normalized`). Used by template-create to build the full
+    /// `list_ref_payload`. `.found` carries the resolution method as the title-adjacent payload.
+    public func resolveListRefWithMethod(name: String?, listId: Int?)
+        -> (resolution: ListResolution, method: String)
+    {
+        if listId != nil {
+            return (resolveListRef(name: name, listId: listId), "id")
+        }
+        guard let name, !name.isEmpty else { return (.notFound, "exact") }
+        let rows = listsForResolution()
+        // tier 1: exact
+        if rows.filter({ $0.string("ZNAME") == name }).count == 1 {
+            return (resolveListRef(name: name, listId: nil), "exact")
+        }
+        // tier 2: case-insensitive
+        let folded = unicodeCasefold(name)
+        if rows.filter({ unicodeCasefold($0.string("ZNAME") ?? "") == folded }).count == 1 {
+            return (resolveListRef(name: name, listId: nil), "case_insensitive")
+        }
+        // tier 3: normalized
+        return (resolveListRef(name: name, listId: nil), "normalized")
+    }
+
+    /// Re-read a resolved list (by Z_PK) with the FULL `list_select_columns` set so callers can
+    /// build a complete `list_ref_payload` (grocery fields require those columns).
+    public func listRowByPkFull(_ pk: Int) -> GRDB.Row? {
+        let cols = listSelectColumns().joined(separator: ", ")
+        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''"
+        return try? queue.read { try Row.fetchOne($0, sql: sql, arguments: [pk]) }
+    }
+
+    /// q_list_reminder_count_for_template (remctl:994): count of live, account-attached reminders in
+    /// a list (gating the template-create post-write poll). Adds `ZCOMPLETED = 0` unless
+    /// `includeCompleted`. Returns nil when the underlying query errors (mirrors the Python
+    /// try/except sqlite3.OperationalError → None).
+    public func listReminderCountForTemplate(listPk: Int, includeCompleted: Bool) -> Int? {
+        var where_ = ["ZMARKEDFORDELETION = 0", "ZLIST = ?", "ZACCOUNT IS NOT NULL"]
+        if !includeCompleted { where_.append("ZCOMPLETED = 0") }
+        let sql = "SELECT COUNT(*) FROM ZREMCDREMINDER WHERE \(where_.joined(separator: " AND "))"
+        return try? queue.read { try Int.fetchOne($0, sql: sql, arguments: [listPk]) }
+    }
+
+    /// Re-read a newly created list by its CloudKit identifier after template-apply
+    /// (remctl:4362): `SELECT … FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3
+    /// AND ZCKIDENTIFIER = ?` with the full `list_select_columns` set (for `list_to_dict`).
+    public func listRowByCkid(_ ckid: String) -> GRDB.Row? {
+        let cols = listSelectColumns().joined(separator: ", ")
+        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZCKIDENTIFIER = ?"
+        return try? queue.read { try Row.fetchOne($0, sql: sql, arguments: [ckid]) }
+    }
+}
+
+/// Port of `list_ref_payload` (remctl:789): ordered keys id, title, objectUUID, requested, method,
+/// isGroceries, [grocery]. `requested` is the original user input string (name or "id N").
+public func listRefPayload(_ row: ReminderRow, requested: String?, method: String) -> [(String, JSONValue)] {
+    let isGroceries = isGroceryListRow(row)
+    var payload: [(String, JSONValue)] = [
+        ("id", .int(row.int("Z_PK") ?? 0)),
+        ("title", row.string("ZNAME").map { .string($0) } ?? .null),
+        ("objectUUID", row.string("ZCKIDENTIFIER").map { .string($0) } ?? .null),
+        ("requested", requested.map { .string($0) } ?? .null),
+        ("method", .string(method)),
+        ("isGroceries", .bool(isGroceries)),
+    ]
+    if let grocery = groceryListPayload(row), isGroceries || groceryHasAnyTruthyRef(grocery) {
+        payload.append(("grocery", .object(grocery)))
+    }
+    return payload
+}
+
+/// Local copy of the grocery-truthiness predicate (ListSerializer's is private).
+private func groceryHasAnyTruthyRef(_ pairs: [(String, JSONValue)]) -> Bool {
+    pairs.contains { _, v in
+        switch v {
+        case .bool(let b): return b
+        case .string(let s): return !s.isEmpty
+        case .int(let i): return i != 0
+        case .double(let d): return d != 0
+        default: return false
+        }
+    }
 }
 
 extension RemindersStore {
