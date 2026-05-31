@@ -59,7 +59,7 @@ struct Import: AsyncParsableCommand {
 
     func run() async throws {
         let path = file, json = self.json
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
             await Self.perform(
                 path: path,
                 readFile: { p in
@@ -70,7 +70,7 @@ struct Import: AsyncParsableCommand {
                     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
                     return (try? Data(contentsOf: url)) ?? Data()
                 },
-                json: json, store: store, writer: writer)
+                json: json, store: store, writer: writer, private: priv)
         })
     }
 
@@ -84,13 +84,14 @@ struct Import: AsyncParsableCommand {
     ///      Swift's decoder text differs, so only the `Failed to read JSON: ` prefix matches.
     ///   2. Non-object array elements: Python would crash on `item.get(...)` for a non-dict;
     ///      this port treats them as title-less (Warning + errors += 1) rather than crashing.
-    ///   3. `flagged: true` items: Add's `--flag` is a stubbed Phase-3 flag, so such items make
-    ///      `Add.perform` return a Phase-3 error (exit 1) and are counted as `errors` — import
-    ///      faithfully inherits add's stubs.
+    ///   3. `flagged: true` items: with P12 the imply-rule routes `--flag` ALONE through the
+    ///      PUBLIC EventKit priority-proxy (no private-only flag is set during import), so such
+    ///      items now succeed (and count as `created`) rather than erroring. The private writer is
+    ///      threaded through but never invoked, since import never sets a private-only flag.
     static func perform(
         path: String,
         readFile: (String) -> Data?,
-        json: Bool, store: RemindersStore, writer: RemindersWriter,
+        json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current
     ) async -> WriteOutcome {
 
@@ -153,7 +154,7 @@ struct Import: AsyncParsableCommand {
                     due: due, priority: priority,
                     recurrence: str("recurrence"), alarm: str("alarm"),
                     url: str("url"), flag: flag, tags: nil,
-                    json: false, store: store, writer: writer, now: now, calendar: calendar)
+                    json: false, store: store, writer: writer, private: priv, now: now, calendar: calendar)
             }
             out += outcome.stdout
             err += outcome.stderr

@@ -35,7 +35,7 @@ import GRDB
     @Test func editTitle() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Edit.perform(id: 42, title: "New", json: false, store: s, writer: m)
+        let out = try await Edit.perform(id: 42, title: "New", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(out.stdout == "Updated #42\n")
         let u = updatedWrite(m)
@@ -46,7 +46,7 @@ import GRDB
     @Test func editTitleJSON() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Edit.perform(id: 42, title: "New", json: true, store: s, writer: m)
+        let out = try await Edit.perform(id: 42, title: "New", json: true, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(out.stdout == #"{"status": "updated", "id": 42}"# + "\n")
     }
@@ -56,14 +56,14 @@ import GRDB
     @Test func dueClear() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.due == .clear)
     }
 
     @Test func dueSet() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, due: "tomorrow", json: false, store: s, writer: m, now: fixedNow, calendar: .current)
+        _ = try await Edit.perform(id: 42, due: "tomorrow", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         if case .set? = updatedWrite(m)?.write.due {} else {
             Issue.record("expected due == .set(date), got \(String(describing: updatedWrite(m)?.write.due))")
         }
@@ -73,7 +73,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, due: "notadate", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 2)
         #expect(out.stderr.contains("could not parse due date"))
@@ -98,7 +98,7 @@ import GRDB
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Edit.perform(id: 42, due: iso, json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        let out = try await Edit.perform(id: 42, due: iso, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         #expect(out.exitCode == 0)
         // Two updates: first the nudge (instant + 1h), then the real update.
         #expect(m.calls.count == 2)
@@ -121,7 +121,7 @@ import GRDB
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Edit.perform(id: 42, list: "work", json: false, store: s, writer: m)
+        let out = try await Edit.perform(id: 42, list: "work", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(updatedWrite(m)?.write.list == "Work")
         #expect(out.stdout.contains("List: Work"))
@@ -131,7 +131,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         // Exact match -> "list" present, no resolvedList.
-        let out = try await Edit.perform(id: 42, list: "Work", json: true, store: s, writer: m)
+        let out = try await Edit.perform(id: 42, list: "Work", json: true, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.stdout.contains(#""list": "Work""#))
         #expect(!out.stdout.contains("resolvedList"))
     }
@@ -140,7 +140,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, list: "X", listId: 10, json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, list: "X", listId: 10, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: pass either a list name or --list-id, not both.\n")
@@ -152,7 +152,7 @@ import GRDB
     @Test func noChanges() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Edit.perform(id: 42, json: false, store: s, writer: m)
+        let out = try await Edit.perform(id: 42, json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(out.stdout == "Nothing to update.\n")
         #expect(m.calls.isEmpty)
@@ -164,7 +164,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, priority: "h", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, priority: "h", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: priority must be high, medium, low, or none.\n")
@@ -174,7 +174,7 @@ import GRDB
     @Test func priorityHigh() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, priority: "high", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, priority: "high", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.priority == 1)
     }
 
@@ -183,14 +183,14 @@ import GRDB
     @Test func alarmClearKeyword() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, alarm: "clear", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, alarm: "clear", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.alarm == .clear)
     }
 
     @Test func alarmRelative() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, alarm: "15m", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.alarm == .relativeOffset(-900))
     }
 
@@ -198,7 +198,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, alarm: "soon", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, alarm: "soon", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: could not parse alarm 'soon'. Use 15m, 1h, 1d, an absolute date, or clear.\n")
@@ -210,7 +210,7 @@ import GRDB
     @Test func locationAlarm() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.location == LocationAlarmWrite(title: nil, latitude: 37.3, longitude: -122.0, radius: 100.0, proximity: "arriving"))
     }
 
@@ -218,37 +218,134 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, latitude: 37.3, json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, latitude: 37.3, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("latitude and longitude"))
         #expect(m.calls.isEmpty)
     }
 
-    // MARK: - Phase-3 stubs
+    // MARK: - Private-only edits (P12)
 
-    @Test func stubbedFlaggedErrorsPhase3() async throws {
+    @Test func flaggedRoutesPrivateOnly() async throws {
+        // --flagged is private-only and changes no editable field → private-ONLY branch: no EventKit
+        // update, just setFlagged. Human output prints the private summary line.
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
-        let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, flagged: true, json: false, store: s, writer: m)
-        }
-        #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--flagged"))
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, flagged: true, json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(m.calls.isEmpty)                                    // no editable change → no update
+        #expect(mp.calls == [.setFlagged(id: "ABC", flagged: true)])
+        #expect(out.stdout == "Updated #42\nPrivate metadata: applied 1 update\n")
+    }
+
+    @Test func unflaggedRoutesPrivateOnly() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, flagged: false, json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setFlagged(id: "ABC", flagged: false)])
+    }
+
+    @Test func urgentRoutesPrivateOnly() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, urgent: true, json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls == [.setUrgent(id: "ABC", urgent: true)])
+    }
+
+    @Test func privateOnlyJSONUsesIndentTwo() async throws {
+        // cmd_edit:5584 quirk: the private-ONLY branch emits indent=2 JSON (vs no-indent main path).
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, flagged: true, json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(out.stdout.contains("\n  \"status\": \"updated\"")) // indent=2, two-space pad
+        #expect(out.stdout.contains(#""private": ["#))
+    }
+
+    @Test func editTagsRoutesPrivate() async throws {
+        // edit --tags has no public fallback (cmd_edit:5417) → always routes addPrivateMetadata.
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, tags: "a,b", json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.addPrivateMetadata(id: "ABC", urls: [], tags: ["a", "b"])])
         #expect(m.calls.isEmpty)
     }
 
-    @Test func stubbedUrgentErrorsPhase3() async throws {
+    @Test func sectionRoutesPrivateOnly() async throws {
+        // --section is private-only and resolves against the reminder's current list (ZLIST=10).
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (1,5,'Errands',10,'SEC-1',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (42,'T',10,1,0,0,'ABC')")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, section: "Errands", json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.assignSection(id: "ABC", sectionId: "SEC-1")])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func newSectionRoutesPrivateOnly() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, newSection: "Inbox", json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.addSectionAndAssign(id: "ABC", name: "Inbox")])
+    }
+
+    @Test func earlyReminderNoDueExitsOne() async throws {
+        // reminder 42 has no ZDUEDATE and no new due → guard fires (cmd_edit:5468).
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, urgent: true, json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, earlyReminder: "15m", json: false, store: s, writer: m, private: mp)
         }
         #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--urgent"))
+        #expect(out.stderr == "Error: Early Reminder requires a reminder due date.\n")
         #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func earlyReminderWithExistingDueOK() async throws {
+        // reminder has an existing ZDUEDATE → the guard passes even with no new --due.
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',700000000.0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, earlyReminder: "15m", json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.setEarlyReminder(id: "ABC", spec: .set(unit: 0, count: -15, existingIdentifiers: []))])
+    }
+
+    @Test func earlyReminderClearWithDueExitsOne() async throws {
+        // Clearing the due (-d clear) while requesting a non-clear early-reminder → guard fires.
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',700000000.0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, due: "clear", earlyReminder: "15m", json: false, store: s, writer: m, private: mp)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: Early Reminder requires a reminder due date.\n")
+    }
+
+    @Test func editWithEditableChangeAndPrivateBothFire() async throws {
+        // A public field change (title) AND a private flag (--flagged): EventKit update runs, then
+        // the private fan-out, and the JSON attaches "private" after id (no-indent main path).
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, title: "New", flagged: true, json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(m.calls.count == 1)   // the EventKit update fired
+        #expect(mp.calls == [.setFlagged(id: "ABC", flagged: true)])
+        #expect(out.stdout == #"{"status": "updated", "id": 42, "private": [{"status": "updated"}]}"# + "\n")
     }
 
     // MARK: - Resolution refusals
@@ -257,7 +354,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 999, title: "X", json: false, store: s, writer: m)
+            try await Edit.perform(id: 999, title: "X", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: #999 not found\n")
@@ -273,7 +370,7 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, title: "X", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, title: "X", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("no stable identifier"))
@@ -286,14 +383,14 @@ import GRDB
     @Test func urlAloneBecomesNotes() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, url: "https://x", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.notes == "https://x")
     }
 
     @Test func urlMergedIntoNotes() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, notes: "body", url: "https://x", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, notes: "body", url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.notes == "body\n\nhttps://x")
     }
 
@@ -301,7 +398,7 @@ import GRDB
         // notes gate is `!= nil`: an empty-string notes still sets notes (Python notes_body is not None).
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, notes: "", json: false, store: s, writer: m)
+        _ = try await Edit.perform(id: 42, notes: "", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.notes == "")
     }
 
@@ -335,7 +432,7 @@ import GRDB
         let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
         let df = DateFormatter(); df.calendar = cal; df.locale = Locale(identifier: "en_US_POSIX")
         df.timeZone = cal.timeZone; df.dateFormat = "yyyy-MM-dd HH:mm"
-        _ = try await Edit.perform(id: 42, due: df.string(from: newInstant), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: df.string(from: newInstant), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
         #expect(u?.write.alarm == .absolute(newInstant))
@@ -354,7 +451,7 @@ import GRDB
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m, private: MockPrivateWriter(), calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .clear)
         #expect(u?.write.alarm == .clear)
@@ -397,7 +494,7 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
-        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
         #expect(u?.write.alarm == nil)
@@ -415,7 +512,7 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
-        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
         #expect(u?.write.alarm == nil)
@@ -435,7 +532,7 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
-        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
         #expect(u?.write.alarm == nil)
@@ -454,7 +551,7 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
-        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), alarm: "30m", json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), alarm: "30m", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
         // The explicit --alarm 30m (relative, -1800s) wins; carry does NOT override it.
@@ -468,12 +565,12 @@ import GRDB
     @Test func proximityValuesMap() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m1 = MockWriter()
-        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .leaving, json: false, store: s, writer: m1)
+        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .leaving, json: false, store: s, writer: m1, private: MockPrivateWriter())
         #expect(updatedWrite(m1)?.write.location?.proximity == "leaving")
 
         let (s2, dir2) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir2) }
         let m2 = MockWriter()
-        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .arriving, json: false, store: s2, writer: m2)
+        _ = try await Edit.perform(id: 42, latitude: 37.3, longitude: -122.0, proximity: .arriving, json: false, store: s2, writer: m2, private: MockPrivateWriter())
         #expect(updatedWrite(m2)?.write.location?.proximity == "arriving")
     }
 
@@ -501,7 +598,7 @@ import GRDB
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, due: "notadate", json: false, store: s, writer: m, now: fixedNow, calendar: cal)
+            try await Edit.perform(id: 42, due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         }
         #expect(out.exitCode == 2)
         #expect(out.stderr.contains("2023-11-14 15:00"))
@@ -516,7 +613,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, list: "X", listId: 10, due: "notadate", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, list: "X", listId: 10, due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: pass either a list name or --list-id, not both.\n")
@@ -528,7 +625,7 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, list: "Nonexistent", due: "notadate", json: false, store: s, writer: m)
+            try await Edit.perform(id: 42, list: "Nonexistent", due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("list not found"))

@@ -6,6 +6,24 @@ let writeCommands: [ParsableCommand.Type] = [
     FlagCmd.self, Unflag.self, Link.self, Open.self,
 ]
 
+/// Build the `private` JSON array from a list of `PrivateResult`s (in emission order). Each element
+/// is `{status, <echoed fields sorted by key>}` — the same shape P8/P9 use for the single-result
+/// `private` sub-object. Mirrors `payload["private"] = private_results` (cmd_add:5239/cmd_edit:5567).
+func privateResultsJSON(_ results: [PrivateResult]) -> JSONValue {
+    .array(results.map { r in
+        var pairs: [(String, JSONValue)] = [("status", .string(r.status))]
+        for key in r.fields.keys.sorted() { pairs.append((key, r.fields[key]!)) }
+        return .object(pairs)
+    })
+}
+
+/// The human-mode private summary line (cmd_add:5248 / cmd_edit:5574,5587):
+/// `Private metadata: applied N update(s)` with `s` only when N != 1.
+func privateMetadataLine(_ results: [PrivateResult]) -> String {
+    let n = results.count
+    return "Private metadata: applied \(n) update\(n != 1 ? "s" : "")\n"
+}
+
 struct Add: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "add", abstract: "Add a reminder.")
 
@@ -35,14 +53,14 @@ struct Add: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
             try await Self.perform(
                 title: args.title, list: args.list, listId: args.listId, notes: args.notes,
                 due: args.due, priority: args.priority, recurrence: args.recurrence, alarm: args.alarm,
                 url: args.url, flag: args.flag, tags: args.tags, grocery: args.grocery,
                 section: args.section, sectionId: args.sectionId, newSection: args.newSection,
                 subtask: args.subtask, image: args.image, urgent: args.urgent, earlyReminder: args.earlyReminder,
-                json: args.json, store: store, writer: writer)
+                json: args.json, store: store, writer: writer, private: priv)
         })
     }
 
@@ -54,9 +72,17 @@ struct Add: AsyncParsableCommand {
         url: String? = nil, flag: Bool = false, tags: String? = nil, grocery: Bool = false,
         section: String? = nil, sectionId: String? = nil, newSection: String? = nil,
         subtask: [String] = [], image: [String] = [], urgent: Bool? = nil, earlyReminder: String? = nil,
-        json: Bool, store: RemindersStore, writer: RemindersWriter,
+        json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current
     ) async throws -> WriteOutcome {
+
+        // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
+        // For P12's scope the private-only flags are section/section-id/new-section/urgent/
+        // early-reminder. (grocery/subtask/image also imply-private but stay phase3-guarded below.)
+        // When wantsPrivate, --flag/--tags/--url route through the private writer; otherwise they
+        // keep their Phase-2 public behavior (EventKit flag-proxy / title #hashtags / notes-append).
+        let wantsPrivate = section != nil || sectionId != nil || newSection != nil
+            || urgent != nil || earlyReminder != nil
 
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
         var dueDate: Date? = nil
@@ -91,20 +117,28 @@ struct Add: AsyncParsableCommand {
             priorityValue = p
         }
 
-        // 2. Phase-3 stub guard. Checked AFTER due/priority/alarm/recurrence validation
-        //    (so a bad due still surfaces as exit 2 first) but BEFORE any write/list resolution.
-        if flag { throw phase3("--flag") }
-        if tags != nil { throw phase3("--tags") }
+        // 2. Parse the early-reminder spec up front (validates the format; a bad spec throws the
+        //    CLIError from PrivateParsing.parseEarlyReminder). Mirrors parse_early_reminder being
+        //    invoked from early_reminder_requires_due_date(a) (remctl:2505).
+        var parsedEarly: EarlyReminderWrite? = nil
+        if let earlyReminder {
+            parsedEarly = try PrivateParsing.parseEarlyReminder(earlyReminder)
+        }
+
+        // 2a. Early-Reminder due-date guard (cmd_add:5156): a non-clear early-reminder requires a
+        //     due date on the new reminder. Runs AFTER due/priority/alarm/recurrence validation.
+        if case .set = parsedEarly, dueDate == nil {
+            throw CLIError("Early Reminder requires a reminder due date.")
+        }
+
+        // 2b. Phase-3 stub guard for the flags still owned by P13/P14. The P12 flags (--flag,
+        //     --tags, --section, --section-id, --new-section, --urgent, --early-reminder) are now
+        //     wired below via the public/private imply-split; only grocery/subtask/image remain.
         if grocery { throw phase3("--grocery") }
-        if section != nil { throw phase3("--section") }
-        if sectionId != nil { throw phase3("--section-id") }
-        if newSection != nil { throw phase3("--new-section") }
         if !subtask.isEmpty { throw phase3("--subtask") }
         if !image.isEmpty { throw phase3("--image") }
-        if urgent != nil { throw phase3("--urgent") }
-        if earlyReminder != nil { throw phase3("--early-reminder") }
 
-        // 2b. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
+        // 2c. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
         //     (remctl-bridge.swift:359) that EventKitWriter.create reproduces — NO trimming,
         //     so a whitespace-only title is accepted. Runs AFTER due-validation (exit 2 wins)
         //     and the Phase-3 stub guard (private-refusal fires first), matching parity.
@@ -122,29 +156,59 @@ struct Add: AsyncParsableCommand {
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
         }
 
-        // 4. Build the ReminderWrite.
+        // 4. Public-fallback --tags: when NOT wantsPrivate, inline `#hashtag` TITLE-append
+        //    (cmd_add:5188-5193). Split on `,`, strip, prefix `#` if missing, skip if already in
+        //    the title. When wantsPrivate, tags route to addPrivateMetadata instead (step 7).
+        var finalTitle = title
+        if let tags, !wantsPrivate {
+            for raw in tags.split(separator: ",", omittingEmptySubsequences: false) {
+                let t = raw.trimmingCharacters(in: .whitespaces)
+                let h = t.hasPrefix("#") ? t : "#\(t)"
+                if !finalTitle.contains(h) { finalTitle += " \(h)" }
+            }
+        }
+
+        // 5. Build the ReminderWrite.
         var write = ReminderWrite()
-        write.title = title
+        write.title = finalTitle
         if let resolvedListTitle { write.list = resolvedListTitle }
         if let notes, !notes.isEmpty { write.notes = notes }
         if let dueDate { write.due = .set(dueDate) }
         if let priorityValue { write.priority = priorityValue }
-        if let url, !url.isEmpty { write.url = url }   // EventKitWriter appends to notes (Phase 2)
+        // --url: PUBLIC path only appends to notes (cmd_add:5203 `if a.url and not wants_private`).
+        // When wantsPrivate, the url routes to addPrivateMetadata (step 7) instead.
+        if let url, !url.isEmpty, !wantsPrivate { write.url = url }
+        // --flag: PUBLIC path only uses the EventKit priority-proxy (cmd_add:5202
+        // `if a.flag and not wants_private`). When wantsPrivate it routes to setFlagged (step 7).
+        if flag && !wantsPrivate { write.flagged = true }
         if let parsedRecurrence { write.recurrence = parsedRecurrence }
         if let parsedAlarm { write.alarm = parsedAlarm }
 
-        // 5. Create.
+        // 6. Create.
         let result = try await writer.create(write)
 
-        // 6. Re-read for the numeric Z_PK by the created ZCKIDENTIFIER.
+        // 7. Private fan-out (only when wantsPrivate). Operates on the created reminder's ckid.
+        //    Routes --flag→setFlagged, --url+--tags→addPrivateMetadata, plus section/urgent/
+        //    early-reminder (cmd_add:5211-5220 apply_private_changes).
+        var privateResults: [PrivateResult] = []
+        if wantsPrivate {
+            privateResults = try await PrivateChanges.apply(
+                reminderCkid: result.id ?? "",
+                url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
+                section: section, sectionId: sectionId, newSection: newSection,
+                flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
+                store: store, listPk: resolution?.id, private: priv)
+        }
+
+        // 8. Re-read for the numeric Z_PK by the created ZCKIDENTIFIER.
         let numericId = result.id.flatMap { store.reminder(identifier: $0)?.int("Z_PK") }
 
-        // 7. Output.
+        // 9. Output.
         if json {
             var pairs: [(String, JSONValue)] = [
                 ("status", .string("created")),
                 ("id", .string(result.id ?? "")),
-                ("title", .string(title)),
+                ("title", .string(finalTitle)),
             ]
             if let resolution, resolution.method != "exact" {
                 pairs.append(("resolvedList", .object([
@@ -155,13 +219,16 @@ struct Add: AsyncParsableCommand {
                 ])))
             }
             if let numericId { pairs.append(("numericId", .int(numericId))) }
+            // "private" attaches AFTER numericId (cmd_add:5238-5239).
+            if !privateResults.isEmpty { pairs.append(("private", privateResultsJSON(privateResults))) }
             return .ok(JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
         }
-        var out = "Created: \(safeDisplay(title))\n"
+        var out = "Created: \(safeDisplay(finalTitle))\n"
         if let resolution, resolution.method != "exact" {
             out += "List: \(safeDisplay(resolution.title)) (resolved from \(safeDisplay(resolution.requested)))\n"
         }
         if let numericId { out += "ID: #\(numericId)\n" }
+        if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
         return .ok(out)
     }
 
@@ -258,7 +325,7 @@ struct Edit: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
             try await Self.perform(
                 id: args.id, title: args.title, list: args.list, listId: args.listId,
                 notes: args.notes, due: args.due, priority: args.priority, url: args.url,
@@ -268,7 +335,7 @@ struct Edit: AsyncParsableCommand {
                 tags: args.tags, grocery: args.grocery, section: args.section, sectionId: args.sectionId,
                 newSection: args.newSection, subtask: args.subtask, image: args.image,
                 flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder, address: args.address,
-                json: args.json, store: store, writer: writer)
+                json: args.json, store: store, writer: writer, private: priv)
         })
     }
 
@@ -283,7 +350,7 @@ struct Edit: AsyncParsableCommand {
         tags: String? = nil, grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil, address: String? = nil,
-        json: Bool, store: RemindersStore, writer: RemindersWriter,
+        json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current
     ) async throws -> WriteOutcome {
 
@@ -294,21 +361,30 @@ struct Edit: AsyncParsableCommand {
         let currentDue = row.double("ZDUEDATE")
         let currentDisplay = row.double("ZDISPLAYDATEDATE")
 
-        // 2. Phase-3 stub guard FIRST. This is the analog of Python's
-        //    `refuse_private_args_without_opt_in(a)` which runs at the very top of `cmd_edit`
-        //    (remctl:5416), before list resolution and field validation. (In Swift the row must be
-        //    resolved first — steps above — because not-found / identifier refusal need the row.)
-        if tags != nil { throw phase3("--tags") }
+        // 2. Phase-3 stub guard for the flags still owned by P13/P14. The P12 flags (--tags,
+        //    --flagged, --section, --section-id, --new-section, --urgent, --early-reminder) are now
+        //    wired below via the private fan-out; only grocery/subtask/image/address remain.
+        //    (--address is P13's location work; reject for now.)
         if grocery { throw phase3("--grocery") }
-        if section != nil { throw phase3("--section") }
-        if sectionId != nil { throw phase3("--section-id") }
-        if newSection != nil { throw phase3("--new-section") }
         if !subtask.isEmpty { throw phase3("--subtask") }
         if !image.isEmpty { throw phase3("--image") }
-        if flagged != nil { throw phase3("--flagged") }
-        if urgent != nil { throw phase3("--urgent") }
-        if earlyReminder != nil { throw phase3("--early-reminder") }
         if address != nil { throw phase3("--address") }
+
+        // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
+        // For P12's scope on edit the private-only flags are section/section-id/new-section/
+        // flagged/urgent/early-reminder. (grocery/subtask/image stay phase3-guarded above.)
+        // On edit, --tags has NO public fallback (cmd_edit:5417 errors without --private), so it
+        // always routes through the private writer too — but tags ALONE is not "private-only" in
+        // the source's gating set; it implies private because private_changes_from_args includes
+        // it. So when --tags is the only private flag, we still want it private. Fold that in.
+        let wantsPrivate = section != nil || sectionId != nil || newSection != nil
+            || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil
+
+        // Parse the early-reminder spec up front (validates format; bad → CLIError).
+        var parsedEarly: EarlyReminderWrite? = nil
+        if let earlyReminder {
+            parsedEarly = try PrivateParsing.parseEarlyReminder(earlyReminder)
+        }
 
         // 3. List move, resolved BEFORE field validation to match cmd_edit source order
         //    (remctl:5425-5436 resolve the list; priority/recurrence/due/alarm validation only
@@ -355,6 +431,15 @@ struct Edit: AsyncParsableCommand {
             dueDate = parsed
         }
 
+        // 4a. Early-Reminder due-date guard (cmd_edit:5466-5469): a non-clear early-reminder
+        //     requires a due date. Clearing the due (-d clear) removes it → fail; otherwise fail
+        //     only when no new due is given AND the reminder has no existing ZDUEDATE.
+        if case .set = parsedEarly {
+            if dueIsClear || (dueDate == nil && currentDue == nil) {
+                throw CLIError("Early Reminder requires a reminder due date.")
+            }
+        }
+
         // Alarm: clear-keywords -> .clear; else parse; bad -> exit 1.
         let explicitAlarm = (alarm != nil && !(alarm!.isEmpty))
         var parsedAlarm: AlarmWrite? = nil
@@ -380,8 +465,10 @@ struct Edit: AsyncParsableCommand {
 
         // url merges into notes (notes + "\n\n" + url, or url alone). notes gate is `!= nil`:
         // an empty notes string still sets notes (mirrors Python `notes_body is not None`).
+        // PUBLIC path only (cmd_edit:5525 `if a.url and not wants_private`): when wantsPrivate the
+        // url routes to addPrivateMetadata instead of merging into notes.
         var notesBody = notes
-        if let url, !url.isEmpty {
+        if let url, !url.isEmpty, !wantsPrivate {
             notesBody = (notesBody != nil && !notesBody!.isEmpty) ? (notesBody! + "\n\n" + url) : url
         }
         if notesBody != nil { write.notes = notesBody; hasChanges = true }
@@ -428,9 +515,32 @@ struct Edit: AsyncParsableCommand {
             hasChanges = true
         }
 
-        // 8. has_changes gate: nothing editable changed -> no-op (Phase 2 has no private-only branch).
-        if !hasChanges {
+        // 8. has_changes / wants_private gate (cmd_edit:5546,5576):
+        //    • has_changes        → EventKit update, then private fan-out (if wantsPrivate).
+        //    • !has_changes && wantsPrivate → private-ONLY branch (no EventKit update; JSON indent=2).
+        //    • neither            → "Nothing to update." (mirrors the 5630 fallthrough).
+        if !hasChanges && !wantsPrivate {
             return .ok("Nothing to update.\n")
+        }
+
+        // Private-only branch: no editable field changed but private metadata was requested.
+        // The source emits indent=2 JSON here (cmd_edit:5584) — a deliberate quirk vs the main path.
+        if !hasChanges {
+            let privateResults = try await applyPrivate(
+                reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
+                newSection: newSection, flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                store: store, listPk: resolution?.id ?? row.int("ZLIST"), private: priv)
+            if json {
+                let obj: JSONValue = .object([
+                    ("status", .string("updated")),
+                    ("id", .int(id)),
+                    ("private", privateResultsJSON(privateResults)),
+                ])
+                return .ok(obj.serialized(indent: 2, ensureAscii: true) + "\n")
+            }
+            var out = "Updated #\(id)\n"
+            out += privateMetadataLine(privateResults)
+            return .ok(out)
         }
 
         // 9. Fire the nudge first (separate update), then the real update.
@@ -440,6 +550,15 @@ struct Edit: AsyncParsableCommand {
             _ = try await writer.update(id: ckid, nudge)
         }
         _ = try await writer.update(id: ckid, write)
+
+        // 9a. Private fan-out (only when wantsPrivate) on the resolved ckid (cmd_edit:5549).
+        var privateResults: [PrivateResult] = []
+        if wantsPrivate {
+            privateResults = try await applyPrivate(
+                reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
+                newSection: newSection, flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                store: store, listPk: resolution?.id ?? row.int("ZLIST"), private: priv)
+        }
 
         // 10. Output.
         if json {
@@ -458,11 +577,30 @@ struct Edit: AsyncParsableCommand {
                     ])))
                 }
             }
+            // "private" attaches AFTER list/resolvedList (cmd_edit:5566-5567).
+            if !privateResults.isEmpty { pairs.append(("private", privateResultsJSON(privateResults))) }
             return .ok(JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
         }
         var out = "Updated #\(id)\n"
         if let resolution { out += "List: \(safeDisplay(resolution.title))\n" }
+        if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
         return .ok(out)
+    }
+
+    /// Adapter: parse tags (CSV) and forward to the shared `PrivateChanges.apply` fan-out. The
+    /// `flagged` collapse for edit is just the boolean as-is (add collapses --flag→true upstream).
+    private static func applyPrivate(
+        reminderCkid: String, url: String?, tags: String?,
+        section: String?, sectionId: String?, newSection: String?,
+        flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
+        store: RemindersStore, listPk: Int?, private priv: PrivateWriter
+    ) async throws -> [PrivateResult] {
+        try await PrivateChanges.apply(
+            reminderCkid: reminderCkid,
+            url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
+            section: section, sectionId: sectionId, newSection: newSection,
+            flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,
+            store: store, listPk: listPk, private: priv)
     }
 
     /// Port of `should_carry_absolute_alarm_to_new_due` (remctl:1522). Returns true only when the

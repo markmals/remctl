@@ -33,6 +33,21 @@ extension RemindersStore {
     public func subtaskCount(pk: Int) -> Int {
         (try? queue.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM ZREMCDREMINDER WHERE ZPARENTREMINDER = ? AND ZMARKEDFORDELETION = 0 AND ZCOMPLETED = 0", arguments: [pk]) }) ?? 0
     }
+
+    /// Port of `early_reminder_identifiers_for_reminder` (remctl:2522).
+    /// Looks up the reminder by ckid and returns the existing due-date delta-alert
+    /// `identifier`s (so a `set_early_reminder` write can replace them). A missing
+    /// reminder or absent/invalid blob yields `[]`.
+    public func earlyReminderIdentifiers(reminderCkid: String) -> [String] {
+        guard !reminderCkid.isEmpty, let row = reminder(identifier: reminderCkid) else { return [] }
+        // ts is irrelevant for identifier extraction (creationDate is optional); pass a no-op.
+        return dueDateDeltaAlertsFromRow(row, ts: { _ in nil }).compactMap { alert in
+            for (k, v) in alert where k == "identifier" {
+                if case let .string(s) = v, !s.isEmpty { return s }
+            }
+            return nil
+        }
+    }
 }
 
 extension RemindersStore {

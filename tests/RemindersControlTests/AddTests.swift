@@ -32,7 +32,7 @@ import GRDB
     @Test func basicAddJSON() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
-        let out = try await Add.perform(title: "Buy milk", json: true, store: s, writer: m)
+        let out = try await Add.perform(title: "Buy milk", json: true, store: s, writer: m, private: MockPrivateWriter())
         // Compact, key order status,id,title; numericId absent (no such row in fixture).
         #expect(out.stdout == #"{"status": "created", "id": "EK-NEW", "title": "Buy milk"}"# + "\n")
         #expect(out.exitCode == 0)
@@ -44,7 +44,7 @@ import GRDB
     @Test func basicAddHuman() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
-        let out = try await Add.perform(title: "Buy milk", json: false, store: s, writer: m)
+        let out = try await Add.perform(title: "Buy milk", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.stdout == "Created: Buy milk\n")
         #expect(out.exitCode == 0)
         #expect(m.calls.count == 1)
@@ -53,7 +53,7 @@ import GRDB
     @Test func dueParsedSetsWrite() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Add.perform(title: "T", due: "tomorrow", json: false, store: s, writer: m, now: fixedNow, calendar: .current)
+        let out = try await Add.perform(title: "T", due: "tomorrow", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         let w = createdWrite(m)
         // The create call captured a non-nil .set(date) due.
@@ -64,7 +64,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", due: "notadate", json: false, store: s, writer: m)
+            try await Add.perform(title: "T", due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 2)
         #expect(out.stderr.contains("could not parse due date"))
@@ -75,7 +75,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", due: "notadate", json: true, store: s, writer: m)
+            try await Add.perform(title: "T", due: "notadate", json: true, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 2)
         // JSON payload goes to stderr with the invalid_due_date code + input echo.
@@ -88,7 +88,7 @@ import GRDB
     @Test func priorityHigh() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Add.perform(title: "T", priority: "high", json: false, store: s, writer: m)
+        let out = try await Add.perform(title: "T", priority: "high", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(createdWrite(m)?.priority == 1)
     }
@@ -97,7 +97,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", priority: "bogus", json: false, store: s, writer: m)
+            try await Add.perform(title: "T", priority: "bogus", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: priority must be high, medium, low, or none.\n")
@@ -108,7 +108,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", recurrence: "fortnightly", json: false, store: s, writer: m)
+            try await Add.perform(title: "T", recurrence: "fortnightly", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("could not parse recurrence"))
@@ -119,7 +119,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", alarm: "soon", json: false, store: s, writer: m)
+            try await Add.perform(title: "T", alarm: "soon", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: could not parse alarm 'soon'. Use 15m, 1h, 1d, or an absolute date.\n")
@@ -129,21 +129,21 @@ import GRDB
     @Test func recurrenceParses() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Add.perform(title: "T", recurrence: "daily", json: false, store: s, writer: m)
+        _ = try await Add.perform(title: "T", recurrence: "daily", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(createdWrite(m)?.recurrence == RecurrenceWrite(frequency: "daily", interval: 1))
     }
 
     @Test func alarmParses() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Add.perform(title: "T", alarm: "15m", json: false, store: s, writer: m)
+        _ = try await Add.perform(title: "T", alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(createdWrite(m)?.alarm == .relativeOffset(-900))
     }
 
     @Test func urlGoesToNotesAppendField() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Add.perform(title: "T", url: "https://x", json: false, store: s, writer: m)
+        _ = try await Add.perform(title: "T", url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
         // Phase 2: --url sets ReminderWrite.url; the EventKitWriter appends it to notes.
         #expect(createdWrite(m)?.url == "https://x")
     }
@@ -151,14 +151,14 @@ import GRDB
     @Test func notesSet() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Add.perform(title: "T", notes: "remember", json: false, store: s, writer: m)
+        _ = try await Add.perform(title: "T", notes: "remember", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(createdWrite(m)?.notes == "remember")
     }
 
     @Test func listResolutionAddsResolvedListJSON() async throws {
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
-        let out = try await Add.perform(title: "T", list: "work", json: true, store: s, writer: m)
+        let out = try await Add.perform(title: "T", list: "work", json: true, store: s, writer: m, private: MockPrivateWriter())
         // Resolved list name flows into the write.
         #expect(createdWrite(m)?.list == "Work")
         // case-insensitive method != exact, so resolvedList is emitted.
@@ -172,14 +172,14 @@ import GRDB
     @Test func listResolutionAddsResolvedListHuman() async throws {
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Add.perform(title: "T", list: "work", json: false, store: s, writer: m)
+        let out = try await Add.perform(title: "T", list: "work", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.stdout == "Created: T\nList: Work (resolved from work)\n")
     }
 
     @Test func exactListMatchOmitsResolvedList() async throws {
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Add.perform(title: "T", list: "Work", json: false, store: s, writer: m)
+        let out = try await Add.perform(title: "T", list: "Work", json: false, store: s, writer: m, private: MockPrivateWriter())
         // Exact match: no "List:" line.
         #expect(out.stdout == "Created: T\n")
         #expect(createdWrite(m)?.list == "Work")
@@ -189,30 +189,43 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", list: "Nope", json: false, store: s, writer: m)
+            try await Add.perform(title: "T", list: "Nope", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("list not found"))
         #expect(m.calls.isEmpty)   // resolution failed before write
     }
 
-    @Test func stubbedUrgentErrorsPhase3() async throws {
+    @Test func urgentRoutesPrivate() async throws {
+        // --urgent is a private-ONLY flag → wantsPrivate. The reminder is created via EventKit,
+        // then setUrgent is called on the new ckid. --flag and --tags in the SAME command now also
+        // route private (setFlagged / addPrivateMetadata) instead of their public proxies.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
-        let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", urgent: true, json: false, store: s, writer: m)
-        }
-        #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--urgent"))
-        #expect(m.calls.isEmpty)
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", url: "https://x", flag: true, tags: "work,home",
+                                        urgent: true, json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        // Public proxies are NOT used when wantsPrivate: title keeps no #hashtags, write.flagged nil,
+        // write.url nil.
+        let w = createdWrite(m)
+        #expect(w?.title == "T")
+        #expect(w?.flagged == nil)
+        #expect(w?.url == nil)
+        // Private fan-out emission order: addPrivateMetadata, setFlagged, setUrgent.
+        #expect(mp.calls == [
+            .addPrivateMetadata(id: "EK-NEW", urls: ["https://x"], tags: ["work", "home"]),
+            .setFlagged(id: "EK-NEW", flagged: true),
+            .setUrgent(id: "EK-NEW", urgent: true),
+        ])
+        #expect(out.stdout == "Created: T\nPrivate metadata: applied 3 updates\n")
     }
 
     @Test func stubbedGroceryErrorsPhase3() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", grocery: true, json: false, store: s, writer: m)
+            try await Add.perform(title: "T", grocery: true, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("Phase 3"))
@@ -225,7 +238,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", due: "notadate", grocery: true, json: false, store: s, writer: m)
+            try await Add.perform(title: "T", due: "notadate", grocery: true, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 2)
         #expect(out.stderr.contains("could not parse due date"))
@@ -238,7 +251,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "", json: false, store: s, writer: m)
+            try await Add.perform(title: "", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: title is required for create\n")
@@ -250,7 +263,7 @@ import GRDB
         // title is NOT rejected by the core; it flows through to the writer unchanged.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let out = try await Add.perform(title: "   ", json: false, store: s, writer: m)
+        let out = try await Add.perform(title: "   ", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
         #expect(createdWrite(m)?.title == "   ")
     }
@@ -260,7 +273,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "", due: "notadate", json: false, store: s, writer: m)
+            try await Add.perform(title: "", due: "notadate", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 2)
         #expect(out.stderr.contains("could not parse due date"))
@@ -268,15 +281,16 @@ import GRDB
     }
 
     @Test func stubFlagBeatsEmptyTitle() async throws {
-        // The Phase-3 stub guard (private-refusal) fires before the bridge's title rejection.
+        // The remaining Phase-3 stub guard (--grocery, still guarded for P14) fires before the
+        // bridge's title rejection.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Add.perform(title: "", urgent: true, json: false, store: s, writer: m)
+            try await Add.perform(title: "", grocery: true, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--urgent"))
+        #expect(out.stderr.contains("--grocery"))
         #expect(m.calls.isEmpty)
     }
 
@@ -288,10 +302,101 @@ import GRDB
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
-        let outH = try await Add.perform(title: "Buy milk", json: false, store: s, writer: m)
+        let outH = try await Add.perform(title: "Buy milk", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(outH.stdout == "Created: Buy milk\nID: #77\n")
         let m2 = MockWriter(); m2.resultID = "EK-NEW"
-        let outJ = try await Add.perform(title: "Buy milk", json: true, store: s, writer: m2)
+        let outJ = try await Add.perform(title: "Buy milk", json: true, store: s, writer: m2, private: MockPrivateWriter())
         #expect(outJ.stdout == #"{"status": "created", "id": "EK-NEW", "title": "Buy milk", "numericId": 77}"# + "\n")
+    }
+
+    // MARK: - P12: public/private imply-split
+
+    @Test func flagAloneUsesPublicProxy() async throws {
+        // --flag with NO private-only flag → PUBLIC: EventKit priority-proxy (write.flagged=true),
+        // private writer NOT called.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", flag: true, json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.flagged == true)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func tagsAloneAppendsHashtagsToTitle() async throws {
+        // --tags with NO private-only flag → PUBLIC: inline #hashtag title-append; no priv call.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "Buy milk", tags: "work,home", json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.title == "Buy milk #work #home")
+        #expect(out.stdout == "Created: Buy milk #work #home\n")
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func tagsAlreadyInTitleSkipped() async throws {
+        // A tag whose #hashtag is already present in the title is NOT re-appended (cmd_add:5192).
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Add.perform(title: "Task #done", tags: "#done", json: false, store: s, writer: m, private: mp)
+        #expect(createdWrite(m)?.title == "Task #done")
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func tagsAndUrlRoutePrivateWhenWantsPrivate() async throws {
+        // With a private-only flag (--urgent), --tags & --url route to addPrivateMetadata; the title
+        // gets NO #hashtags and write.url stays nil.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"; let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "Buy milk", url: "https://x", tags: "work",
+                                        urgent: true, json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.title == "Buy milk")   // no #hashtag append
+        #expect(createdWrite(m)?.url == nil)
+        #expect(mp.calls == [
+            .addPrivateMetadata(id: "EK-NEW", urls: ["https://x"], tags: ["work"]),
+            .setUrgent(id: "EK-NEW", urgent: true),
+        ])
+    }
+
+    @Test func earlyReminderNoDueExitsOne() async throws {
+        // --early-reminder 15m with NO due → exit 1 with the exact source message.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = await WriteDispatch.perform {
+            try await Add.perform(title: "T", earlyReminder: "15m", json: false, store: s, writer: m, private: mp)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: Early Reminder requires a reminder due date.\n")
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func earlyReminderWithDueSetsSpec() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"; let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", due: "tomorrow", earlyReminder: "15m",
+                                        json: false, store: s, writer: m, private: mp, now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.setEarlyReminder(id: "EK-NEW", spec: .set(unit: 0, count: -15, existingIdentifiers: []))])
+    }
+
+    @Test func earlyReminderClearNoDueOK() async throws {
+        // `clear` is not a "set", so the due-date guard does NOT fire — it can clear with no due.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"; let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", earlyReminder: "clear", json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.setEarlyReminder(id: "EK-NEW", spec: .clear(existingIdentifiers: []))])
+    }
+
+    @Test func privateJSONArrayPresentDefaultSpacing() async throws {
+        // JSON mode: a "private" array of result objects, attached after numericId, DEFAULT spacing.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter(); mp.result = PrivateResult(status: "updated", fields: ["urgent": .bool(true)])
+        let out = try await Add.perform(title: "T", urgent: true, json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        // Each result obj is {status, <sorted fields>}; DEFAULT ": " / ", " spacing.
+        #expect(out.stdout == #"{"status": "created", "id": "EK-NEW", "title": "T", "private": [{"status": "updated", "urgent": true}]}"# + "\n")
     }
 }
