@@ -162,6 +162,20 @@ extension RemindersStore {
         ((try? queue.read { try Int.fetchOne($0, sql:
             "SELECT ZSHOULDCATEGORIZEGROCERYITEMS FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [pk]) }) ?? nil ?? 0) != 0
     }
+
+    /// Port of `q_list_by_pk` (remctl:984) restricted to the columns `require_grocery_list_target`
+    /// (remctl:2898) needs: the list's display name and its grocery flag. Mirrors the source WHERE
+    /// clause (Z_ENT=3, not deleted, named) — a non-list pk (or a deleted/unnamed list) returns nil,
+    /// which the caller maps to "Error: target list not found." Returns `(name, isGroceries)`.
+    public func groceryListTarget(pk: Int) -> (name: String, isGroceries: Bool)? {
+        guard let row = try? queue.read({ try Row.fetchOne($0, sql:
+            "SELECT ZNAME, ZSHOULDCATEGORIZEGROCERYITEMS FROM ZREMCDBASELIST "
+            + "WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''",
+            arguments: [pk]) }) ?? nil else { return nil }
+        let name = row.string("ZNAME") ?? ""
+        let isGroceries = (row.int("ZSHOULDCATEGORIZEGROCERYITEMS") ?? 0) != 0
+        return (name: name, isGroceries: isGroceries)
+    }
 }
 
 /// Command-level helper mirroring resolve_required_list_target_or_die — throws CLIError

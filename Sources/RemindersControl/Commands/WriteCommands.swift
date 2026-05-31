@@ -40,7 +40,7 @@ struct Add: AsyncParsableCommand {
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Flag(name: [.short, .long], help: "Flag the reminder (Phase 3)") var flag = false
     @Option(name: [.short, .long], help: "Comma-separated tags (Phase 3)") var tags: String?
-    @Flag(name: .long, help: "Categorize in a Groceries list (Phase 3)") var grocery = false
+    @Flag(name: .long, help: "Categorize in a Groceries list") var grocery = false
     @Option(name: .long, help: "Assign to an existing section (Phase 3)") var section: String?
     @Option(name: .long, help: "Assign to a section by stable ID (Phase 3)") var sectionId: String?
     @Option(name: .long, help: "Create a section and assign this reminder (Phase 3)") var newSection: String?
@@ -73,16 +73,17 @@ struct Add: AsyncParsableCommand {
         section: String? = nil, sectionId: String? = nil, newSection: String? = nil,
         subtask: [String] = [], image: [String] = [], urgent: Bool? = nil, earlyReminder: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
-        now: Date = Date(), calendar: Calendar = .current
+        now: Date = Date(), calendar: Calendar = .current,
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> WriteOutcome {
 
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
-        // The private-only flags are section/section-id/new-section/urgent/early-reminder plus
+        // The private-only flags are section/section-id/new-section/urgent/early-reminder/grocery plus
         // P13's --subtask/--image (both imply-private — apply_private_changes runs them on the ckid).
         // When wantsPrivate, --flag/--tags/--url route through the private writer; otherwise they
         // keep their Phase-2 public behavior (EventKit flag-proxy / title #hashtags / notes-append).
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
-            || urgent != nil || earlyReminder != nil
+            || urgent != nil || earlyReminder != nil || grocery
             || !subtask.isEmpty || !image.isEmpty
 
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
@@ -137,10 +138,6 @@ struct Add: AsyncParsableCommand {
         //     parse_subtask_specs / normalize_image_paths being invoked in apply_private_changes.
         let subtaskSpecs = try PrivateParsing.parseSubtaskSpecs(subtask)
         let imagePaths = PrivateParsing.normalizeImagePaths(image)
-
-        // 2c. Phase-3 stub guard for the flags still owned by P14 (grocery only; subtask/image are
-        //     wired below via the private fan-out).
-        if grocery { throw phase3("--grocery") }
 
         // 2d. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
         //     (remctl-bridge.swift:359) that EventKitWriter.create reproduces — NO trimming,
@@ -202,8 +199,10 @@ struct Add: AsyncParsableCommand {
                 section: section, sectionId: sectionId, newSection: newSection,
                 subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
+                grocery: grocery,
                 store: store, listPk: resolution?.id,
-                writer: writer, private: priv, now: now, calendar: calendar)
+                writer: writer, private: priv, now: now, calendar: calendar,
+                groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
         }
 
         // 8. Re-read for the numeric Z_PK by the created ZCKIDENTIFIER.
@@ -280,10 +279,6 @@ struct Add: AsyncParsableCommand {
             "+3d",
         ]
     }
-
-    private static func phase3(_ flag: String) -> WriteError {
-        WriteError("\(flag) requires the private metadata layer (Phase 3); not yet implemented.")
-    }
 }
 
 /// Location-alarm trigger direction. Mirrors Python argparse `choices=["arriving","leaving"]`
@@ -316,7 +311,7 @@ struct Edit: AsyncParsableCommand {
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Option(name: [.short, .long], help: "Comma-separated synced tags (Phase 3)") var tags: String?
-    @Flag(name: .long, help: "Categorize in a Groceries list (Phase 3)") var grocery = false
+    @Flag(name: .long, help: "Categorize in a Groceries list") var grocery = false
     @Option(name: .long, help: "Assign to an existing section (Phase 3)") var section: String?
     @Option(name: .long, help: "Assign to a section by stable ID (Phase 3)") var sectionId: String?
     @Option(name: .long, help: "Create a section and assign this reminder (Phase 3)") var newSection: String?
@@ -325,7 +320,7 @@ struct Edit: AsyncParsableCommand {
     @Flag(inversion: .prefixedNo, help: "Set the real flagged state (Phase 3)") var flagged: Bool?
     @Flag(inversion: .prefixedNo, help: "Set urgent state (Phase 3)") var urgent: Bool?
     @Option(name: .long, help: "Early Reminder before due date (Phase 3)") var earlyReminder: String?
-    @Option(name: .long, help: "Location address (Phase 3)") var address: String?
+    @Option(name: .long, help: "Location address (not supported for location alarms)") var address: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
@@ -357,7 +352,8 @@ struct Edit: AsyncParsableCommand {
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil, address: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
-        now: Date = Date(), calendar: Calendar = .current
+        now: Date = Date(), calendar: Calendar = .current,
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> WriteOutcome {
 
         // 1. Resolve pk -> (title, ckid) with the "edit it" refusal, and read the current row
@@ -373,22 +369,15 @@ struct Edit: AsyncParsableCommand {
         let subtaskSpecs = try PrivateParsing.parseSubtaskSpecs(subtask)
         let imagePaths = PrivateParsing.normalizeImagePaths(image)
 
-        // Phase-3 stub guard for the flags still owned by P14. The P12/P13 flags (--tags, --flagged,
-        // --section, --section-id, --new-section, --urgent, --early-reminder, --subtask, --image) are
-        // now wired below via the private fan-out; only grocery/address remain. (--address is the
-        // location-alarm address work; reject for now.)
-        if grocery { throw phase3("--grocery") }
-        if address != nil { throw phase3("--address") }
-
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
         // The private-only flags on edit are section/section-id/new-section/flagged/urgent/
-        // early-reminder plus P13's --subtask/--image (both imply-private).
+        // early-reminder/grocery plus P13's --subtask/--image (both imply-private).
         // On edit, --tags has NO public fallback (cmd_edit:5417 errors without --private), so it
         // always routes through the private writer too — but tags ALONE is not "private-only" in
         // the source's gating set; it implies private because private_changes_from_args includes
         // it. So when --tags is the only private flag, we still want it private. Fold that in.
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
-            || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil
+            || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
             || !subtask.isEmpty || !image.isEmpty
 
         // Parse the early-reminder spec up front (validates format; bad → CLIError).
@@ -468,6 +457,13 @@ struct Edit: AsyncParsableCommand {
             throw WriteError("Location alarms require latitude and longitude")
         }
 
+        // --address is only meaningful alongside a location alarm, and the location-alarm path is
+        // EventKit-expressible (no private street-address support yet). Mirrors validate_private_args
+        // (remctl:2483-2491): when --latitude/--longitude are present, an --address is rejected (exit 1).
+        if (latitude != nil || longitude != nil), address != nil {
+            throw WriteError("--address is not currently supported for location alarms.")
+        }
+
         // 5. Build the ReminderWrite from validated fields.
         var write = ReminderWrite()
         var hasChanges = false
@@ -540,9 +536,10 @@ struct Edit: AsyncParsableCommand {
             let privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
-                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly, grocery: grocery,
                 store: store, listPk: resolution?.id ?? row.int("ZLIST"),
-                writer: writer, private: priv, now: now, calendar: calendar)
+                writer: writer, private: priv, now: now, calendar: calendar,
+                groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
             if json {
                 let obj: JSONValue = .object([
                     ("status", .string("updated")),
@@ -570,9 +567,10 @@ struct Edit: AsyncParsableCommand {
             privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
-                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly, grocery: grocery,
                 store: store, listPk: resolution?.id ?? row.int("ZLIST"),
-                writer: writer, private: priv, now: now, calendar: calendar)
+                writer: writer, private: priv, now: now, calendar: calendar,
+                groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
         }
 
         // 10. Output.
@@ -608,19 +606,21 @@ struct Edit: AsyncParsableCommand {
         reminderCkid: String, url: String?, tags: String?,
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec], images: [String],
-        flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
+        flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?, grocery: Bool,
         store: RemindersStore, listPk: Int?,
         writer: RemindersWriter, private priv: PrivateWriter,
-        now: Date, calendar: Calendar
+        now: Date, calendar: Calendar,
+        groceryAttempts: Int, groceryDelay: Double
     ) async throws -> [PrivateResult] {
         try await PrivateChanges.apply(
             reminderCkid: reminderCkid,
             url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
             section: section, sectionId: sectionId, newSection: newSection,
             subtasks: subtasks, images: images,
-            flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,
+            flagged: flagged, urgent: urgent, earlyReminder: earlyReminder, grocery: grocery,
             store: store, listPk: listPk,
-            writer: writer, private: priv, now: now, calendar: calendar)
+            writer: writer, private: priv, now: now, calendar: calendar,
+            groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
     }
 
     /// Port of `should_carry_absolute_alarm_to_new_due` (remctl:1522). Returns true only when the
@@ -679,10 +679,6 @@ struct Edit: AsyncParsableCommand {
             if let d = df.date(from: iso) { return d }
         }
         return nil
-    }
-
-    private static func phase3(_ flag: String) -> WriteError {
-        WriteError("\(flag) requires the private metadata layer (Phase 3); not yet implemented.")
     }
 }
 

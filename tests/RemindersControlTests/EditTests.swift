@@ -701,15 +701,63 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
-    @Test func editAddressStillRejected() async throws {
-        // --address remains phase3-guarded in edit (P14 location work).
+    /// A Groceries list (pk 20, ckid CK-G) with a "Produce" section and reminder pk 50 (ckid GR1)
+    /// in it. When `sectioned`, GR1 is seeded as a member of Produce (auto-categorized).
+    private func withGroceryReminder(sectioned: Bool) throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZSHOULDCATEGORIZEGROCERYITEMS) VALUES (20,3,'Groceries',0,'CK-G',1)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (5,5,'Produce',20,'SEC-G',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (50,'Milk',20,1,0,0,'GR1')")
+            if sectioned {
+                let blob = #"{"memberships":[{"groupID":"SEC-G","memberID":"GR1"}]}"#
+                try db.execute(sql: "UPDATE ZREMCDBASELIST SET ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA = ? WHERE Z_PK = 20", arguments: [blob])
+            }
+        }
+    }
+
+    @Test func editGroceryAutoSectioned() async throws {
+        // --grocery on an edit of a reminder already auto-sectioned → reminders_auto, helper NOT called.
+        let (s, dir) = try withGroceryReminder(sectioned: true); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 50, grocery: true, json: false, store: s, writer: m, private: mp,
+                                         groceryAttempts: 1, groceryDelay: 0)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls.isEmpty)            // auto-sectioned → no helper
+        #expect(m.calls.isEmpty)             // grocery alone → no editable change (private-only branch)
+    }
+
+    @Test func editGroceryNeedsHelper() async throws {
+        // --grocery where the reminder is NOT sectioned → the helper is called with the list ckid.
+        let (s, dir) = try withGroceryReminder(sectioned: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 50, grocery: true, json: false, store: s, writer: m, private: mp,
+                                   groceryAttempts: 1, groceryDelay: 0)
+        #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR1"])])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func editAddressRejected() async throws {
+        // --address WITH location flags → exit 1 (validate_private_args:2483-2491). The street-address
+        // form is not supported for location alarms; the rejection only fires alongside --lat/--long.
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, address: "1 Main St", json: false, store: s, writer: m, private: MockPrivateWriter())
+            try await Edit.perform(id: 42, latitude: 1, longitude: 2, address: "X", json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("--address"))
+        #expect(out.stderr == "Error: --address is not currently supported for location alarms.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func editAddressAloneIsIgnored() async throws {
+        // --address WITHOUT location flags is silently ignored (no private flag, no editable change)
+        // → "Nothing to update." Mirrors validate_private_args, where the address rejection is gated
+        // entirely behind the presence of --latitude/--longitude.
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, address: "1 Main St", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(out.stdout == "Nothing to update.\n")
         #expect(m.calls.isEmpty)
     }
 }

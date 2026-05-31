@@ -15,11 +15,12 @@ import Foundation
 ///   6. set_flagged            (flag / flagged collapsed)    — P12
 ///   7. set_urgent             (urgent)                      — P12
 ///   8. set_early_reminder     (early-reminder)              — P12
-///   9. add_location_alarm     (latitude/longitude)          — P14  (placeholder)
-///  10. categorize_grocery_items (grocery)                   — P14  (placeholder)
+///   9. add_location_alarm     (latitude/longitude)          — public/bridge path (not here)
+///  10. categorize_grocery_items (grocery)                   — P14
 ///
 /// P12 implements steps 1–3, 6–8. P13 implements steps 4–5 (subtasks + image attachments).
-/// Steps 9–10 are reserved for P14; their guards still fire in Add/Edit.perform.
+/// P14 implements step 10 (grocery). The parent's location alarm (step 9) is EventKit-expressible
+/// and rides the public/bridge write path (write.location) in Add/Edit.perform, not this fan-out.
 public enum PrivateChanges {
 
     /// Apply the simple (P12) private changes for one reminder. `flagged` is the COLLAPSED value:
@@ -36,9 +37,11 @@ public enum PrivateChanges {
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec] = [], images: [String] = [],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
+        grocery: Bool = false,
         store: RemindersStore, listPk: Int?,
         writer: RemindersWriter, private p: PrivateWriter,
-        now: Date = Date(), calendar: Calendar = .current
+        now: Date = Date(), calendar: Calendar = .current,
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> [PrivateResult] {
         var results: [PrivateResult] = []
 
@@ -114,9 +117,168 @@ public enum PrivateChanges {
             results.append(try await p.setEarlyReminder(id: reminderCkid, spec: spec))
         }
 
-        // 9–10. add_location_alarm / categorize_grocery_items — reserved for P14.
+        // 9. add_location_alarm — the parent's location alarm is EventKit-expressible, so it travels
+        //    on the public/bridge write path in Add/Edit.perform (write.location), NOT through this
+        //    private fan-out. (Only the SUBTASK path emits add_location_alarm — see
+        //    applySubtaskPrivateMetadata above — because subtask children have no EventKit bridge for
+        //    location.) So the parent path has nothing to do at this slot.
+
+        // 10. categorize_grocery_items — the LAST private action (apply_private_changes:3133). Polls
+        //     for Reminders.app auto-sectioning and only calls the private helper if it didn't happen.
+        if grocery {
+            guard let listPk else {
+                // Mirrors `if list_pk is None: Error: --grocery requires a target list.` (remctl:3137).
+                throw CLIError("--grocery requires a target list.")
+            }
+            results.append(try await categorizeGrocery(
+                listPk: listPk, reminderCkid: reminderCkid, store: store, private: p,
+                attempts: groceryAttempts, delay: groceryDelay))
+        }
 
         return results
+    }
+
+    // MARK: - Grocery categorization (P14)
+
+    /// Port of `wait_for_grocery_section` (remctl:2913). Re-reads `q_section_memberships(list_pk)`
+    /// up to `attempts` times (with `delay` seconds between reads), returning the section display
+    /// name the moment the reminder gets sectioned, or nil if it never does. `attempts`/`delay` are
+    /// injectable so tests can pass attempts:1, delay:0 to avoid real sleeps.
+    static func waitForGrocerySection(
+        listPk: Int, reminderCkid: String, store: RemindersStore,
+        attempts: Int, delay: Double
+    ) async -> String? {
+        for _ in 0..<max(attempts, 1) {
+            let memberships = store.sectionMemberships(listPk)
+            if let section = memberships[reminderCkid], !section.isEmpty {
+                return section
+            }
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+        }
+        return nil
+    }
+
+    /// Port of `apply_private_grocery_categorization` (remctl:2924). Reminders.app may auto-categorize
+    /// a reminder into a grocery section; this polls for that and only calls the private
+    /// `categorize_grocery_items` helper if auto-categorization did not happen.
+    ///
+    /// `attempts`/`delay` are injected straight into `waitForGrocerySection` (default 24 / 0.25s per
+    /// source); the inner re-poll after the helper uses the SAME injected values so tests stay fast
+    /// (source uses attempts=8 there, and a fixed 24/0.25 for the final fallback re-reads — but with a
+    /// static fixture store the section state never changes between polls, so the injected values are
+    /// faithful for the auto/no-section cases and harmless for the fallback re-reads).
+    public static func categorizeGrocery(
+        listPk: Int, reminderCkid: String,
+        store: RemindersStore, private p: PrivateWriter,
+        attempts: Int = 24, delay: Double = 0.25
+    ) async throws -> PrivateResult {
+        // 1. require_grocery_list_target (remctl:2898): the target must be a Groceries list.
+        guard let target = store.groceryListTarget(pk: listPk) else {
+            throw CLIError("target list not found.")
+        }
+        guard target.isGroceries else {
+            throw CLIError("target list '\(target.name)' is not a Groceries list. "
+                + "Use `remctl list-edit ... --private --groceries` first.")
+        }
+
+        // 2. The list's stable CloudKit identifier.
+        guard let ckid = store.listCkid(pk: listPk) else {
+            throw CLIError("target list has no stable CloudKit identifier.")
+        }
+
+        // 3. Filter reminder ckids (drop empty). Empty → error.
+        let reminderCkids = [reminderCkid].filter { !$0.isEmpty }
+        guard !reminderCkids.isEmpty else {
+            throw CLIError("grocery categorization needs a stable reminder identifier.")
+        }
+
+        // 4. Poll each reminder for auto-sectioning.
+        var verified: [(id: String, section: String?)] = []
+        var pending: [String] = []
+        for rckid in reminderCkids {
+            let section = await waitForGrocerySection(
+                listPk: listPk, reminderCkid: rckid, store: store, attempts: attempts, delay: delay)
+            verified.append((id: rckid, section: section))
+            if section == nil { pending.append(rckid) }
+        }
+
+        // 5. If ALL reminders auto-sectioned (none pending) → reminders_auto WITHOUT the helper.
+        if pending.isEmpty {
+            return remindersAutoResult(verified: verified, warning: nil)
+        }
+
+        // 6. Else call the private helper, with the source's 3-attempt + re-poll + transient-fallback
+        //    + reminders_auto-synthesis logic (remctl:2953-3000).
+        var result: PrivateResult? = nil
+        for attempt in 0..<3 {
+            result = try await p.categorizeGroceryItems(listId: ckid, reminderIds: pending)
+            if result?.status == "updated" { break }
+
+            // Re-poll all reminders (source uses attempts=8, delay=0.25; we reuse the injected values).
+            var resultVerified: [(id: String, section: String?)] = []
+            for rckid in reminderCkids {
+                let section = await waitForGrocerySection(
+                    listPk: listPk, reminderCkid: rckid, store: store, attempts: attempts, delay: delay)
+                resultVerified.append((id: rckid, section: section))
+            }
+            // If ANY reminder is now sectioned, synthesize reminders_auto with the helper's message
+            // as a `warning` (the helper "failed" but auto-sectioning succeeded).
+            if resultVerified.contains(where: { $0.section != nil }) {
+                let warning = result?.message ?? "private helper failed"
+                return remindersAutoResult(verified: resultVerified, warning: warning)
+            }
+            // Non-transient error (or last attempt) → stop retrying.
+            if !ReminderKitWriter.isTransient(message: result?.message) || attempt == 2 { break }
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(0.5 * 1_000_000_000)) }
+        }
+
+        // 6a. Helper succeeded → attach the final verifiedSections re-read and return.
+        if let r = result, r.status == "updated" {
+            var resultVerified: [(id: String, section: String?)] = []
+            for rckid in reminderCkids {
+                let section = await waitForGrocerySection(
+                    listPk: listPk, reminderCkid: rckid, store: store, attempts: attempts, delay: delay)
+                resultVerified.append((id: rckid, section: section))
+            }
+            var fields = r.fields
+            fields["verifiedSections"] = verifiedSectionsJSON(resultVerified)
+            return PrivateResult(status: r.status, fields: fields, message: r.message)
+        }
+
+        // 7. Total failure: a final fallback re-read. If anything got sectioned anyway, synthesize
+        //    reminders_auto with the helper message as a warning; else error out (exit 1).
+        let message = result?.message ?? "private helper failed"
+        var fallbackVerified: [(id: String, section: String?)] = []
+        for rckid in reminderCkids {
+            let section = await waitForGrocerySection(
+                listPk: listPk, reminderCkid: rckid, store: store, attempts: attempts, delay: delay)
+            fallbackVerified.append((id: rckid, section: section))
+        }
+        if fallbackVerified.contains(where: { $0.section != nil }) {
+            return remindersAutoResult(verified: fallbackVerified, warning: message)
+        }
+        throw CLIError(message)
+    }
+
+    /// Build the `reminders_auto` PrivateResult (source's {action, source, [warning], verifiedSections}).
+    private static func remindersAutoResult(verified: [(id: String, section: String?)], warning: String?) -> PrivateResult {
+        var fields: [String: JSONValue] = [
+            "action": .string("categorize_grocery_items"),
+            "source": .string("reminders_auto"),
+            "verifiedSections": verifiedSectionsJSON(verified),
+        ]
+        if let warning { fields["warning"] = .string(warning) }
+        return PrivateResult(status: "updated", fields: fields)
+    }
+
+    /// Serialize the verifiedSections array as `[{id, section}]`, where a nil section → JSON null.
+    private static func verifiedSectionsJSON(_ verified: [(id: String, section: String?)]) -> JSONValue {
+        .array(verified.map { entry in
+            .object([
+                ("id", .string(entry.id)),
+                ("section", entry.section.map(JSONValue.string) ?? .null),
+            ])
+        })
     }
 
     // MARK: - Subtask child fan-out

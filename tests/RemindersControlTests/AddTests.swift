@@ -221,20 +221,61 @@ import GRDB
         #expect(out.stdout == "Created: T\nPrivate metadata: applied 3 updates\n")
     }
 
-    @Test func stubbedGroceryErrorsPhase3() async throws {
-        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
-        let out = await WriteDispatch.perform {
-            try await Add.perform(title: "T", grocery: true, json: false, store: s, writer: m, private: MockPrivateWriter())
+    /// A Groceries list (pk 10, ckid CK-G) with a "Produce" section (ckid SEC-G). When
+    /// `member` is given, that reminder ckid is seeded as a member of Produce (auto-sectioned).
+    private func withGroceryList(member: String? = nil) throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZSHOULDCATEGORIZEGROCERYITEMS) VALUES (10,3,'Groceries',0,'CK-G',1)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (5,5,'Produce',10,'SEC-G',0)")
+            if let member {
+                let blob = #"{"memberships":[{"groupID":"SEC-G","memberID":"\#(member)"}]}"#
+                try db.execute(sql: "UPDATE ZREMCDBASELIST SET ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA = ? WHERE Z_PK = 10", arguments: [blob])
+            }
         }
-        #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--grocery"))
-        #expect(m.calls.isEmpty)
     }
 
-    @Test func badDueBeatsStubFlag() async throws {
-        // A bad due must surface as exit 2 even when a Phase-3 flag is also set.
+    @Test func groceryAutoSectionedSkipsHelper() async throws {
+        // --grocery on a Groceries list, with the created reminder already auto-sectioned by
+        // Reminders.app → reminders_auto, the private helper is NOT called.
+        let (s, dir) = try withGroceryList(member: "GR-NEW"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "GR-NEW"
+        let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "Milk", list: "Groceries", grocery: true, json: false,
+                                        store: s, writer: m, private: mp, groceryAttempts: 1, groceryDelay: 0)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls.isEmpty)                          // auto-sectioned → no helper call
+        #expect(out.stdout.contains("Private metadata: applied 1 update"))
+    }
+
+    @Test func groceryNeedsHelperCallsCategorize() async throws {
+        // --grocery on a Groceries list where the reminder is NOT auto-sectioned → the helper is
+        // invoked with the list ckid + the new reminder ckid.
+        let (s, dir) = try withGroceryList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "GR-NEW"
+        let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "Milk", list: "Groceries", grocery: true, json: false,
+                                        store: s, writer: m, private: mp, groceryAttempts: 1, groceryDelay: 0)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR-NEW"])])
+    }
+
+    @Test func groceryNonGroceryListErrors() async throws {
+        // --grocery on a NON-grocery list → require_grocery_list_target rejection (exit 1).
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        let out = await WriteDispatch.perform {
+            try await Add.perform(title: "Milk", list: "Work", grocery: true, json: false, store: s, writer: m, private: mp, groceryAttempts: 1, groceryDelay: 0)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: target list 'Work' is not a Groceries list. Use `remctl list-edit ... --private --groceries` first.\n")
+    }
+
+    @Test func badDueBeatsGroceryFlag() async throws {
+        // A bad due surfaces as exit 2 (due-validation runs before the post-create grocery fan-out).
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
@@ -280,17 +321,16 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
-    @Test func stubFlagBeatsEmptyTitle() async throws {
-        // The remaining Phase-3 stub guard (--grocery, still guarded for P14) fires before the
-        // bridge's title rejection.
+    @Test func emptyTitleRejectedEvenWithGrocery() async throws {
+        // --grocery is wired (P14) but its fan-out runs POST-create; the empty-title check fires
+        // first (exit 1, writer never reached).
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform {
             try await Add.perform(title: "", grocery: true, json: false, store: s, writer: m, private: MockPrivateWriter())
         }
         #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Phase 3"))
-        #expect(out.stderr.contains("--grocery"))
+        #expect(out.stderr == "Error: title is required for create\n")
         #expect(m.calls.isEmpty)
     }
 

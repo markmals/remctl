@@ -263,4 +263,130 @@ import GRDB
             .setFlagged(id: "R1", flagged: true),
         ])
     }
+
+    // ── P14: grocery categorization (auto-section poll + categorize_grocery_items) ──
+
+    /// A Groceries list (pk 20, ckid CK-G) with a "Produce" section (ckid SEC-G) and a reminder
+    /// (ckid GR1). `sectioned` controls whether GR1 is already a member of the Produce section,
+    /// i.e. whether Reminders.app auto-categorized it.
+    private func withGroceryList(sectioned: Bool, grocery: Bool = true) throws -> (RemindersStore, URL) {
+        try store { db in
+            let flag = grocery ? 1 : 0
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZSHOULDCATEGORIZEGROCERYITEMS) VALUES (20,3,'Groceries',0,'CK-G',\(flag))")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (5,5,'Produce',20,'SEC-G',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (99,'Milk',20,1,0,'GR1')")
+            if sectioned {
+                let membership = #"{"memberships":[{"groupID":"SEC-G","memberID":"GR1"}]}"#
+                try db.execute(sql: "UPDATE ZREMCDBASELIST SET ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA = ? WHERE Z_PK = 20", arguments: [membership])
+            }
+        }
+    }
+
+    @Test func groceryAutoSectioned() async throws {
+        // GR1 is already a member of the Produce section (Reminders.app auto-categorized it):
+        // categorize() returns reminders_auto WITHOUT calling the private helper.
+        let (s, dir) = try withGroceryList(sectioned: true); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        let result = try await PrivateChanges.categorizeGrocery(
+            listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+        #expect(result.status == "updated")
+        #expect(result.fields["source"] == .string("reminders_auto"))
+        #expect(result.fields["action"] == .string("categorize_grocery_items"))
+        #expect(result.fields["verifiedSections"] == .array([.object([("id", .string("GR1")), ("section", .string("Produce"))])]))
+        // The private helper was NOT called.
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func groceryNeedsHelper() async throws {
+        // GR1 is NOT auto-sectioned → the helper is invoked with the list ckid + the pending reminder.
+        let (s, dir) = try withGroceryList(sectioned: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        // Helper succeeds (default result = "updated").
+        let result = try await PrivateChanges.categorizeGrocery(
+            listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+        #expect(result.status == "updated")
+        #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR1"])])
+    }
+
+    @Test func groceryNonGroceryListErrors() async throws {
+        // A list whose ZSHOULDCATEGORIZEGROCERYITEMS is 0 → require_grocery_list_target rejects it.
+        let (s, dir) = try withGroceryList(sectioned: false, grocery: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        await #expect(throws: CLIError.self) {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+        }
+        // Verify the exact message.
+        do {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+            Issue.record("expected throw")
+        } catch let e as CLIError {
+            #expect(e.message == "target list 'Groceries' is not a Groceries list. Use `remctl list-edit ... --private --groceries` first.")
+        }
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func groceryListNotFoundErrors() async throws {
+        // A pk that resolves to no list row → "target list not found."
+        let (s, dir) = try withGroceryList(sectioned: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        do {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 999, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+            Issue.record("expected throw")
+        } catch let e as CLIError {
+            #expect(e.message == "target list not found.")
+        }
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func groceryNoCkidErrors() async throws {
+        // A Groceries list with a NULL ckid → "target list has no stable CloudKit identifier."
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZSHOULDCATEGORIZEGROCERYITEMS) VALUES (30,3,'Groceries',0,1)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (98,'Milk',30,1,0,'GR2')")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        do {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 30, reminderCkid: "GR2", store: s, private: mp, attempts: 1, delay: 0)
+            Issue.record("expected throw")
+        } catch let e as CLIError {
+            #expect(e.message == "target list has no stable CloudKit identifier.")
+        }
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func groceryEmptyReminderCkidErrors() async throws {
+        // An empty reminder ckid is dropped → "grocery categorization needs a stable reminder identifier."
+        let (s, dir) = try withGroceryList(sectioned: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        do {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 20, reminderCkid: "", store: s, private: mp, attempts: 1, delay: 0)
+            Issue.record("expected throw")
+        } catch let e as CLIError {
+            #expect(e.message == "grocery categorization needs a stable reminder identifier.")
+        }
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func groceryHelperFailure() async throws {
+        // Helper fails (non-transient error) AND the reminder never gets sectioned → total failure
+        // throws CLIError with the helper's message.
+        let (s, dir) = try withGroceryList(sectioned: false); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        mp.groceryResult = PrivateResult(status: "error", fields: [:], message: "helper exploded")
+        do {
+            _ = try await PrivateChanges.categorizeGrocery(
+                listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
+            Issue.record("expected throw")
+        } catch let e as CLIError {
+            #expect(e.message == "helper exploded")
+        }
+        // The helper WAS called (once; non-transient → no retry).
+        #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR1"])])
+    }
 }
