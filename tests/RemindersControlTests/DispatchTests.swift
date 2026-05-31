@@ -31,6 +31,6 @@ import ArgumentParser
     @Test func cliVersionSmoke() throws {
         let r = try CLIRunner.run(["--version"])
         #expect(r.exit == 0)
-        #expect(r.stdout.contains("2.0.0"))
+        #expect(r.stdout.contains("0.1.0"))
     }
 }

@@ -1,8 +1,8 @@
 import ArgumentParser
 
-/// The version string surfaced by `remctl --version`. The Swift rewrite is a
-/// major version (spec §7); bump here on release.
-public let remctlVersion = "2.0.0"
+/// The version string surfaced by `remctl --version`. The Swift rewrite starts a
+/// fresh 0.x line (not yet API-stable); bump here on release.
+public let remctlVersion = "0.1.0"
 
 /// Shared output options included by every subcommand. Parity note: the Python
 /// CLI adds `--json` per-subcommand (via `js(c)`), not as a root-level flag, so
