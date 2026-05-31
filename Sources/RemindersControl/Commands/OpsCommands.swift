@@ -247,10 +247,108 @@ struct Doctor: ParsableCommand {
     }
 }
 
-struct Onboard: ParsableCommand {
+struct Onboard: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "onboard", abstract: "First-run onboarding.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("onboard") }
+    @Flag(name: .long, help: "Output machine-readable JSON.") var json = false
+    @Flag(name: .long, help: "Disable ANSI color.") var noColor = false
+
+    func run() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let ansi = Ansi.resolve(noColorFlag: noColor, env: env)
+
+        let outcome = await Self.perform(
+            auto: false,
+            json: json,
+            storeAccessError: Paths.storeAccessError(),
+            dbPath: Paths.findMainDBPath()?.path,
+            now: Date(),
+            env: env,
+            ansi: json ? Ansi(enabled: false) : ansi,
+            // REAL seams — all the actual GUI/TCC/clipboard side effects live here.
+            openApp: { Self.realOpenReminders() },
+            eventKitAuthorize: { await Self.realEventKitAuthorize() },
+            automationProbe: { Self.realAutomationProbe() },
+            openSettings: { args in Self.realOpen(args) },
+            copyClipboard: { text in copyToClipboard(text) }
+        )
+
+        if !outcome.stdout.isEmpty { print(outcome.stdout, terminator: "") }
+        if !outcome.stderr.isEmpty { FileHandle.standardError.write(Data(outcome.stderr.utf8)) }
+        if outcome.exitCode != 0 { throw ExitCode(outcome.exitCode) }
+    }
+
+    // ── Real side-effect implementations (live-only; never run in CI) ─────────
+
+    /// `open -a Reminders` + a brief settle. Best-effort; never surfaces failure.
+    private static func realOpenReminders() {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        proc.arguments = ["-a", "Reminders"]
+        try? proc.run()
+        proc.waitUntilExit()
+        Thread.sleep(forTimeInterval: 1)
+    }
+
+    /// In-process EventKit authorize (the TCC prompt). On success, build the
+    /// granted detail referencing the remctl binary + calendarCount/defaultList,
+    /// matching the Python ok-detail shape. On failure, FAIL with the same-terminal
+    /// fix. The Python bridge-binary WARN variants are dropped (in-process reality).
+    private static func realEventKitAuthorize() async -> OnboardProbeResult {
+        let binary = Bundle.main.executablePath ?? CommandLine.arguments.first ?? "remctl"
+        do {
+            let summary = try await EventKitWriter().authorize()
+            let n = summary.calendarCount
+            let defaultList = summary.defaultList.isEmpty ? "unknown" : summary.defaultList
+            let detail = "Reminders access granted to \(binary) (\(n) list\(n == 1 ? "" : "s"), default: \(defaultList))."
+            return (true, detail, nil)
+        } catch let e as WriteError {
+            return (false, e.message,
+                    "Re-run `remctl onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
+        } catch {
+            return (false, "Reminders authorization failed.",
+                    "Re-run `remctl onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
+        }
+    }
+
+    /// osascript Automation probe (the Apple Events TCC prompt). Mirrors
+    /// `applescript_access_check_for_onboarding` (remctl:3604).
+    private static func realAutomationProbe() -> OnboardProbeResult {
+        let script = "tell application \"Reminders\" to get name of default list"
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        let outPipe = Pipe(); let errPipe = Pipe()
+        proc.standardOutput = outPipe; proc.standardError = errPipe
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return (false, "Could not run osascript: \(error.localizedDescription)",
+                    "Re-run `remctl onboard` from Terminal after opening Reminders.app.")
+        }
+        let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if proc.terminationStatus == 0 {
+            let detail = stdout.isEmpty
+                ? "AppleScript automation access confirmed."
+                : "AppleScript automation access confirmed (default list: \(stdout))."
+            return (true, detail, nil)
+        }
+        let message = !stderr.isEmpty ? stderr : (!stdout.isEmpty ? stdout : "AppleScript automation probe failed.")
+        return (false, message,
+                "Re-run `remctl onboard` from the same terminal and approve the Automation prompt if macOS asks. Flagged operations and AppleScript fallback writes rely on this access.")
+    }
+
+    /// `/usr/bin/open <args>` returning the exit code (the `openSettings` seam).
+    private static func realOpen(_ args: [String]) -> Int32 {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        proc.arguments = args
+        do { try proc.run(); proc.waitUntilExit(); return proc.terminationStatus }
+        catch { return 1 }
+    }
 }
 
 struct Permissions: ParsableCommand {
