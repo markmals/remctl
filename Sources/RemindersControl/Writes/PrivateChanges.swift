@@ -10,16 +10,16 @@ import Foundation
 ///   1. add_private_metadata   (url or tags)                 — P12
 ///   2. assign_section         (section / section-id)        — P12
 ///   3. add_section_and_assign (new-section)                 — P12
-///   4. add_subtasks           (subtask)                     — P13  (placeholder)
-///   5. add_attachments        (image)                       — P13  (placeholder)
+///   4. add_subtasks           (subtask)                     — P13
+///   5. add_attachments        (image)                       — P13
 ///   6. set_flagged            (flag / flagged collapsed)    — P12
 ///   7. set_urgent             (urgent)                      — P12
 ///   8. set_early_reminder     (early-reminder)              — P12
-///   9. add_location_alarm     (latitude/longitude)          — P13/P14 (placeholder)
+///   9. add_location_alarm     (latitude/longitude)          — P14  (placeholder)
 ///  10. categorize_grocery_items (grocery)                   — P14  (placeholder)
 ///
-/// P12 implements steps 1–3, 6–8. Steps 4–5 and 9–10 are reserved for P13/P14; their guards still
-/// fire in Add/Edit.perform, so those flags can never reach this fan-out yet.
+/// P12 implements steps 1–3, 6–8. P13 implements steps 4–5 (subtasks + image attachments).
+/// Steps 9–10 are reserved for P14; their guards still fire in Add/Edit.perform.
 public enum PrivateChanges {
 
     /// Apply the simple (P12) private changes for one reminder. `flagged` is the COLLAPSED value:
@@ -34,9 +34,11 @@ public enum PrivateChanges {
         reminderCkid: String,
         url: String?, tags: [String],
         section: String?, sectionId: String?, newSection: String?,
+        subtasks: [SubtaskSpec] = [], images: [String] = [],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
         store: RemindersStore, listPk: Int?,
-        private p: PrivateWriter
+        writer: RemindersWriter, private p: PrivateWriter,
+        now: Date = Date(), calendar: Calendar = .current
     ) async throws -> [PrivateResult] {
         var results: [PrivateResult] = []
 
@@ -59,7 +61,34 @@ public enum PrivateChanges {
             results.append(try await p.addSectionAndAssign(id: reminderCkid, name: newSection))
         }
 
-        // 4–5. add_subtasks / add_attachments — reserved for P13 (guarded in Add/Edit.perform).
+        // 4. add_subtasks — create the children, then fan each created child out to its public
+        //    (EventKit bridge_update_subtask) and private (apply_subtask_private_metadata) fields.
+        //    The add_subtasks PrivateResult is appended FIRST (matching apply_private_changes:3047,
+        //    which builds the parent result, then runs the per-child loop). The per-child writes
+        //    follow in spec order; within each child, private metadata runs before the bridge update
+        //    (apply_private_changes:3053-3061).
+        if !subtasks.isEmpty {
+            let subtaskResult = try await p.addSubtasks(id: reminderCkid, subtasks: subtasks)
+            results.append(subtaskResult)
+            // Pair each spec to its created child by index over the echoed `subtasks` array
+            // (apply_private_changes uses `zip(subtasks, subtask_result["subtasks"])`).
+            let children = childEntries(from: subtaskResult)
+            for (spec, child) in zip(subtasks, children) {
+                guard let childId = child.id, !childId.isEmpty else { continue }
+                // 4a. Child PRIVATE metadata (apply_subtask_private_metadata:2398).
+                results.append(contentsOf: try await applySubtaskPrivateMetadata(childId: childId, spec: spec, p: p))
+                // 4b. Child PUBLIC fields via the EventKit bridge (bridge_update_subtask:2371).
+                if let bridge = try await bridgeUpdateSubtask(childId: childId, spec: spec, writer: writer, now: now, calendar: calendar) {
+                    results.append(bridge)
+                }
+            }
+        }
+
+        // 5. add_attachments — image attachments on the parent. files[] is always empty (the ObjC
+        //    contract rejects generic file/PDF attachments; images only). apply_private_changes:3075.
+        if !images.isEmpty {
+            results.append(try await p.addAttachments(id: reminderCkid, images: images))
+        }
 
         // 6. set_flagged — collapsed flag/flagged value.
         if let flagged {
@@ -85,8 +114,120 @@ public enum PrivateChanges {
             results.append(try await p.setEarlyReminder(id: reminderCkid, spec: spec))
         }
 
-        // 9–10. add_location_alarm / categorize_grocery_items — reserved for P13/P14.
+        // 9–10. add_location_alarm / categorize_grocery_items — reserved for P14.
 
         return results
+    }
+
+    // MARK: - Subtask child fan-out
+
+    /// A created subtask child as echoed by the `add_subtasks` PrivateResult. The ObjC RKPDispatch
+    /// returns `fields["subtasks"]` as `[{id,title,url}]` (ReminderKitPrivate.m:1240-1244); P3's
+    /// ReminderKitWriter unmarshals it into `.array(.object(...))`.
+    struct SubtaskChild { var id: String?; var title: String?; var url: String? }
+
+    /// Parse the `subtasks` array out of the `add_subtasks` PrivateResult fields.
+    static func childEntries(from result: PrivateResult) -> [SubtaskChild] {
+        guard case let .array(items)? = result.fields["subtasks"] else { return [] }
+        return items.map { item in
+            guard case let .object(pairs) = item else { return SubtaskChild() }
+            var child = SubtaskChild()
+            for (k, v) in pairs {
+                guard case let .string(s) = v else { continue }
+                switch k {
+                case "id": child.id = s
+                case "title": child.title = s
+                case "url": child.url = s
+                default: break
+                }
+            }
+            return child
+        }
+    }
+
+    /// Port of `bridge_update_subtask` (remctl:2371): push the child's PUBLIC fields through the
+    /// EventKit writer. Only notes/due/priority/alarm/recurrence go through the bridge; if none of
+    /// those are set the source returns None (no bridge call), so we return nil. Due/alarm/recurrence
+    /// reuse the same parsers as add/edit (the spec carries the RAW strings from parse_subtask_specs).
+    private static func bridgeUpdateSubtask(
+        childId: String, spec: SubtaskSpec,
+        writer: RemindersWriter, now: Date, calendar: Calendar
+    ) async throws -> PrivateResult? {
+        var write = ReminderWrite()
+        var hasBridgeField = false
+
+        if let notes = spec.notes { write.notes = notes; hasBridgeField = true }
+
+        if let due = spec.due, !due.isEmpty {
+            guard let parsed = WriteParsing.parseDue(due, now: now, calendar: calendar) else {
+                throw CLIError("could not parse subtask due date \(WriteFormatting.pyRepr(due)). Use ISO (YYYY-MM-DD [HH:MM]) or shortcuts like today/tomorrow/eod/+3d.")
+            }
+            write.due = .set(parsed); hasBridgeField = true
+        }
+
+        if let priority = spec.priority {
+            // parse_subtask_specs already validated the value (high/h/medium/med/m/low/l/none).
+            guard let p = WriteParsing.parsePriority(priority, allowAliases: true) else {
+                throw CLIError("subtask priority must be high, medium, low, or none.")
+            }
+            write.priority = p; hasBridgeField = true
+        }
+
+        if let alarm = spec.alarm, !alarm.isEmpty {
+            guard let al = WriteParsing.parseAlarmSpec(alarm, allowClear: false, calendar: calendar) else {
+                throw CLIError("could not parse subtask alarm \(WriteFormatting.pyRepr(alarm)).")
+            }
+            write.alarm = al; hasBridgeField = true
+        }
+
+        if let recurrence = spec.recurrence, !recurrence.isEmpty {
+            guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
+                throw CLIError("subtask recurrence must be daily, weekly, monthly, yearly, 'weekly mon,wed,fri', or 'monthly 1,15'.")
+            }
+            write.recurrence = r; hasBridgeField = true
+        }
+
+        guard hasBridgeField else { return nil }
+        let result = try await writer.update(id: childId, write)
+        // Surface the bridge update as a PrivateResult so it joins the parent's results array.
+        return PrivateResult(status: result.status, fields: ["id": .string(childId), "action": .string("update")])
+    }
+
+    /// Port of `apply_subtask_private_metadata` (remctl:2398): emit the child's PRIVATE actions in
+    /// source order — add_private_metadata (urls/tags), add_attachments (images), set_flagged,
+    /// set_urgent, set_early_reminder, add_location_alarm. Children are newly created, so the
+    /// early-reminder carries no existing identifiers (unlike the parent path).
+    private static func applySubtaskPrivateMetadata(
+        childId: String, spec: SubtaskSpec, p: PrivateWriter
+    ) async throws -> [PrivateResult] {
+        var out: [PrivateResult] = []
+
+        if !spec.urls.isEmpty || !spec.tags.isEmpty {
+            out.append(try await p.addPrivateMetadata(id: childId, urls: spec.urls, tags: spec.tags))
+        }
+        if !spec.images.isEmpty {
+            out.append(try await p.addAttachments(id: childId, images: spec.images))
+        }
+        if let flagged = spec.flagged {
+            out.append(try await p.setFlagged(id: childId, flagged: flagged))
+        }
+        if let urgent = spec.urgent {
+            out.append(try await p.setUrgent(id: childId, urgent: urgent))
+        }
+        if let early = spec.earlyReminder {
+            // parse_subtask_specs validated the format; re-parse to the unit/count or clear spec.
+            // No existing identifiers — the child was just created.
+            let parsed = try PrivateParsing.parseEarlyReminder(early)
+            out.append(try await p.setEarlyReminder(id: childId, spec: parsed))
+        }
+        if let lat = spec.latitude, let lon = spec.longitude {
+            let loc = PrivateLocation(
+                title: spec.locationTitle ?? "Location",
+                latitude: lat, longitude: lon,
+                radius: spec.radius ?? 100, proximity: spec.proximity ?? 1)
+            out.append(try await p.addLocationAlarm(id: childId, location: loc))
+        }
+
+        return out
     }
 }

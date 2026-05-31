@@ -77,12 +77,13 @@ struct Add: AsyncParsableCommand {
     ) async throws -> WriteOutcome {
 
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
-        // For P12's scope the private-only flags are section/section-id/new-section/urgent/
-        // early-reminder. (grocery/subtask/image also imply-private but stay phase3-guarded below.)
+        // The private-only flags are section/section-id/new-section/urgent/early-reminder plus
+        // P13's --subtask/--image (both imply-private — apply_private_changes runs them on the ckid).
         // When wantsPrivate, --flag/--tags/--url route through the private writer; otherwise they
         // keep their Phase-2 public behavior (EventKit flag-proxy / title #hashtags / notes-append).
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
             || urgent != nil || earlyReminder != nil
+            || !subtask.isEmpty || !image.isEmpty
 
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
         var dueDate: Date? = nil
@@ -131,14 +132,17 @@ struct Add: AsyncParsableCommand {
             throw CLIError("Early Reminder requires a reminder due date.")
         }
 
-        // 2b. Phase-3 stub guard for the flags still owned by P13/P14. The P12 flags (--flag,
-        //     --tags, --section, --section-id, --new-section, --urgent, --early-reminder) are now
-        //     wired below via the public/private imply-split; only grocery/subtask/image remain.
-        if grocery { throw phase3("--grocery") }
-        if !subtask.isEmpty { throw phase3("--subtask") }
-        if !image.isEmpty { throw phase3("--image") }
+        // 2b. Parse --subtask specs + normalize --image paths up front (validates format; a bad spec
+        //     — e.g. subtask location address — throws a CLIError exit 1 before any write). Mirrors
+        //     parse_subtask_specs / normalize_image_paths being invoked in apply_private_changes.
+        let subtaskSpecs = try PrivateParsing.parseSubtaskSpecs(subtask)
+        let imagePaths = PrivateParsing.normalizeImagePaths(image)
 
-        // 2c. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
+        // 2c. Phase-3 stub guard for the flags still owned by P14 (grocery only; subtask/image are
+        //     wired below via the private fan-out).
+        if grocery { throw phase3("--grocery") }
+
+        // 2d. Empty-title check. Mirrors the bridge's raw `!title.isEmpty` guard
         //     (remctl-bridge.swift:359) that EventKitWriter.create reproduces — NO trimming,
         //     so a whitespace-only title is accepted. Runs AFTER due-validation (exit 2 wins)
         //     and the Phase-3 stub guard (private-refusal fires first), matching parity.
@@ -196,8 +200,10 @@ struct Add: AsyncParsableCommand {
                 reminderCkid: result.id ?? "",
                 url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
                 section: section, sectionId: sectionId, newSection: newSection,
+                subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
-                store: store, listPk: resolution?.id, private: priv)
+                store: store, listPk: resolution?.id,
+                writer: writer, private: priv, now: now, calendar: calendar)
         }
 
         // 8. Re-read for the numeric Z_PK by the created ZCKIDENTIFIER.
@@ -361,24 +367,29 @@ struct Edit: AsyncParsableCommand {
         let currentDue = row.double("ZDUEDATE")
         let currentDisplay = row.double("ZDISPLAYDATEDATE")
 
-        // 2. Phase-3 stub guard for the flags still owned by P13/P14. The P12 flags (--tags,
-        //    --flagged, --section, --section-id, --new-section, --urgent, --early-reminder) are now
-        //    wired below via the private fan-out; only grocery/subtask/image/address remain.
-        //    (--address is P13's location work; reject for now.)
+        // 2. Parse --subtask specs + normalize --image paths up front (validates format; a bad spec
+        //    — e.g. subtask location address — throws a CLIError exit 1 before any write). Mirrors
+        //    parse_subtask_specs / normalize_image_paths being invoked in apply_private_changes.
+        let subtaskSpecs = try PrivateParsing.parseSubtaskSpecs(subtask)
+        let imagePaths = PrivateParsing.normalizeImagePaths(image)
+
+        // Phase-3 stub guard for the flags still owned by P14. The P12/P13 flags (--tags, --flagged,
+        // --section, --section-id, --new-section, --urgent, --early-reminder, --subtask, --image) are
+        // now wired below via the private fan-out; only grocery/address remain. (--address is the
+        // location-alarm address work; reject for now.)
         if grocery { throw phase3("--grocery") }
-        if !subtask.isEmpty { throw phase3("--subtask") }
-        if !image.isEmpty { throw phase3("--image") }
         if address != nil { throw phase3("--address") }
 
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
-        // For P12's scope on edit the private-only flags are section/section-id/new-section/
-        // flagged/urgent/early-reminder. (grocery/subtask/image stay phase3-guarded above.)
+        // The private-only flags on edit are section/section-id/new-section/flagged/urgent/
+        // early-reminder plus P13's --subtask/--image (both imply-private).
         // On edit, --tags has NO public fallback (cmd_edit:5417 errors without --private), so it
         // always routes through the private writer too — but tags ALONE is not "private-only" in
         // the source's gating set; it implies private because private_changes_from_args includes
         // it. So when --tags is the only private flag, we still want it private. Fold that in.
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil
+            || !subtask.isEmpty || !image.isEmpty
 
         // Parse the early-reminder spec up front (validates format; bad → CLIError).
         var parsedEarly: EarlyReminderWrite? = nil
@@ -528,8 +539,10 @@ struct Edit: AsyncParsableCommand {
         if !hasChanges {
             let privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
-                newSection: newSection, flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
-                store: store, listPk: resolution?.id ?? row.int("ZLIST"), private: priv)
+                newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                store: store, listPk: resolution?.id ?? row.int("ZLIST"),
+                writer: writer, private: priv, now: now, calendar: calendar)
             if json {
                 let obj: JSONValue = .object([
                     ("status", .string("updated")),
@@ -556,8 +569,10 @@ struct Edit: AsyncParsableCommand {
         if wantsPrivate {
             privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
-                newSection: newSection, flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
-                store: store, listPk: resolution?.id ?? row.int("ZLIST"), private: priv)
+                newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                store: store, listPk: resolution?.id ?? row.int("ZLIST"),
+                writer: writer, private: priv, now: now, calendar: calendar)
         }
 
         // 10. Output.
@@ -592,15 +607,20 @@ struct Edit: AsyncParsableCommand {
     private static func applyPrivate(
         reminderCkid: String, url: String?, tags: String?,
         section: String?, sectionId: String?, newSection: String?,
+        subtasks: [SubtaskSpec], images: [String],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
-        store: RemindersStore, listPk: Int?, private priv: PrivateWriter
+        store: RemindersStore, listPk: Int?,
+        writer: RemindersWriter, private priv: PrivateWriter,
+        now: Date, calendar: Calendar
     ) async throws -> [PrivateResult] {
         try await PrivateChanges.apply(
             reminderCkid: reminderCkid,
             url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
             section: section, sectionId: sectionId, newSection: newSection,
+            subtasks: subtasks, images: images,
             flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,
-            store: store, listPk: listPk, private: priv)
+            store: store, listPk: listPk,
+            writer: writer, private: priv, now: now, calendar: calendar)
     }
 
     /// Port of `should_carry_absolute_alarm_to_new_due` (remctl:1522). Returns true only when the

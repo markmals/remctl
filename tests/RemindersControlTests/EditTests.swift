@@ -631,4 +631,85 @@ import GRDB
         #expect(out.stderr.contains("list not found"))
         #expect(m.calls.isEmpty)
     }
+
+    // MARK: - P13: subtasks + image attachments
+
+    private func childResult(_ id: String, _ title: String) -> PrivateResult {
+        PrivateResult(status: "updated", fields: ["subtasks": .array([
+            .object([("id", .string(id)), ("title", .string(title)), ("url", .string("rem://\(id)"))])
+        ])])
+    }
+
+    @Test func editSubtaskBareTitleImpliesPrivate() async throws {
+        // --subtask on edit implies private; no other editable change → private-ONLY branch.
+        // addSubtasks runs on the resolved ckid; no child writes for a bare title.
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "step 1")
+        let out = try await Edit.perform(id: 42, subtask: ["step 1"], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.addSubtasks(id: "ABC", subtasks: [SubtaskSpec(title: "step 1")])])
+        #expect(m.calls.isEmpty)   // private-only branch, no public child bridge fields
+    }
+
+    @Test func editSubtaskWithPublicFieldsDualWriter() async throws {
+        // A subtask carrying public fields makes the public writer fire for the CHILD even in the
+        // edit private-only branch (no parent editable change).
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "x")
+        let json = #"{"title":"x","notes":"n","priority":"low"}"#
+        let out = try await Edit.perform(id: 42, subtask: [json], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls.count == 1)                          // just add_subtasks
+        #expect(m.calls.count == 1)                           // child bridge update only
+        guard case let .update(id, w) = m.calls[0] else { Issue.record("expected child update"); return }
+        #expect(id == "C1")
+        #expect(w.notes == "n")
+        #expect(w.priority == 9)                              // low → 9
+    }
+
+    @Test func editSubtaskWithPrivateChildFields() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "x")
+        let json = #"{"title":"x","flagged":true,"tags":"a,b"}"#
+        _ = try await Edit.perform(id: 42, subtask: [json], json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [
+            .addSubtasks(id: "ABC", subtasks: [SubtaskSpec(title: "x", tags: ["a", "b"], flagged: true)]),
+            .addPrivateMetadata(id: "C1", urls: [], tags: ["a", "b"]),
+            .setFlagged(id: "C1", flagged: true),
+        ])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func editSubtaskAddressRejected() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let json = #"{"title":"x","latitude":1,"longitude":2,"address":"1 Main St"}"#
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, subtask: [json], json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("address is not currently supported"))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func editImageAttachments() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let home = NSHomeDirectory()
+        _ = try await Edit.perform(id: 42, image: ["~/a.png"], json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.addAttachments(id: "ABC", images: ["\(home)/a.png"])])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func editAddressStillRejected() async throws {
+        // --address remains phase3-guarded in edit (P14 location work).
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, address: "1 Main St", json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("--address"))
+        #expect(m.calls.isEmpty)
+    }
 }

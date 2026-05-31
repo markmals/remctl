@@ -26,6 +26,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
+    /// Per-method result override for `addSubtasks` so tests can return child {id,title,url} entries
+    /// (P13 pairs each created child to its spec via `fields["subtasks"]`).
+    var subtasksResult: PrivateResult?
     var throwError: Error?
 
     private func resultOr(_ status: String) throws -> PrivateResult {
@@ -37,7 +40,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult { calls.append(.addPrivateMetadata(id: id, urls: urls, tags: tags)); return try resultOr("updated") }
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult { calls.append(.assignSection(id: id, sectionId: sectionId)); return try resultOr("updated") }
     func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult { calls.append(.addSectionAndAssign(id: id, name: name)); return try resultOr("updated") }
-    func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult { calls.append(.addSubtasks(id: id, subtasks: subtasks)); return try resultOr("updated") }
+    func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult { calls.append(.addSubtasks(id: id, subtasks: subtasks)); if let e = throwError { throw e }; return subtasksResult ?? result }
     func addAttachments(id: String, images: [String]) async throws -> PrivateResult { calls.append(.addAttachments(id: id, images: images)); return try resultOr("updated") }
     func setUrgent(id: String, urgent: Bool) async throws -> PrivateResult { calls.append(.setUrgent(id: id, urgent: urgent)); return try resultOr("updated") }
     func setEarlyReminder(id: String, spec: EarlyReminderWrite) async throws -> PrivateResult { calls.append(.setEarlyReminder(id: id, spec: spec)); return try resultOr("updated") }

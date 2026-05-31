@@ -399,4 +399,108 @@ import GRDB
         // Each result obj is {status, <sorted fields>}; DEFAULT ": " / ", " spacing.
         #expect(out.stdout == #"{"status": "created", "id": "EK-NEW", "title": "T", "private": [{"status": "updated", "urgent": true}]}"# + "\n")
     }
+
+    // MARK: - P13: subtasks + image attachments
+
+    private func childResult(_ id: String, _ title: String) -> PrivateResult {
+        PrivateResult(status: "updated", fields: ["subtasks": .array([
+            .object([("id", .string(id)), ("title", .string(title)), ("url", .string("rem://\(id)"))])
+        ])])
+    }
+
+    @Test func subtaskImpliesPrivateBareTitle() async throws {
+        // --subtask "Buy milk" → wantsPrivate; addSubtasks(parent, [bare title]); no child writes.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "Buy milk")
+        let out = try await Add.perform(title: "T", subtask: ["Buy milk"], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.addSubtasks(id: "EK-NEW", subtasks: [SubtaskSpec(title: "Buy milk")])])
+        // The parent create is the only public write — no child bridge update.
+        #expect(m.calls == [.create(createdWriteValue(m))])
+    }
+
+    @Test func subtaskWithPublicFieldsDualWriter() async throws {
+        // --subtask JSON with notes/due/priority → addSubtasks THEN child writer.update(C1, …).
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "x")
+        let json = #"{"title":"x","notes":"n","due":"tomorrow","priority":"high"}"#
+        let out = try await Add.perform(title: "T", subtask: [json], json: false, store: s, writer: m, private: mp,
+                                        now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        // Private writer: just the parent add_subtasks call.
+        #expect(mp.calls.count == 1)
+        // Public writer: parent create + one child update on "C1".
+        #expect(m.calls.count == 2)
+        guard case let .update(id, w) = m.calls[1] else { Issue.record("expected child update at calls[1]"); return }
+        #expect(id == "C1")
+        #expect(w.notes == "n")
+        #expect(w.priority == 1)
+        if case .set = w.due {} else { Issue.record("expected child due .set") }
+    }
+
+    @Test func subtaskWithPrivateChildFieldsDualWriter() async throws {
+        // --subtask JSON with flagged/urgent/tags → child setFlagged/setUrgent/addPrivateMetadata.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "x")
+        let json = #"{"title":"x","flagged":true,"urgent":true,"tags":"a,b"}"#
+        let out = try await Add.perform(title: "T", subtask: [json], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [
+            .addSubtasks(id: "EK-NEW", subtasks: [SubtaskSpec(title: "x", tags: ["a", "b"], flagged: true, urgent: true)]),
+            .addPrivateMetadata(id: "C1", urls: [], tags: ["a", "b"]),
+            .setFlagged(id: "C1", flagged: true),
+            .setUrgent(id: "C1", urgent: true),
+        ])
+        // No child public bridge fields → only the parent create on the public writer.
+        #expect(m.calls.count == 1)
+    }
+
+    @Test func subtaskAddressRejected() async throws {
+        // A subtask location address is unsupported → CLIError exit 1 before any write.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let json = #"{"title":"x","latitude":1,"longitude":2,"address":"1 Main St"}"#
+        let out = await WriteDispatch.perform {
+            try await Add.perform(title: "T", subtask: [json], json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("address is not currently supported"))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func imageAttachmentsAdd() async throws {
+        // --image is repeatable; paths are normalized (tilde-expanded) and passed to addAttachments.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        let home = NSHomeDirectory()
+        let out = try await Add.perform(title: "T", image: ["~/a.png", "~/b.png"], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(mp.calls == [.addAttachments(id: "EK-NEW", images: ["\(home)/a.png", "\(home)/b.png"])])
+    }
+
+    @Test func subtaskAndImageImplyPrivateFlagRoutesPrivate() async throws {
+        // With --subtask present, a bare --flag now routes through the private writer (setFlagged),
+        // NOT the EventKit priority-proxy (write.flagged stays nil on the create).
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "t")
+        let out = try await Add.perform(title: "T", flag: true, subtask: ["t"], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.flagged == nil)            // not the public proxy
+        // Parent setFlagged appears after the add_subtasks (order: subtasks(4) → setFlagged(6)).
+        #expect(mp.calls == [
+            .addSubtasks(id: "EK-NEW", subtasks: [SubtaskSpec(title: "t")]),
+            .setFlagged(id: "EK-NEW", flagged: true),
+        ])
+    }
+
+    /// The recorded create ReminderWrite, for an exact `.create` equality assertion.
+    private func createdWriteValue(_ m: MockWriter) -> ReminderWrite {
+        for c in m.calls { if case let .create(w) = c { return w } }
+        return ReminderWrite()
+    }
 }
