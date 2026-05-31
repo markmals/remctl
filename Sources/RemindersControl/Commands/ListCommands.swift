@@ -50,19 +50,16 @@ struct Lists: ParsableCommand {
 
 /// Public list colors accepted by `LIST_COLOR_MAP` (remctl:214). Validation lowercases/trims the
 /// input (`normalize_list_color`) before membership, so e.g. `--color RED` is accepted. NOTE: `teal`
-/// IS a valid/accepted color, but the error message deliberately omits it (Python quirk, see below).
+/// IS a valid/accepted color. Hex colors (#RRGGBB) are also accepted (private path).
 private let publicListColors: Set<String> = [
     "red", "orange", "yellow", "green", "blue", "purple", "brown", "gray", "cyan", "teal",
 ]
 
-/// `validate_list_color`'s example string for the PUBLIC path (remctl:329) — the literal 9-name list
-/// WITHOUT "teal", even though teal is a member of LIST_COLOR_MAP. Replicated verbatim.
-private let publicListColorExamples = "red, orange, yellow, green, blue, purple, brown, gray, or cyan"
-
-/// Port of `normalize_list_color` (remctl:305) for the name path only: trim + lowercase. (The
-/// `#RRGGBB` hex branch belongs to the private path, which is removed in Phase 2.)
-private func normalizeListColorName(_ value: String) -> String {
-    value.trimmingCharacters(in: .whitespaces).lowercased()
+/// `^#[0-9A-Fa-f]{6}$` check for routing (mirrors HEX_COLOR_RE, remctl:227).
+private func isHexColor(_ value: String) -> Bool {
+    let trimmed = value.trimmingCharacters(in: .whitespaces)
+    guard trimmed.count == 7, trimmed.hasPrefix("#") else { return false }
+    return trimmed.dropFirst().allSatisfy { "0123456789ABCDEFabcdef".contains($0) }
 }
 
 struct ListCreate: AsyncParsableCommand {
@@ -82,40 +79,97 @@ struct ListCreate: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShell { _, writer in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth { _, writer, priv in
             try await Self.perform(
                 name: args.name, color: args.color, symbol: args.symbol, emoji: args.emoji,
-                groceries: args.groceries, groceryLocale: args.groceryLocale, json: args.json, writer: writer)
+                groceries: args.groceries, groceryLocale: args.groceryLocale, json: args.json,
+                writer: writer, priv: priv)
         })
     }
 
-    /// Testable core (no print/exit). Mirrors `cmd_list_create`'s PUBLIC path (remctl:6085).
-    /// PHASE-2 DIVERGENCE: the Python `if not bridge_available(): Error: remctl-bridge required for
-    /// list management` guard is MOOT here — EventKit is in-process, the writer is always present —
-    /// so it is NOT emitted. The duplicate-name preflight (private-only) is likewise dropped.
+    /// Testable core (no print/exit). Mirrors `cmd_list_create` (remctl:6085).
+    /// Routes to the private path (ReminderKit `create_list`) when hex color, symbol, emoji,
+    /// or grocery metadata is present; otherwise stays on the public EventKit path.
+    /// PHASE-2 DIVERGENCE: the Python `if not bridge_available()` guard is MOOT (writer always
+    /// present). The duplicate-name preflight (private-only) is likewise dropped.
     static func perform(
         name: String, color: String? = nil, symbol: String? = nil, emoji: String? = nil,
-        groceries: Bool = false, groceryLocale: String? = nil, json: Bool, writer: RemindersWriter
+        groceries: Bool = false, standard: Bool = false, groceryLocale: String? = nil,
+        json: Bool, writer: RemindersWriter, priv: PrivateWriter
     ) async throws -> WriteOutcome {
-        // 1. Phase-3 stub guard. `--symbol`/`--emoji`/`--groceries`/`--grocery-locale` all required the
-        //    private metadata layer (`--private`) in Python; that path is removed in Phase 2.
-        if symbol != nil { throw phase3("--symbol") }
-        if emoji != nil { throw phase3("--emoji") }
-        if groceries { throw phase3("--groceries") }
-        if groceryLocale != nil { throw phase3("--grocery-locale") }
+        // 1. Validate appearance args using P5 hex-allowed validators.
+        //    CLIErrors propagate out and are mapped to "Error: <msg>" exit 1 by WriteDispatch.perform.
+        try validateListAppearanceArgs(
+            color: color, symbol: symbol, emoji: emoji,
+            groceries: groceries, standard: standard, groceryLocale: groceryLocale)
 
-        // 2. Validate --color (public path of validate_list_color, remctl:321-332). Empty/nil is a
-        //    no-op (no color). Unsupported -> exit 1 with the 9-name example string (teal omitted).
+        // 2. Decide path: private when hex color, symbol, emoji, groceries, standard, or grocery-locale.
+        let privateNeeded = symbol != nil || emoji != nil || groceries || standard
+            || (groceryLocale != nil && !(groceryLocale!.isEmpty))
+            || (color.map { isHexColor($0) } ?? false)
+
+        if privateNeeded {
+            // 3a. PRIVATE PATH: build appearance and call priv.createList.
+            let appearance = buildListAppearance(
+                newName: nil, color: color, symbol: symbol, emoji: emoji,
+                groceries: groceries, standard: standard, groceryLocale: groceryLocale)
+
+            let result: PrivateResult
+            do {
+                result = try await priv.createList(name: name, appearance: appearance)
+            } catch let e as WriteError {
+                let suffix = e.message.isEmpty ? "" : ": \(e.message)"
+                throw WriteError("Failed to create list '\(name)'\(suffix)", exitCode: e.exitCode)
+            }
+
+            guard result.status == "created" else {
+                let msg = result.message ?? ""
+                let suffix = msg.isEmpty ? "" : ": \(msg)"
+                throw WriteError("Failed to create list '\(name)'\(suffix)")
+            }
+
+            // 4a. Output — private path.
+            if json {
+                var privatePairs: [(String, JSONValue)] = [("status", .string(result.status))]
+                for key in result.fields.keys.sorted() {
+                    privatePairs.append((key, result.fields[key]!))
+                }
+                let obj: JSONValue = .object([
+                    ("status", .string("created")),
+                    ("name", .string(name)),
+                    ("private", .object(privatePairs)),
+                ])
+                return .ok(obj.serialized(indent: nil, ensureAscii: false) + "\n")
+            }
+
+            // Human output: "Created list: <name>\n" + optional metadata line.
+            // Details in order: color, symbol, emoji, groceries locale (cmd_list_create:6109-6116).
+            var details: [String] = []
+            if let color, !color.isEmpty {
+                details.append("color=\(normalizeListColor(color) ?? color)")
+            }
+            if let symbol, !symbol.isEmpty { details.append("symbol=\(symbol)") }
+            if let emoji, !emoji.isEmpty { details.append("emoji=\(emoji)") }
+            if groceries {
+                let loc = groceryLocale.flatMap { try? normalizeGroceryLocale($0) } ?? defaultGroceryLocaleID
+                details.append("groceries locale=\(loc)")
+            }
+
+            var out = "Created list: \(safeDisplay(name))\n"
+            if !details.isEmpty {
+                out += "Applied private metadata: \(details.joined(separator: ", "))\n"
+            }
+            return .ok(out)
+        }
+
+        // 3b. PUBLIC PATH (EventKit): existing Phase-2 behavior, byte-for-byte.
+        // Validate color (named only — hex already handled above via privateNeeded).
         var publicColor: String? = nil
         if let color, !color.isEmpty {
-            guard publicListColors.contains(normalizeListColorName(color)) else {
-                return .error("unsupported list color \(WriteFormatting.pyRepr(color)). Use \(publicListColorExamples).")
-            }
-            // cmd_list_create:6122-6123 sends the RAW color value (not the normalized form) to the bridge.
+            // cmd_list_create:6122-6123 sends the RAW color value to the bridge.
             publicColor = color
         }
 
-        // 3. Create. On a caught WriteError, re-wrap to match cmd_list_create:6134.
         do {
             _ = try await writer.createList(title: name, color: publicColor)
         } catch let e as WriteError {
@@ -123,16 +177,12 @@ struct ListCreate: AsyncParsableCommand {
             throw WriteError("Failed to create list '\(name)'\(suffix)", exitCode: e.exitCode)
         }
 
-        // 4. Output.
+        // 4b. Output — public path.
         if json {
             let obj: JSONValue = .object([("status", .string("created")), ("name", .string(name))])
             return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
         }
         return .ok("Created list: \(safeDisplay(name))\n")
-    }
-
-    private static func phase3(_ flag: String) -> WriteError {
-        WriteError("\(flag) requires the private metadata layer (Phase 3); not yet implemented.")
     }
 }
 
