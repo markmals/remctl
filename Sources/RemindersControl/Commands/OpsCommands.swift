@@ -261,6 +261,129 @@ struct Permissions: ParsableCommand {
 
 struct Setup: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "setup", abstract: "Install shell completions/config.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("setup") }
+    @Option(name: .long, help: "Shell to configure (auto, bash, zsh, fish, skip)") var shell: String = "auto"
+    @Flag(name: .long, help: "Also run a doctor check after setup.") var doctor = false
+    @Flag(name: .long, help: "Output machine-readable JSON.") var json = false
+
+    func run() throws {
+        let outcome = try Self.perform(shellArg: shell, doctor: doctor, json: json)
+        if !outcome.stdout.isEmpty {
+            // Use FileHandle to avoid print()'s implicit newline when the output already ends with \n.
+            FileHandle.standardOutput.write(Data(outcome.stdout.utf8))
+        }
+        if !outcome.stderr.isEmpty {
+            FileHandle.standardError.write(Data(outcome.stderr.utf8))
+        }
+        if outcome.exitCode != 0 { throw ExitCode(outcome.exitCode) }
+    }
+
+    // ── Testable core ──────────────────────────────────────────────────────
+    struct Outcome { let stdout: String; let stderr: String; let exitCode: Int32 }
+
+    /// Port of `cmd_setup` (remctl:7516). Pure of process-level side effects when given
+    /// an injected `env`; does write to the filesystem (config dir + completion file).
+    @discardableResult
+    static func perform(
+        shellArg: String,
+        doctor: Bool,
+        json: Bool,
+        env: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> Outcome {
+        let fm = FileManager.default
+
+        // Step 1: mkdir -p CONFIG_DIR + best-effort chmod 0700.
+        let configDir = Paths.resolveConfigDir(env: env)
+        try fm.createDirectory(at: configDir, withIntermediateDirectories: true, attributes: nil)
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: configDir.path)
+
+        // Step 2: resolve shell.
+        let selectedShell = resolveSetupShell(shellArg, env: env)
+
+        // Step 3: install completion (unless skip).
+        var completionPath: URL? = nil
+        if selectedShell != "skip" {
+            completionPath = try installCompletion(selectedShell, env: env)
+        }
+
+        // Step 4: build result.
+        var pairs: [(String, JSONValue)] = [
+            ("ok", .bool(true)),
+            ("config_dir", .string(configDir.path)),
+            ("completion_shell", selectedShell == "skip" ? .null : .string(selectedShell)),
+            ("completion_path", completionPath.map { .string($0.path) } ?? .null),
+        ]
+
+        // Step 5: --doctor (smaller shape: only ok + checks, no warnings/failures/context).
+        if doctor {
+            let checks = gatherDoctorChecks(probes: DoctorRuntime.realProbes(env: env))
+            let failCount = checks.filter { $0.status == .fail }.count
+            let checkPairs: [JSONValue] = checks.map { c in
+                .object([
+                    ("name", .string(c.name)),
+                    ("status", .string(c.status.rawValue)),
+                    ("detail", .string(c.detail)),
+                    ("fix", c.fix.map { JSONValue.string($0) } ?? .null),
+                ])
+            }
+            let doctorValue: JSONValue = .object([
+                ("ok", .bool(failCount == 0)),
+                ("checks", .array(checkPairs)),
+            ])
+            pairs.append(("doctor", doctorValue))
+        }
+
+        let result: JSONValue = .object(pairs)
+
+        // Step 6: output.
+        var stdout = ""
+        let stderr = ""
+        var exitCode: Int32 = 0
+
+        if json {
+            stdout = result.serialized(indent: 2, ensureAscii: false) + "\n"
+        } else {
+            // Human output — NO_COLOR / color-detection identical to doctor.
+            let ansi = Ansi.resolve(
+                noColorFlag: false,
+                env: env,
+                isTTY: isatty(STDOUT_FILENO) != 0)
+            var lines: [String] = []
+            lines.append(ansi.bold("RemCTL setup"))
+            lines.append("Config directory: \(configDir.path)")
+            if let path = completionPath {
+                lines.append("Shell completion: \(path.path)")
+            } else {
+                lines.append("Shell completion: skipped")
+            }
+            lines.append("")
+            lines.append("Next:")
+            lines.append("  1. remctl onboard   # trigger macOS Reminders and Automation prompts")
+            lines.append("  2. remctl permissions full-disk-access   # visual Full Disk Access setup")
+            lines.append("  3. remctl doctor    # verify the CLI")
+            stdout = lines.joined(separator: "\n") + "\n"
+
+            // --doctor in human mode: re-run doctor report (may exit 1 on any FAIL).
+            if doctor {
+                let checks = gatherDoctorChecks(probes: DoctorRuntime.realProbes(env: env))
+                let failCount = checks.filter { $0.status == .fail }.count
+                stdout += "\n" + printCheckReport(title: nil, checks: checks, ansi: ansi) + "\n"
+                if failCount > 0 { exitCode = 1 }
+            }
+        }
+
+        return Outcome(stdout: stdout, stderr: stderr, exitCode: exitCode)
+    }
+}
+
+/// Port of `install_completion(shell)` (remctl:6976).
+/// Creates parent directories, writes the completion script, returns the target URL.
+/// NO 0600 chmod on the output file.
+@discardableResult
+func installCompletion(_ shell: String, env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
+    let target = try completionTargetPath(shell, env: env)
+    let parent = target.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: nil)
+    let script = try completionScript(for: shell)
+    try script.write(to: target, atomically: true, encoding: .utf8)
+    return target
 }
