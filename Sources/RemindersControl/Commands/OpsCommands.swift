@@ -210,8 +210,41 @@ struct CompletionCmd: ParsableCommand {
 
 struct Doctor: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "doctor", abstract: "Diagnose setup and permissions.")
-    @OptionGroup var output: JSONOptions
-    func run() throws { throw NotImplemented("doctor") }
+    @Flag(name: .customLong("for-agent"), help: "Print agent-focused context and TCC guidance.") var forAgent = false
+    @Flag(name: .long, help: "Output machine-readable JSON.") var json = false
+    @Flag(name: .long, help: "Disable ANSI color.") var noColor = false
+
+    func run() throws {
+        let checks = gatherDoctorChecks(probes: DoctorRuntime.realProbes())
+        let context = doctorExecutionContext()
+        let (result, failCount, _) = DoctorRuntime.buildResult(checks: checks, context: context, forAgent: forAgent)
+
+        if json {
+            print(result.serialized(indent: 2, ensureAscii: false))
+        } else {
+            let ansi = Ansi.resolve(noColorFlag: noColor)
+            var lines: [String] = [ansi.bold("RemCTL doctor")]
+            func ctxStr(_ key: String) -> String? {
+                if case let .string(v)? = context[key] { return v }; return nil
+            }
+            lines.append("Context: \(ctxStr("effective_context") ?? "unknown")")
+            lines.append("Python: \(ctxStr("python") ?? "")")
+            if case let .object(parent)? = context["parent_process"] {
+                let dict = Dictionary(parent, uniquingKeysWith: { a, _ in a })
+                if case let .string(name)? = dict["name"], case let .int(pid)? = dict["pid"] {
+                    lines.append("Parent process: \(name) (pid \(pid))")
+                }
+            }
+            if let host = ctxStr("host_app") { lines.append("Host app: \(host)") }
+            if let term = ctxStr("terminal_app") { lines.append("Terminal app: \(term)") }
+            if forAgent { lines.append(DoctorRuntime.agentNoteHuman) }
+            lines.append("")  // blank line before the report
+            print(lines.joined(separator: "\n"))
+            print(printCheckReport(title: nil, checks: checks, ansi: ansi))
+        }
+
+        if failCount > 0 { throw ExitCode(1) }
+    }
 }
 
 struct Onboard: ParsableCommand {
