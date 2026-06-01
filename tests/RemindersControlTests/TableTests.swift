@@ -199,6 +199,28 @@ import Foundation
         #expect(data[0].repeatText == "weekly")
     }
 
+    // ── all-day reminders (port of Fix all-day reminder bucketing) ──────────
+    @Test func remindersToTableDataAllDayTodaySuppressesTime() {
+        let now = pinnedNow
+        // All-day with a non-zero time component still renders date-only ("Today").
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "t", "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0,
+                           "list_name": "L", "ZALLDAY": 1,
+                           "ZDUEDATE": appleSeconds(year: 2026, month: 5, day: 29, hour: 14, minute: 30)])
+        let data = remindersToTableData([row], ansi: plain, now: now)
+        #expect(data[0].due == "Today")
+        #expect(data[0].title == "📅 t")
+    }
+    @Test func remindersToTableDataAllDayBucketsByDisplayDate() {
+        let now = pinnedNow
+        // Synthetic ZDUEDATE on the previous day; display date = tomorrow → bucket "Tomorrow".
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "t", "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0,
+                           "list_name": "L", "ZALLDAY": 1,
+                           "ZDUEDATE": appleSeconds(year: 2026, month: 5, day: 29),
+                           "ZDISPLAYDATEDATE": appleSeconds(year: 2026, month: 5, day: 30)])
+        let data = remindersToTableData([row], ansi: plain, now: now)
+        #expect(data[0].due == "Tomorrow")
+    }
+
     @Test func endToEndUncoloredTable() {
         let row = DictRow(["Z_PK": 1, "ZTITLE": "Buy milk", "list_name": "Groceries",
                            "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0,

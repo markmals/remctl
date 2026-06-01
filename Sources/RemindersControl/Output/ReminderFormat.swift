@@ -35,8 +35,10 @@ func colorPriority(_ priVal: Int, ansi: Ansi) -> String {
 
 // ── fmt_due ─────────────────────────────────────────────────────────────────
 
-/// Port of `fmt_due`. `v` is the Apple-epoch ZDUEDATE (or nil).
-public func fmtDue(_ v: Double?, now: Date = Date(), ansi: Ansi, calendar: Calendar = .current) -> String {
+/// Port of `fmt_due`. `v` is the Apple-epoch due value (or nil); pass `allDay` to
+/// suppress the time-of-day component (all-day items carry no meaningful time).
+public func fmtDue(_ v: Double?, now: Date = Date(), ansi: Ansi, calendar: Calendar = .current,
+                   allDay: Bool = false) -> String {
     // `if not v: return ""` — nil and 0 are falsey.
     guard let v, v != 0 else { return "" }
     let dt = Date(timeIntervalSince1970: v + AppleEpoch.offset)
@@ -49,7 +51,7 @@ public func fmtDue(_ v: Double?, now: Date = Date(), ansi: Ansi, calendar: Calen
         let comps = calendar.dateComponents([.hour, .minute], from: dt)
         let hour = comps.hour ?? 0
         let minute = comps.minute ?? 0
-        if hour != 0 || minute != 0 {
+        if !allDay && (hour != 0 || minute != 0) {
             return String(format: " (today %02d:%02d)", hour, minute)
         }
         return " (today)"
@@ -176,6 +178,24 @@ private func itemDueDate(_ row: ReminderRow) -> Double? {
     return row.double("dueDate")
 }
 
+/// Port of `_item_is_all_day`. True when ZALLDAY (or JSON `allDay`) is set.
+func itemIsAllDay(_ row: ReminderRow) -> Bool {
+    if row.has("ZALLDAY") { return (row.int("ZALLDAY") ?? 0) != 0 }
+    return (row.int("allDay") ?? 0) != 0
+}
+
+/// Port of `row_effective_due`. Raw due timestamp used for day-bucketing and all-day
+/// labels: for all-day items Reminders stores ZDUEDATE at UTC midnight (which can fall
+/// on the previous local day west of UTC), so use ZDISPLAYDATEDATE when present.
+func rowEffectiveDue(_ row: ReminderRow) -> Double? {
+    let due = itemDueDate(row)
+    if itemIsAllDay(row) {
+        if row.has("ZDISPLAYDATEDATE"), let disp = row.double("ZDISPLAYDATEDATE") { return disp }
+        if let disp = row.double("displayDate") { return disp }
+    }
+    return due
+}
+
 private func itemId(_ row: ReminderRow) -> String {
     if row.has("Z_PK") { return String(row.int("Z_PK") ?? 0) }
     if let i = row.int("id") { return String(i) }
@@ -183,9 +203,11 @@ private func itemId(_ row: ReminderRow) -> String {
     return "?"
 }
 
-/// Port of `_state_markers`. Urgent (red ⏰) first, then flagged (yellow ⚑); space-joined.
+/// Port of `_state_markers`. All-day (cyan 📅) first, then urgent (red ⏰), then
+/// flagged (yellow ⚑); space-joined.
 private func stateMarkers(_ row: ReminderRow, ansi: Ansi) -> String {
     var markers: [String] = []
+    if itemIsAllDay(row) { markers.append(ansi.cyan("📅")) }
     if itemIsUrgent(row) { markers.append(ansi.red("⏰")) }
     if itemIsFlagged(row) { markers.append(ansi.yellow("⚑")) }
     return markers.joined(separator: " ")
@@ -212,7 +234,8 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
     let idStr = colorByList("#\(itemId(row))", listName: listName, ansi: ansi, rgb: rgb)
 
     var title = safeDisplay((itemTitle(row)?.isEmpty ?? true) ? "(untitled)" : itemTitle(row)!)
-    var dueStr = fmtDue(itemDueDate(row), now: now, ansi: ansi)
+    let allDay = itemIsAllDay(row)
+    var dueStr = fmtDue(rowEffectiveDue(row), now: now, ansi: ansi, allDay: allDay)
 
     let summary = recurrenceSummary(recurrenceFromRow(row, ts: { AppleEpoch.ts($0) }) ?? [])
     var recurStr = summary.isEmpty ? "" : " \(ansi.magenta("↻ \(summary)"))"
@@ -241,6 +264,9 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
         }
         if !summary.isEmpty {
             parts.append("\(indent)    Repeats: \(ansi.magenta(summary))")
+        }
+        if allDay {
+            parts.append("\(indent)    All-day: \(ansi.cyan("Yes"))")
         }
         let early = dueDateDeltaAlertsFromRow(row, ts: { AppleEpoch.ts($0) })
         if !early.isEmpty {

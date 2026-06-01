@@ -19,6 +19,16 @@ extension RemindersStore {
     func displayDueExpr(_ alias: String = "r") -> String {
         reminderHasColumn("ZDISPLAYDATEDATE") ? "\(alias).ZDISPLAYDATEDATE" : "NULL"
     }
+    /// Port of `due_filter_expr`. Date used for due-window bucketing/ordering.
+    /// Reminders stores all-day items with a synthetic ZDUEDATE (UTC midnight), while
+    /// ZDISPLAYDATEDATE is the local day Reminders.app displays. West of UTC the synthetic
+    /// timestamp lands on the previous local day, so all-day items must bucket by the
+    /// display date. Falls back to plain ZDUEDATE when either column is absent.
+    func dueFilterExpr(_ alias: String = "r") -> String {
+        let due = "\(alias).ZDUEDATE"
+        guard reminderHasColumn("ZALLDAY"), reminderHasColumn("ZDISPLAYDATEDATE") else { return due }
+        return "(CASE WHEN \(alias).ZALLDAY = 1 THEN COALESCE(\(alias).ZDISPLAYDATEDATE, \(due)) ELSE \(due) END)"
+    }
 
     /// 10 correlated subqueries on ZREMCDOBJECT (Z_ENT=34, FK ZREMINDER4). Aliases are read by the serializer.
     var recurrenceCols: String {

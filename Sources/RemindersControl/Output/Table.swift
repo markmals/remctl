@@ -132,8 +132,9 @@ public func remindersToTableData(_ items: [ReminderRow], ansi: Ansi, now: Date =
 
     for r in items {
         // ── due ──
+        let allDay = itemIsAllDay(r)
         var dueStr = ""
-        if let dueVal = tableItemDueDate(r), dueVal != 0 {
+        if let dueVal = rowEffectiveDue(r), dueVal != 0 {
             let dt = Date(timeIntervalSince1970: dueVal + AppleEpoch.offset)
             let dtDay = calendar.startOfDay(for: dt)
             if dtDay == sod {
@@ -141,7 +142,7 @@ public func remindersToTableData(_ items: [ReminderRow], ansi: Ansi, now: Date =
                 let comps = calendar.dateComponents([.hour, .minute], from: dt)
                 let hour = comps.hour ?? 0
                 let minute = comps.minute ?? 0
-                if hour != 0 || minute != 0 {
+                if !allDay && (hour != 0 || minute != 0) {
                     dueStr += String(format: " %02d:%02d", hour, minute)
                 }
             } else if dtDay == tomorrowSod {
@@ -218,11 +219,6 @@ private func tableItemTitle(_ row: ReminderRow) -> String? {
     return row.string("title")
 }
 
-private func tableItemDueDate(_ row: ReminderRow) -> Double? {
-    if row.has("ZDUEDATE") { return row.double("ZDUEDATE") }
-    return row.double("dueDate")
-}
-
 private func tableItemId(_ row: ReminderRow) -> String {
     if row.has("Z_PK") { return String(row.int("Z_PK") ?? 0) }
     if let i = row.int("id") { return String(i) }
@@ -230,9 +226,11 @@ private func tableItemId(_ row: ReminderRow) -> String {
     return "?"
 }
 
-/// Port of `_state_markers`. Urgent (red ⏰) first, then flagged (yellow ⚑); space-joined.
+/// Port of `_state_markers`. All-day (cyan 📅) first, then urgent (red ⏰), then
+/// flagged (yellow ⚑); space-joined.
 private func tableStateMarkers(_ row: ReminderRow, ansi: Ansi) -> String {
     var markers: [String] = []
+    if itemIsAllDay(row) { markers.append(ansi.cyan("📅")) }
     if tableItemIsUrgent(row) { markers.append(ansi.red("⏰")) }
     if tableItemIsFlagged(row) { markers.append(ansi.yellow("⚑")) }
     return markers.joined(separator: " ")

@@ -170,6 +170,26 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(s.urgent().map { $0.int("Z_PK")! } == [1])
     }
+    @Test func allDayBucketsByDisplayDateNotSyntheticDue() throws {
+        // Reminders stores all-day ZDUEDATE at UTC midnight, which west of UTC lands on the
+        // previous local day. Due-window bucketing must follow ZDISPLAYDATEDATE for all-day items.
+        let cal = Calendar.current
+        let now = cal.date(from: DateComponents(year: 2026, month: 4, day: 18, hour: 12))!
+        let synthDue = AppleEpoch.toTs(cal.date(byAdding: .day, value: -1, to: now)!)  // "yesterday"
+        let displayToday = AppleEpoch.toTs(cal.startOfDay(for: now))                    // today 00:00 local
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME) VALUES (10,3,'L');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZALLDAY,ZDUEDATE,ZDISPLAYDATEDATE) VALUES (1,'allday',10,1,0,0,1,\(synthDue),\(displayToday));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZALLDAY,ZDUEDATE) VALUES (2,'timed',10,1,0,0,0,\(synthDue));
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // All-day item buckets to today by its display date — not overdue by its synthetic due.
+        #expect(s.dueToday(includeOverdue: false, now: now).map { $0.int("Z_PK")! } == [1])
+        // The timed item (real due yesterday) is genuinely overdue; the all-day item is not.
+        #expect(s.overdue(now: now).map { $0.int("Z_PK")! } == [2])
+    }
 }
 
 @Suite struct ExtrasQueryTests {

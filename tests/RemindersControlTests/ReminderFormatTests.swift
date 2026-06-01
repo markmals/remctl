@@ -79,4 +79,42 @@ import Foundation
         #expect(out.contains("\n    Flagged: Yes"))
         #expect(out.contains("\n    Urgent: Yes"))
     }
+
+    // ── all-day reminders (port of Fix all-day reminder bucketing) ────────────
+    @Test func allDayDueTodaySuppressesTime() {
+        let cal = cal()
+        let now = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:14))!
+        let due = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:9,minute:30))!
+        let row = DictRow(["Z_PK":1,"ZTITLE":"t","ZCOMPLETED":0,"ZFLAGGED":0,"ZPRIORITY":0,
+            "ZALLDAY":1,"ZDUEDATE": appleSecondsFor(due)])
+        // 📅 marker, and the time-of-day is suppressed: "(today)" not "(today 09:30)".
+        #expect(fmt(row, tags: [], subtaskCount: 0, ansi: off, now: now) == "[ ] #1 📅 t (today)")
+    }
+    @Test func allDayLabelsByDisplayDateNotSyntheticDue() {
+        let cal = cal()
+        let now = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:14))!
+        // Synthetic ZDUEDATE on the previous day (UTC-midnight artifact); display date = today.
+        let synthDue = cal.date(from: DateComponents(year:2026,month:5,day:28,hour:20))!
+        let display = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:0))!
+        let row = DictRow(["Z_PK":1,"ZTITLE":"t","ZCOMPLETED":0,"ZFLAGGED":0,"ZPRIORITY":0,
+            "ZALLDAY":1,"ZDUEDATE": appleSecondsFor(synthDue),"ZDISPLAYDATEDATE": appleSecondsFor(display)])
+        #expect(fmt(row, tags: [], subtaskCount: 0, ansi: off, now: now) == "[ ] #1 📅 t (today)")
+    }
+    @Test func verboseIncludesAllDayLine() {
+        let cal = cal()
+        let now = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:14))!
+        let due = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:9))!
+        let row = DictRow(["Z_PK":1,"ZTITLE":"t","ZCOMPLETED":0,"ZFLAGGED":0,"ZPRIORITY":0,
+            "ZALLDAY":1,"ZDUEDATE": appleSecondsFor(due)])
+        let out = fmt(row, tags: [], subtaskCount: 0, ansi: off, now: now, verbose: true)
+        #expect(out.contains("\n    All-day: Yes"))
+    }
+    @Test func nonAllDayStillShowsTime() {
+        let cal = cal()
+        let now = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:14))!
+        let due = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:9,minute:30))!
+        let row = DictRow(["Z_PK":1,"ZTITLE":"t","ZCOMPLETED":0,"ZFLAGGED":0,"ZPRIORITY":0,
+            "ZALLDAY":0,"ZDUEDATE": appleSecondsFor(due)])
+        #expect(fmt(row, tags: [], subtaskCount: 0, ansi: off, now: now) == "[ ] #1 t (today 09:30)")
+    }
 }

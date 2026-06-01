@@ -72,20 +72,23 @@ extension RemindersStore {
 
     public func dueToday(includeOverdue: Bool = true, now: Date = Date()) -> [Row] {
         let (sod, eod) = DateWindows.dueTodayWindow(now)
+        let due = dueFilterExpr()  // display-date-aware for all-day items
         let w: String
-        if includeOverdue { w = "r.ZDUEDATE < \(AppleEpoch.toTs(eod)) AND r.ZDUEDATE IS NOT NULL" }
-        else { w = "r.ZDUEDATE >= \(AppleEpoch.toTs(sod)) AND r.ZDUEDATE < \(AppleEpoch.toTs(eod))" }
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(w)", args: [], order: "r.ZDUEDATE")
+        if includeOverdue { w = "\(due) < \(AppleEpoch.toTs(eod)) AND \(due) IS NOT NULL" }
+        else { w = "\(due) >= \(AppleEpoch.toTs(sod)) AND \(due) < \(AppleEpoch.toTs(eod))" }
+        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(w)", args: [], order: due)
     }
 
     public func upcoming(days: Int = 7, now: Date = Date()) -> [Row] {
         let (sod, future) = DateWindows.upcomingWindow(days: days, now: now)
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND r.ZDUEDATE IS NOT NULL AND r.ZDUEDATE >= \(AppleEpoch.toTs(sod)) AND r.ZDUEDATE < \(AppleEpoch.toTs(future))", args: [], order: "r.ZDUEDATE")
+        let due = dueFilterExpr()  // display-date-aware for all-day items
+        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(due) IS NOT NULL AND \(due) >= \(AppleEpoch.toTs(sod)) AND \(due) < \(AppleEpoch.toTs(future))", args: [], order: due)
     }
 
     public func overdue(now: Date = Date()) -> [Row] {
         let sod = DateWindows.startOfDay(now)
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND r.ZDUEDATE IS NOT NULL AND r.ZDUEDATE < \(AppleEpoch.toTs(sod))", args: [], order: "r.ZDUEDATE")
+        let due = dueFilterExpr()  // display-date-aware for all-day items
+        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(due) IS NOT NULL AND \(due) < \(AppleEpoch.toTs(sod))", args: [], order: due)
     }
 
     public func flagged() -> [Row] {

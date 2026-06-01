@@ -36,7 +36,7 @@ struct Today: ParsableCommand {
                 return
             }
             let sodTs = AppleEpoch.toTs(DateWindows.startOfDay(now))
-            let overdue = rows.filter { ($0.double("ZDUEDATE") ?? 0) < sodTs }
+            let overdue = rows.filter { (rowEffectiveDue($0) ?? 0) < sodTs }
             let overduePKs = Set(overdue.compactMap { $0.int("Z_PK") })
             let due = rows.filter { !overduePKs.contains($0.int("Z_PK") ?? -1) }
 
@@ -100,7 +100,7 @@ struct Upcoming: ParsableCommand {
             var groupMap: [String: (label: String, items: [ReminderRow])] = [:]
 
             for r in rows {
-                guard let dueVal = r.double("ZDUEDATE"), dueVal != 0 else { continue }
+                guard let dueVal = rowEffectiveDue(r), dueVal != 0 else { continue }
                 let dt = Date(timeIntervalSince1970: dueVal + AppleEpoch.offset)
                 let dtDay = cal.startOfDay(for: dt)
                 let dayKey: String
@@ -518,11 +518,12 @@ struct Show: ParsableCommand {
 }
 
 /// Human date format for `info`: "%b %d, %Y at %I:%M %p" -> e.g. "May 23, 2026 at 10:00 AM".
-private func infoDateString(_ appleSeconds: Double) -> String {
+/// `dateOnly` drops the time component for all-day reminders -> "May 23, 2026".
+private func infoDateString(_ appleSeconds: Double, dateOnly: Bool = false) -> String {
     let date = Date(timeIntervalSince1970: appleSeconds + AppleEpoch.offset)
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
-    f.dateFormat = "MMM dd, yyyy 'at' hh:mm a"
+    f.dateFormat = dateOnly ? "MMM dd, yyyy" : "MMM dd, yyyy 'at' hh:mm a"
     return f.string(from: date)
 }
 
@@ -585,7 +586,14 @@ struct Info: ParsableCommand {
             print("  Priority:  \(priDisplay)")
             print("  Flagged:   \((r.int("ZFLAGGED") ?? 0) != 0 ? ansi.yellow("Yes") : "No")")
             print("  Urgent:    \((r.int("ZISURGENTSTATEENABLEDFORCURRENTUSER") ?? 0) != 0 ? ansi.red("Yes") : "No")")
-            if let due = r.double("ZDUEDATE"), due != 0 { print("  Due:       \(infoDateString(due))") }
+            if let due = r.double("ZDUEDATE"), due != 0 {
+                let effective = rowEffectiveDue(r) ?? due
+                if itemIsAllDay(r) {
+                    print("  Due:       \(infoDateString(effective, dateOnly: true)) (all-day)")
+                } else {
+                    print("  Due:       \(infoDateString(effective))")
+                }
+            }
             let early = dueDateDeltaAlertsFromRow(r, ts: { AppleEpoch.ts($0) })
             if !early.isEmpty {
                 let labels = early.compactMap { pairs -> String? in
