@@ -1,37 +1,51 @@
 # Architecture
 
-RemCTL intentionally splits reads and writes.
+RemCTL is a single self-contained Swift binary. It intentionally splits reads
+from writes, but everything runs in one process — there are no helper
+executables, no daemon, no localhost API, no launch agent, and no token. The
+`remctl` command is the only runtime surface.
 
-## Components
+The binary uses three data paths, all in-process:
 
 ```text
-remctl (Python)
-  ├─ reads Reminders CoreData SQLite database
-  ├─ formats human and JSON output
-  ├─ calls remctl-bridge for normal writes
-  └─ calls remctl-private for opt-in private metadata writes
-
-remctl-bridge (Swift)
-  └─ writes through EventKit
-
-remctl-private (Objective-C)
-  └─ writes selected private metadata through private ReminderKit APIs
-
-remctl-permissions (Swift/AppKit)
-  └─ guides Full Disk Access setup with draggable targets
+remctl  (one Swift binary)
+  reads:   ~/Library/Group Containers/group.com.apple.reminders/.../Data-*.sqlite
+           └─ GRDB, read-only — needs Full Disk Access
+  writes:  EventKit            (in-process)
+           └─ title, list, due, priority, notes, recurrence, alarms, complete,
+              delete, list create/rename/delete, structured-location alarms
+  private: ReminderKit          (in-process, private framework)
+           └─ sections, subtasks, synced tags, image attachments, real flag,
+              urgent, Early Reminders, list/smart-list appearance, Groceries,
+              custom smart lists, templates
 ```
 
-There is no daemon, localhost API, launch agent, or token setup in RemCTL 1.0. The CLI is the only runtime surface.
+Reads go directly to the local Reminders SQLite store for speed and detail.
+Public mutations go through Apple's EventKit. The metadata Apple does not expose
+through EventKit goes through Apple's private ReminderKit framework. RemCTL never
+writes the SQLite store, so iCloud and Reminders stay in charge of sync.
 
-## Reads
+> RemCTL was ported from a former CLI that shelled out to standalone Swift and
+> Objective-C helper binaries; that EventKit and ReminderKit logic now runs
+> inside this one process.
 
-Direct reads use the iCloud Reminders CoreData store:
+## The Read Path — GRDB, read-only
+
+Reads open the local iCloud Reminders Core Data store directly:
 
 ```text
 ~/Library/Group Containers/group.com.apple.reminders/Container_v1/Stores/Data-*.sqlite
 ```
 
-This exposes fields EventKit does not expose cleanly for fast list views:
+`RemindersStore` (`Sources/RemindersControl/Store/RemindersStore.swift`) opens the
+largest `Data-*.sqlite` under the store directory through
+[GRDB.swift](https://github.com/groue/GRDB.swift) with `Configuration.readonly = true`.
+RemCTL opens the database **read-only and never writes to SQLite**. Queries live
+alongside it in `Sources/RemindersControl/Store/Queries+*.swift`, with the schema
+column lookups cached on the store.
+
+Direct reads are the fast, detailed path. They expose fields EventKit does not
+surface cleanly for list views, in tens of milliseconds:
 
 - sections
 - subtasks
@@ -40,133 +54,190 @@ This exposes fields EventKit does not expose cleanly for fast list views:
 - deep links
 - list colors and badge emblems
 - recurrence rules
-- macOS 26 urgent state
+- urgent state
 - Early Reminder due-date delta alerts
 
-RemCTL opens the database read-only. It never writes to SQLite.
+The store file is TCC-protected, so this path requires **Full Disk Access** for
+the process context running `remctl` (see [Permissions](#permissions)).
 
-## Writes
+## The Public-Write Path — EventKit
 
-Writes go through Apple-supported APIs:
+Ordinary mutations go through Apple's EventKit, in-process. `EventKitWriter`
+(`Sources/RemindersControl/Writes/EventKitWriter.swift`) wraps a single
+`EKEventStore` and covers:
 
-1. `remctl-bridge` writes via EventKit. This is the normal path for create, edit, moving reminders between lists, complete, delete, recurrence, alarms, URLs appended to notes, and list management. The Python CLI validates user input first, and the bridge also rejects malformed due dates, recurrence rules, alarms, priorities, and location payloads if called directly.
-2. AppleScript is a fallback for operations that still need Reminders.app automation behavior.
+- create, edit, complete/uncomplete, and delete reminders
+- title, target list, due date, priority, notes, and notes-appended URLs
+- recurrence rules and normal (relative/absolute) alarms
+- moving a reminder between lists
+- list create, rename, and delete
+- structured-location alarms (written through EventKit's structured-location
+  path because they materialize reliably there on current macOS)
 
-There is also an explicitly unsupported opt-in helper:
+Using EventKit for these keeps Reminders and iCloud in charge of ordinary
+mutations: RemCTL hands the change to Apple's supported API and lets the
+Reminders daemon persist and sync it. RemCTL does not write the database for
+these operations.
 
-3. `remctl-private` writes selected private metadata through Apple's private ReminderKit framework. It is gated by `--private`, never writes SQLite directly, and is intentionally excluded from normal write behavior. Verified private writes include web rich URL attachments, hashtag labels, section assignment/creation, rich subtasks, image attachments, real flag state, urgent state, Early Reminders, location alarms, list appearance metadata such as exact colors, private emblem names, and emoji badges, list and smart-list pin state, Groceries list metadata and categorization verification, experimental custom smart-list creation/editing/deletion for verified materializing Reminders filters, and Reminders template create/apply/delete. Rich URL and image edit writes are additive; RemCTL does not remove or replace existing rich links/images. For rich subtasks, `remctl-private` creates the child and applies private child metadata, then `remctl-bridge` applies public child fields such as notes and due dates. Generic file/PDF attachments are rejected because Reminders does not reliably show them even when private rows sync.
+The writer validates user input — malformed due dates, recurrence rules,
+alarms, priorities, and location payloads fail before anything is written.
 
-The bridge is detected next to the installed CLI. Override it with:
+## The Private-Write Path — ReminderKit
+
+For the metadata Apple does not expose through EventKit, RemCTL calls Apple's
+**private, unsupported** ReminderKit framework directly, in-process. There is no
+opt-in flag; the path is selected from which flags are present, not an explicit
+mode.
+
+This logic lives in a dedicated Objective-C target, `ReminderKitPrivate`
+(`Sources/ReminderKitPrivate/`), which links
+`/System/Library/PrivateFrameworks/ReminderKit.framework`. Apple ships no public
+ReminderKit headers, so the target carries `@interface` forward declarations and
+resolves the real classes at runtime via `NSClassFromString` — selector
+correctness is a runtime property. It also links AppKit (`NSImage`, to validate
+image attachments).
+
+The target exposes a small, dictionary-in / dictionary-out C entry point
+(`Sources/ReminderKitPrivate/include/ReminderKitPrivate.h`):
+
+- `RKPProbe()` — a probe that returns `reminderkit-ok` when `REMStore` resolves
+  at runtime, `reminderkit-missing` otherwise. No writes.
+- `RKPDispatch(NSDictionary *request)` — dispatches one allow-listed private
+  action and returns a response dict (`status` of `created`/`updated`/`deleted`,
+  or `{"status": "error", "message": ...}`). It never throws and never calls
+  `exit()`; any private-API fault is caught and returned as an error dict.
+
+Private writes cover the parts of Reminders that EventKit does not:
+
+- **Reminder metadata:** synced web rich links, synced tags, sections, rich
+  subtasks, image attachments, the real flag, urgent state, and Early Reminders.
+- **List metadata:** exact `#RRGGBB` colors, official list symbols, emoji
+  badges, Groceries conversion/locale and item categorization, and list /
+  smart-list pin state.
+- **Custom smart lists:** create/edit/delete for the Reminders filters RemCTL
+  has verified materialize correctly.
+- **Templates:** whole-list template create/apply/delete.
+
+These call private APIs that are reverse-engineered and may change across macOS
+releases. They are **sync-safe because they never write SQLite directly** — they
+go through ReminderKit save requests, so they will not corrupt the store or
+break iCloud sync. Treat them as power-user functionality and verify writes that
+matter. Generic file/PDF attachments are intentionally rejected; only images
+attach. See [private-metadata.md](private-metadata.md) for supported fields,
+known limits, and verification rules.
+
+## Package & Target Layout
+
+RemCTL is built with SwiftPM (`swift-tools-version: 6.0`), targeting macOS 14+.
+The CLI uses Swift Argument Parser; reads use GRDB. The package declares one
+executable product, `remctl`, over four targets (see `Package.swift`):
+
+| Target | Kind | Role |
+| --- | --- | --- |
+| `ReminderKitPrivate` | Obj-C `.target` | The private-write boundary. Links `ReminderKit.framework` (from `/System/Library/PrivateFrameworks`), Foundation, and AppKit; public header in `include/`. Exposes `RKPProbe`/`RKPDispatch`. |
+| `RemindersControl` | Swift `.target` | The library holding all CLI commands, reads, writes, serialization, and smart-list logic. Depends on `ArgumentParser`, `GRDB`, and `ReminderKitPrivate`; links EventKit, AppKit, and CoreLocation. |
+| `remctl` | Swift `.executableTarget` | A thin `@main` wrapper over the `RemindersControl` library's root command. |
+| `RemindersControlTests` | `.testTarget` | Unit tests for `RemindersControl` (and `ReminderKitPrivate`, listed explicitly because the private-link tests import it directly). |
+
+Keeping the command logic in the `RemindersControl` library — with the
+executable a thin wrapper — is what makes the CLI unit-testable. Inside the
+library, the source is organized into `Commands/` (Argument Parser shells plus
+their testable cores), `Store/` (GRDB reads), `Writes/` (the EventKit and
+ReminderKit write paths), `SmartLists/` (filter encode/decode),
+`Serialization/`, `Output/`, and `Runtime/` (path resolution, date windows).
+
+## Testability Seams
+
+Write logic is testable without touching live Reminders data, through two
+parallel protocol seams:
+
+- **EventKit seam:** the `RemindersWriter` protocol
+  (`Sources/RemindersControl/Writes/RemindersWriter.swift`) is implemented by the
+  production `EventKitWriter` and by a `MockWriter` in tests.
+  `WriterFactory.make` returns the real writer in production and can be
+  overridden in tests.
+- **Private seam:** the `PrivateWriter` protocol
+  (`Sources/RemindersControl/Writes/PrivateWriter.swift`) is implemented by the
+  production `ReminderKitWriter` (which marshals each typed call into an
+  `RKPDispatch` request dict and unmarshals the response) and by a
+  `MockPrivateWriter` in tests. `PrivateWriterFactory.make` returns the real
+  writer in production.
+
+Command cores return a `WriteOutcome` (stdout/stderr/exit code) instead of
+printing or exiting directly, and accept an injected writer, so a test can drive
+a full command against a mock and assert on both the recorded calls and the
+rendered output. The live `EventKitWriter` and `ReminderKitWriter` paths require
+a real Reminders store and a granted TCC permission, so they are verified
+manually; their pure helpers (color parsing, transient-error detection,
+response marshalling) are unit-tested.
+
+**Smart-list filter byte-parity.** Custom smart-list filters are stored on disk
+in Reminders' own compact JSON format. `FilterEncode.swift` encodes filter
+arguments to those bytes; `FilterDecode.swift` decodes them for reads. The two
+are inverses: bytes emitted by the encoder must round-trip back through the same
+decoder used for read commands, using the space-free compact serializer. Tests
+encode an argument set, then assert the produced `filterData` decodes to the
+expected filter — byte-verifying the write path against the read path without a
+live store.
+
+Tests use **Swift Testing** (`import Testing`, `@Test`). They live under
+`tests/RemindersControlTests/` (an explicit lowercase path pinned in
+`Package.swift`) and run on every push and PR via SwiftPM CI in the project repo,
+independent of the distribution pipeline.
+
+## Distribution
+
+RemCTL is distributed through the Homebrew tap `markmals/homebrew-tap`:
 
 ```bash
-REMCTL_BRIDGE_PATH=/path/to/remctl-bridge remctl add "Test"
+brew install markmals/tap/remctl
 ```
 
-`doctor` and `permissions` report the same helper path that the write path will use. Environment overrides are authoritative, even when the target is missing, so an agent can diagnose the exact failing helper path instead of silently falling back to another binary.
+Because the binary links a **private** framework (ReminderKit), it is **not
+notarized and not App-Store distributed**. Instead it ships as a Homebrew
+**bottle** — a prebuilt binary. The tap's `brew test-bot` CI builds bottles on
+Apple-Silicon macOS 15 (Sequoia) and 26 (Tahoe) and publishes them to GitHub
+Releases. For configurations without a matching bottle, Homebrew falls back to a
+**source build** (`swift build --disable-sandbox -c release`), which needs Xcode
+or a Swift 6 toolchain.
 
-Override the private helper path with:
-
-```bash
-REMCTL_PRIVATE_PATH=/path/to/remctl-private remctl edit 123 --private --url https://example.com
-```
-
-See [private-metadata.md](private-metadata.md) for supported private fields, known limits, and verification rules.
+RemCTL **requires macOS 14 (Sonoma) or later**.
 
 ## Output Safety
 
-Human output neutralizes terminal control characters from Reminders-controlled text such as titles, notes, URLs, list names, section names, and tags. JSON output preserves the raw stored values for automation.
+Human output neutralizes terminal control characters from Reminders-controlled
+text — titles, notes, URLs, list names, section names, and tags. JSON output
+preserves the raw stored values for automation.
 
-Private rich URL attachments validate the target before writing. RemCTL accepts only public `http` and `https` hosts and rejects loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts. Non-private `--url` remains a notes fallback and does not create a rich attachment.
-
-## List Appearance
-
-Reminders stores list appearance on `ZREMCDBASELIST`:
-
-- `ZCOLOR` is a keyed archive containing a `REMColor` object with symbolic color names, hex, and RGB values.
-- `ZBADGEEMBLEM` is text. Emoji badges are stored as JSON such as `{"Emoji":"📌"}`; Reminders picker icons are stored as private emblem names such as `education3`.
-- `ZISPINNEDBYCURRENTUSER` and `ZPINNEDDATE` track whether the current user has pinned a list or smart list in the Reminders sidebar. Regular lists use `ZISPINNEDBYCURRENTUSER`; smart-list pinning updates `ZPINNEDDATE`, so RemCTL treats a positive smart-list pin date as pinned.
-- `ZSHOULDCATEGORIZEGROCERYITEMS`, `ZSHOULDAUTOCATEGORIZEITEMS`, `ZSHOULDSUGGESTCONVERSIONTOGROCERYLIST`, and `ZGROCERYLOCALEID` describe Reminders' special Groceries lists.
-
-RemCTL reads these fields directly for display and verification. `list-symbols` exposes the 71 official bundled emblem names discovered from RemindersUICore's `ListBadge*` assets. Its terminal glyphs are approximate Unicode fallbacks; `list-symbols --preview` and `list-symbols --html PATH` load the native badge assets from RemindersUICore and write a standalone HTML contact sheet with interactive official color swatches. Normal `list-create --color NAME` still writes through EventKit. Private list appearance writes use `REMStore.fetchListWithObjectID`, `REMSaveRequest.updateList`, `REMListChangeItem.setColor`, and `REMListChangeItem.appearanceContext.setBadgeEmblem` / `setBadge`, then save through ReminderKit. `list-pin` and `list-unpin` use `REMListChangeItem.setIsPinned` for regular lists and `REMSmartListChangeItem.setIsPinned` for smart lists. Groceries list metadata writes use `REMListChangeItem.groceryContextChangeItem`, `setShouldCategorizeGroceryItems`, and `setGroceryLocaleID`. For item sorting, RemCTL first polls section membership rows because Reminders auto-sorts new Groceries items; only unsectioned items fall back to `categorizeGroceryItemsWithReminderIDs`. `--symbol` is restricted to official emblem names because arbitrary SF Symbol strings are accepted by the private API but render as the default icon in Reminders. Custom icons should use `--emoji`.
-
-## Smart Lists
-
-Smart lists are stored in `ZREMCDBASELIST` as `REMCDSmartList` rows (`Z_ENT = 4`) with `ZSMARTLISTTYPE` and optional `ZFILTERDATA`.
-
-`smart-lists` is read-only. It reports built-in and custom smart lists with numeric row ID, object UUID, smart-list type, pin state, pin date, filter length, and decoded filter summaries where possible. Current custom smart-list filters on macOS 26 store `ZFILTERDATA` as UTF-8 JSON bytes. The decoder also accepts keyed-archive research samples shaped as `ReminderKitInternal.REMCustomSmartListFilterDescriptor` with a `data` field containing the same JSON bytes.
-
-`smart-list-create` is private and experimental. Python validates and encodes the Reminders filter payloads decoded from Reminders.app, but the user-facing write path only allows shapes verified to materialize in Reminders.app: Any Tag, date any/today/on/before/after/range, time of day, priority single or Priority: Any, flagged, vehicle connected, specific location, one included list, and top-level all/any matching across those families. Known decoded shapes that write as zero filters are rejected before saving: selected tags, untagged, no-date, relative date, no-time, vehicle disconnected, list exclusions, and more than one included list. RemCTL base64-encodes the raw JSON bytes and sends them to `remctl-private` alongside optional private appearance metadata. The helper resolves the active CloudKit account, verifies `supportsCustomSmartLists`, creates the smart list with `REMSaveRequest.addCustomSmartListWithName`, explicitly attaches the change item to the account, sets the custom smart-list supported-version fields to `20220430`, sets `smartListType`, `filterData`, color, and badge appearance when requested, and saves through ReminderKit. The account ownership fields keep the object durable; the supported-version fields are required for Reminders.app to materialize the filter controls instead of showing zero filters. `smart-list-edit` fetches a custom smart list by object ID and replaces `filterData` and/or private appearance metadata through `REMSaveRequest.updateSmartList`. `smart-list-delete` fetches a custom smart list by object ID, removes it from the parent account through ReminderKit, and never matches built-in smart lists.
-
-## Templates
-
-Templates are stored separately from ordinary lists:
-
-- `ZREMCDTEMPLATE` stores saved template rows, object UUIDs, creation/modification dates, badge metadata, and optional public-link fields such as `ZPUBLICLINKURLUUID`.
-- `ZREMCDSAVEDREMINDER` stores reminders saved inside each template. `ZMETADATA` is a one-byte-prefixed UTF-8 JSON payload containing fields such as title, tags, flags, priority, recurrence rules, and alarm triggers.
-- `ZREMCDBASESECTION` can point at templates through `ZTEMPLATE` for saved template sections.
-
-`templates` and `template-info` are read-only inspectors. They report numeric row IDs, object UUIDs, counts, existing public links, sections, and decoded saved-reminder metadata without mutating the store.
-
-Template writes are private ReminderKit writes and currently stay at whole-list granularity. `template-create` resolves the source list to a ReminderKit object ID, builds `REMTemplateConfiguration` with `shouldSaveCompleted`, then calls `REMSaveRequest.addTemplateWithName:configuration:toAccountChangeItem:`. `template-apply` fetches a template by object ID and calls `REMSaveRequest.addListUsingTemplate:toAccountChangeItem:`. `template-delete` fetches the template and removes it from the parent account through `REMSaveRequest.updateTemplate`. RemCTL does not mutate individual saved reminders inside a template, append selected reminders to a template, or strip subtasks or due dates while saving a source list.
-
-iCloud template link sharing is intentionally not implemented. RemCTL can read existing public-link UUIDs from the database, but local testing showed the private sharing operation can return success without materializing a link.
-
-## Recurrence
-
-EventKit writes recurrence rules. Direct reads resolve those rules from `ZREMCDOBJECT` rows linked to reminders and serialize them as:
-
-```json
-{
-  "frequency": "weekly",
-  "interval": 1,
-  "daysOfWeek": [2, 4]
-}
-```
-
-Human output summarizes the same data with badges such as `↻ weekly Mon, Wed`.
-
-## Due Dates and Alarms
-
-Reminder JSON keeps due dates and alarm/display dates separate for agents. `dueDate` is serialized from `ZREMCDREMINDER.ZDUEDATE`, the actual due date. When Reminders also stores `ZDISPLAYDATEDATE`, for example after adding an EventKit alarm 15 minutes before the due date, RemCTL exposes that value as `displayDate` instead of overwriting `dueDate`. On `edit -d`, RemCTL carries a single absolute alarm forward only when it matches the old due time; this keeps Reminders.app's visible time aligned for ordinary reschedules without rewriting deliberately separate custom alarms. On `edit -d clear`, RemCTL clears a single absolute alarm only when it matches the old due/display time.
-
-Normal alarms are `ZREMCDOBJECT` rows linked from the reminder through alarm rows (`Z_ENT = 15`) and trigger rows. Relative triggers serialize as `alarms` entries with `type: "relative"`, `relativeOffset`, `relativeOffsetMinutes`, and a human label. Absolute/date-component triggers serialize with `type: "absolute"`, `dateComponents`, and a best-effort local `date` string. Private ReminderKit location alarms use the same alarm relationship with location trigger rows and serialize as `type: "location"` plus a `location` object.
-
-## Flags, Urgent, and Early Reminders
-
-Flags are read from `ZFLAGGED` and shown as `⚑`.
-
-macOS 26 urgent reminders are read from `ZISURGENTSTATEENABLEDFORCURRENTUSER` and shown as `⏰`. Apple describes urgent reminders as reminders that schedule an alarm when due. Normal writes do not touch the private urgent fields; `add --private --urgent` and `edit --private --urgent` can write them through the unsupported private helper.
-
-Early Reminders are private due-date delta alerts. Reminders stores them in `ZREMCDDUEDATEDELTAALERT` and mirrors a JSON envelope in `ZREMCDREMINDER.ZDUEDATEDELTAALERTSDATA`; the live iOS/macOS UI value “15 minutes” is `dueDateDeltaUnit = 0` and `dueDateDeltaCount = -15`. RemCTL reads that blob into `earlyReminder`/`earlyReminders` JSON fields and writes through `REMReminderChangeItem.dueDateDeltaAlertContext`, not EventKit. Replacement writes remove existing due-date delta alert identifiers before adding the new `REMDueDateDeltaInterval`, because simply adding a new alert can leave multiple early alerts attached to the same reminder.
+Synced rich-link URLs (and rich subtask URLs) are validated before writing:
+RemCTL accepts only public `http`/`https` hosts and rejects loopback, `.local`,
+private, link-local, multicast, reserved, and unresolved hosts. With no other
+private metadata present, a `--url` is a plain notes append rather than a synced
+rich link.
 
 ## Permissions
 
-The CLI process may need Full Disk Access for the app or Python interpreter running `remctl`.
+RemCTL needs two macOS permission grants:
 
-TCC grants are context-specific. Terminal, Codex, a CI runner, and another host app can each have different access to the same Reminders database. A green report from Terminal does not prove that an agent context can read the database.
-
-Check setup with:
-
-```bash
-remctl doctor --for-agent
-```
-
-Open the guided setup flow with:
+- **Full Disk Access** — for the direct, read-only Reminders database reads.
+- **Reminders access** — for the EventKit and ReminderKit writes (prompted on
+  first write, or via `remctl onboard`).
 
 ```bash
-remctl permissions full-disk-access
+remctl onboard                      # triggers the Reminders prompt; guides Full Disk Access
+remctl permissions full-disk-access # opens System Settings + prints the exact target
+remctl doctor --for-agent           # verifies the current execution context
 ```
 
-The helper opens the Full Disk Access pane, copies the first path to the clipboard, exposes each target as a draggable file row, and periodically checks whether each target can read the Reminders store. Verified targets get a green check. It does not edit macOS TCC data directly.
+TCC grants are **context-specific**. Terminal, an agent runner, a CI host, and
+another app can each have different access to the same Reminders store. A green
+report from Terminal does not prove an agent context can read the database, so
+run `remctl doctor` from the same context that will run RemCTL.
 
 ## Environment Overrides
 
 ```bash
-REMCTL_BRIDGE_PATH=/path/to/remctl-bridge
-REMCTL_PRIVATE_PATH=/path/to/remctl-private
-REMCTL_PERMISSIONS_PATH=/path/to/remctl-permissions
-REMCTL_PATH=/path/to/remctl
-REMCTL_STORE_DIR=/path/to/reminders/store
-REMCTL_CONFIG_DIR=/path/to/config
-NO_COLOR=1
+REMCTL_STORE_DIR=/path/to/reminders/store   # override the read store directory
+REMCTL_CONFIG_DIR=/path/to/config           # override the config directory
+NO_COLOR=1                                   # disable colored output
 ```

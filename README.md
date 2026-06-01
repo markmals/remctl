@@ -2,64 +2,56 @@
 
 ![RemCTL](https://cdn.macstories.net/images/uploads/2026/05/26/cleanshot-2026-05-26-at-1629152x-1779805785287-9271e938c2.png)
 
-RemCTL is a fast, scriptable Reminders CLI for macOS designed for power users and AI agents.
+RemCTL is a fast, scriptable Apple Reminders CLI for macOS, designed for power users and AI agents. It is a single self-contained Swift binary — no helpers, no daemon, no service, no token.
 
-RemCTL reads the user's local iCloud Reminders database directly (with native macOS permission access) for speed and detail, then writes through Apple's public EventKit APIs so changes sync normally to other devices.
+RemCTL reads your local iCloud Reminders database directly (with native macOS permission access) for speed and detail, then writes through Apple's EventKit and ReminderKit frameworks **in-process** so changes sync normally to other devices. It never writes the Reminders database directly.
 
-Unlike other Reminders CLIs, RemCTL offers a special, optional integration with Reminders' Private API on macOS. This allows RemCTL to write proprietary metadata such as sections, subtasks, tags, image attachments, urgent state, Early Reminders, list appearance metadata, Groceries list metadata, custom smart lists, and Reminders templates by using the native ReminderKit framework. Location-based alarms are guarded by the same `--private` command surface, but are saved through the public EventKit bridge because that path materializes reliably on current macOS.
+Unlike other Reminders CLIs, RemCTL also drives Reminders' **private metadata** — sections, subtasks, synced tags, image attachments, urgent state, Early Reminders, exact list colors, official list symbols, emoji badges, Groceries metadata, custom smart lists, and Reminders templates — by calling Apple's private ReminderKit framework directly. These capabilities are first-class: the relevant flags just work, no opt-in. Location-based alarms are written through EventKit's structured-location path because that materializes reliably on current macOS.
 
-As a result, RemCTL is the only Reminders CLI that truly replicates the modern Reminders experience on macOS 26 – without breaking iCloud sync.
+As a result, RemCTL is the only Reminders CLI that truly replicates the modern Reminders experience on macOS — without breaking iCloud sync.
+
+> **Status:** v0.1.0, a fresh Swift line. The private-metadata capabilities call Apple's **private, unsupported** ReminderKit APIs (reverse-engineered, and may change across macOS releases). They do not mutate SQLite directly, so they will not corrupt the store or break sync, but treat them as power-user functionality and verify writes that matter.
+
+## Install
+
+```bash
+brew install markmals/tap/remctl
+remctl onboard                      # grant Reminders access (and Full Disk Access)
+remctl doctor                       # confirm setup
+remctl today
+```
+
+Requires **macOS 14 (Sonoma) or later**. Installs from a prebuilt bottle on Apple-Silicon Sonoma+ when available, otherwise builds from source (needs Xcode / a Swift 6 toolchain). Because RemCTL links Apple's private ReminderKit framework, it is distributed as a Homebrew source/bottle install — not a notarized App Store binary.
+
+After install, grant the two macOS permissions RemCTL needs (see [macOS Permissions](#macos-permissions)): **Full Disk Access** for the direct database reads, and **Reminders access** for writes.
 
 ## How It Works
 
 ```text
-remctl
-  reads:  ~/Library/Group Containers/group.com.apple.reminders/.../Data-*.sqlite
-  writes: remctl-bridge -> EventKit
-  private: remctl-private -> private ReminderKit APIs (--private only)
+remctl  (one Swift binary)
+  reads:   ~/Library/Group Containers/group.com.apple.reminders/.../Data-*.sqlite   (GRDB, read-only — needs Full Disk Access)
+  writes:  EventKit            (in-process)  — public fields: title, list, due, priority, notes, recurrence, alarms, complete, location alarms
+  private: ReminderKit         (in-process)  — sections, subtasks, tags, attachments, urgent, Early Reminders, real flag, list/smart-list appearance, Groceries, templates
 ```
 
-Why this architecture exists:
+Why this architecture:
 
-- **Direct SQLite reads** expose sections, subtasks, tags, attachments, deep links, list colors and badges, recurrence metadata, normal alarms, location alarms, and Early Reminder metadata in tens of milliseconds.
-- **EventKit writes** keep Reminders and iCloud in charge of mutations. RemCTL does not write directly to the database.
-- **Private metadata writes** are unsupported and explicitly opt-in with `--private`. They use Apple's private ReminderKit APIs, not direct SQLite mutation, and should be treated as experimental power-user functionality.
+- **Direct SQLite reads** expose sections, subtasks, tags, attachments, deep links, list colors and badges, recurrence metadata, alarms, location alarms, and Early Reminder metadata in tens of milliseconds.
+- **EventKit writes** keep Reminders and iCloud in charge of ordinary mutations. RemCTL does not write the database.
+- **ReminderKit writes** cover the metadata Apple does not expose through EventKit. They use Apple's private framework (unsupported), folded into the same binary, and never touch SQLite directly.
 
-## Quick Start
-
-The easiest experience is to ask your agent (Claude Code or Codex) to set up RemCTL for you by pointing it at this repo. Alternatively:
-
-```bash
-git clone https://github.com/viticci/remctl.git
-cd remctl
-./install.sh --bootstrap
-remctl onboard
-remctl permissions full-disk-access
-remctl doctor
-remctl today
-```
-
-`--bootstrap` copies the CLI and helpers, compiles the Swift helpers when `swiftc` is available, creates RemCTL's config directory, and installs shell completion when supported.
-
-If the installer says `PATH action required`, add the printed PATH line and open a new Terminal window before typing `remctl`.
-
-If you install to `~/.local/bin`, use the same prefix every time:
-
-```bash
-PREFIX="$HOME/.local" ./install.sh --bootstrap
-```
-
-Full setup details live in [docs/installation.md](docs/installation.md).
+There are no separate helper executables — the EventKit and ReminderKit logic run inside the single `remctl` binary.
 
 ## Command Map
 
 | Task | Commands |
 | --- | --- |
 | See what is due | `today`, `upcoming`, `overdue` |
-| Browse reminders | `lists`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks` |
+| Browse reminders | `lists`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `tags`, `stats` |
 | Create and edit | `add`, `edit`, `done`, `undone`, `delete`, `flag`, `unflag` |
-| Organize | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete`, `sections`, `tags` |
-| Share data | `export`, `import`, `link`, `open`, `--json`, `--format table` on tabular read commands |
+| Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete` |
+| Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
+| Share data | `export`, `import`, `link`, `open`, plus `--json` and `--format table` on read commands |
 | Set up the Mac | `onboard`, `permissions`, `doctor`, `setup`, `completion` |
 
 Common examples:
@@ -72,175 +64,131 @@ remctl add "Review PR" -l Work -d "tomorrow 10:00" -p high
 remctl add "Pay rent" -d "2026-06-01" --recurrence monthly
 remctl edit 23880 -d clear
 remctl edit 23880 -l Work
-remctl add "Research" -l Projects --private --url "https://example.com" -t remctl --new-section "Research"
-remctl add "Leave early" -l Work -d "today 14:00" --private --early-reminder 15m
-remctl add "Launch assets" -l Projects --private --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
+remctl add "Research" -l Projects --url "https://example.com" -t remctl --new-section "Research"
+remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m
+remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
 remctl list-symbols
 remctl list-symbols --preview
-remctl list-create "Research" --color orange --private --symbol education3
-remctl list-create "Cold Ideas" --color cyan --private --emoji 🥶
-remctl list-create "Groceries" --private --groceries --grocery-locale en_US
-remctl add "Milk" -l Groceries --private --grocery
+remctl list-create "Research" --color orange --symbol education3
+remctl list-create "Cold Ideas" --color cyan --emoji 🥶
+remctl list-create "Groceries" --groceries --grocery-locale en_US
+remctl add "Milk" -l Groceries --grocery
 remctl smart-lists --json
-remctl smart-list-create "Flagged Review" --private --flagged
-remctl smart-list-create "Priority or Today" --private --match any --priority high,medium --date today
-remctl smart-list-create "Due Before June 1" --private --date-range 2026-05-16,2026-05-31 --color red --emoji 📆
-remctl smart-list-edit "Priority or Today" --private --priority high
-remctl smart-list-delete "Flagged Review" --private --force
+remctl smart-list-create "Flagged Review" --flagged
+remctl smart-list-create "Priority or Today" --match any --priority high,medium --date today
+remctl smart-list-edit "Priority or Today" --priority high
+remctl smart-list-delete "Flagged Review" --force
 remctl templates --json
-remctl template-info "Rome: Things To See" --json
-remctl template-create "Packing Template" --from-list Packing --private --json
-remctl template-apply "Packing Template" --private --json
-remctl template-delete "Packing Template" --private --force
-remctl list-edit Projects --private --color orange --symbol education3
-remctl list-pin "Project X" --private
+remctl template-create "Packing Template" --from-list Packing --json
+remctl template-apply "Packing Template" --json
+remctl list-edit Projects --color orange --symbol education3
+remctl list-pin "Project X"
 remctl list-rename --list-id 123 --new-name "Project X Archive"
 remctl info 23880 --json
 ```
 
-The full command guide is in [docs/commands.md](docs/commands.md). For smart lists specifically, start with [Smart Lists in the command guide](docs/commands.md#smart-lists), then read [Private Metadata Writes: Smart List Examples](docs/private-metadata.md#smart-list-examples) for the ReminderKit write path, guardrails, and implementation notes. Template commands are covered in [docs/commands.md#templates](docs/commands.md#templates) and [docs/private-metadata.md#template-examples](docs/private-metadata.md#template-examples).
+The full command guide is in [docs/commands.md](docs/commands.md). Private-metadata behavior and guardrails are in [docs/private-metadata.md](docs/private-metadata.md). For smart lists, see [docs/commands.md#smart-lists](docs/commands.md#smart-lists); for templates, [docs/commands.md#templates](docs/commands.md#templates).
 
-Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`.
+Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`. Recurrence, alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, and `yearly`; `upcoming DAYS` requires 1 to 3650.
 
-Recurrence, normal alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, and `yearly`; `upcoming DAYS` requires a positive range from 1 to 3650 days.
+## Private Metadata
+
+For the metadata Apple does not expose through EventKit, RemCTL calls Apple's private ReminderKit framework directly, in-process. There is no opt-in flag — the relevant flags simply work:
+
+```bash
+remctl add "Research" -l Projects --url "https://example.com" -t remctl --section "Research"
+remctl edit 23880 --section-id DCD255E2-7CF5-4B45-9566-3F9A5D84AFA8
+remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
+remctl add "Leave now" -l Work --urgent
+remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m
+remctl edit 23880 --early-reminder clear
+remctl edit 23880 --image ~/Desktop/mockup.png --flagged --urgent
+remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200
+remctl list-edit Projects --color '#FF8D28' --symbol education3
+remctl list-create "Groceries" --groceries --grocery-locale en_US
+remctl add "Milk" -l Groceries --grocery
+remctl list-pin "Project X"
+remctl smart-list-create "Priority or Today" --match any --priority high,medium --date today
+remctl template-create "Packing Template" --from-list Packing
+```
+
+Private metadata covers the parts of Reminders that EventKit does not:
+
+- **Reminder metadata:** synced web rich links (`--url`), synced tags (`-t/--tags`), sections (`--section`/`--section-id`/`--new-section`), rich subtasks (`--subtask`), image attachments (`--image`), real flag state (`-f/--flag`, `--flagged`), urgent state (`--urgent`), and Early Reminders (`--early-reminder`).
+- **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), and list/smart-list pin state.
+- **Smart lists:** custom smart-list create/edit/delete for the Reminders filters RemCTL has verified materialize correctly.
+- **Templates:** whole-list template create/apply/delete. Existing public template links are read-only; RemCTL does not create iCloud sharing links.
+
+A few rules keep this safe and predictable:
+
+- Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` alone is EventKit's lossy priority-proxy; with private metadata (or `edit --flagged`) it writes the real flag.
+- `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
+- Location alarms are written through EventKit's structured-location path (they persist reliably there); verify in `info --json` under `alarms`.
+- `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected before writing.
+- Rich-link and image edits are additive — RemCTL adds, it does not remove or replace existing links/images.
+- `--early-reminder` accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Non-clear values require a due date.
+- `list-create --color NAME` uses EventKit for normal color names; pass a `#RRGGBB` hex, `--symbol`, or `--emoji` for the ReminderKit appearance path.
+- `list-symbols` prints the 71 official Reminders emblem names; `--symbol` only accepts those (arbitrary SF Symbol names render as the default icon). Use `--emoji` for custom emoji badges. `list-symbols --preview` opens a native-asset HTML contact sheet.
+- Groceries writes verify Reminders' automatic sorter first, then use the private categorizer only if needed.
+- Generic file/PDF attachments are intentionally rejected; only images attach.
+
+Verify with `remctl info ID --json` (reminder metadata), `lists --json` (list `color`/`badge`/Groceries/pin), `smart-lists --json` (filters/pin), and `templates --json` / `template-info`.
 
 ## Groceries Lists
 
-Reminders stores Groceries lists as normal lists with private grocery metadata. RemCTL reads those fields directly: `lists --json` reports `listType`, `isGroceries`, and the grocery locale flags, while human `lists` and `show` output mark detected Groceries lists with `🥕`. When `show` prints Groceries sections, known Reminders grocery categories get matching leading emoji such as `🥛 Dairy, Eggs & Cheese`, `🥬 Produce`, and `🧻 Household Items`; `show --json` includes `sectionEmoji` for the same categories.
+Reminders stores Groceries lists as normal lists with private grocery metadata. `lists --json` reports `listType`, `isGroceries`, and the grocery locale; human `lists`/`show` mark Groceries lists with `🥕`, and known grocery sections get category emoji such as `🥛 Dairy, Eggs & Cheese`, `🥬 Produce`, and `🧻 Household Items` (`show --json` includes `sectionEmoji`).
 
 ```bash
-remctl lists --json
-remctl show Groceries
-remctl list-create "Groceries" --private --groceries --grocery-locale en_US
-remctl list-edit "Shopping" --private --groceries --grocery-locale it_IT
-remctl list-edit "Shopping" --private --standard
-remctl add "Milk" -l Groceries --private --grocery
-remctl edit 23880 --private --grocery
+remctl list-create "Groceries" --groceries --grocery-locale en_US
+remctl list-edit "Shopping" --groceries --grocery-locale it_IT
+remctl list-edit "Shopping" --standard
+remctl add "Milk" -l Groceries --grocery
 ```
 
-Groceries writes require `--private` because Apple exposes the list type, locale, and item categorization through ReminderKit, not EventKit. `add --private --grocery` creates the reminder normally, waits for Reminders' automatic grocery sorter, verifies the resulting section membership from the local database, and only falls back to ReminderKit's explicit categorizer if the item is not sorted yet.
+`add --grocery` creates the reminder normally, waits for Reminders' automatic grocery sorter, verifies the resulting section from the local database, and only falls back to ReminderKit's explicit categorizer if the item is not sorted yet.
 
 ## Smart Lists
 
-RemCTL can inspect built-in and custom smart lists with `smart-lists`. It can also create, edit, and delete custom smart lists with the Reminders.app filters that currently materialize reliably through the private ReminderKit write path: any tag, selected tags, date, time, priority, flag, vehicle-connected, specific location, one included list, and `--match all|any` across those reliable families.
+RemCTL inspects built-in and custom smart lists with `smart-lists`, and can create/edit/delete custom smart lists for the Reminders.app filters that materialize reliably: any tag, selected tags, date, time, priority, flag, vehicle-connected, specific location, one included list, and `--match all|any` across those families.
 
 ```bash
 remctl smart-lists --json
-remctl smart-list-create "Any Tag" --private --any-tag
-remctl smart-list-create "#remctl Today" --private --tags remctl --date today
-remctl smart-list-create "Projects Today" --private --include-list Projects --date today --date-today-include-past-due
-remctl smart-list-create "Priority or Today" --private --match any --priority high,medium --date today
-remctl smart-list-create "Due Before June 1" --private --date-range 2026-05-16,2026-05-31 --color red --emoji 📆
-remctl smart-list-edit --smart-list-id 170 --private --priority high
-remctl smart-list-delete "Priority or Today" --private --force
+remctl smart-list-create "Any Tag" --any-tag
+remctl smart-list-create "#remctl Today" --tags remctl --date today
+remctl smart-list-create "Projects Today" --include-list Projects --date today --date-today-include-past-due
+remctl smart-list-create "Due Before June 1" --date-range 2026-05-16,2026-05-31 --color red --emoji 📆
+remctl smart-list-edit --smart-list-id 170 --priority high
+remctl smart-list-delete "Priority or Today" --force
 ```
 
-Smart-list writes are private ReminderKit writes and always require `--private`; RemCTL rejects unknown filter shapes and known zero-filter shapes before saving. Smart lists support the same private appearance flags as lists: `--color`, `--symbol`, and `--emoji`. Reminders.app currently materializes only one included-list filter at a time. Do not create multi-list aggregate smart lists through a list filter; use one included list, or a different reliable filter family. Use:
-
-- [docs/commands.md#smart-lists](docs/commands.md#smart-lists) for command syntax and supported filters.
-- [docs/private-metadata.md#smart-list-examples](docs/private-metadata.md#smart-list-examples) for private API behavior, safety notes, and reverse-engineered filter storage details.
-- [SKILL.md](SKILL.md) for the concise agent contract.
+RemCTL rejects unknown filter shapes and known zero-filter shapes before saving. Smart lists support the same appearance flags as lists (`--color`, `--symbol`, `--emoji`). Reminders.app materializes only one included-list filter at a time — do not build multi-list aggregates; use one included list or a different reliable family. See [docs/commands.md#smart-lists](docs/commands.md#smart-lists) and [docs/private-metadata.md#smart-list-examples](docs/private-metadata.md#smart-list-examples).
 
 ## Templates
 
-Reminders templates are saved lists with saved reminders inside them. RemCTL reads them from the local template tables and can create, apply, and delete templates through private ReminderKit APIs. Template support is intentionally list-level: RemCTL can save an entire source list as a template and apply a template to create a new list. It does not append individual reminders to existing templates or strip subtasks/due dates while saving. Existing public template links are reported as read-only metadata; RemCTL does not create iCloud sharing links.
+Reminders templates are saved lists with saved reminders inside. RemCTL reads them from the local template tables and can create, apply, and delete them through ReminderKit. Template support is list-level: save an entire source list as a template, or apply a template to create a new list. It does not append individual reminders to existing templates or strip subtasks/due dates while saving. Existing public template links are read-only.
 
 ```bash
 remctl templates --json
 remctl template-info "Rome: Things To See" --json
-remctl template-create "Packing Template" --from-list Packing --private --json
-remctl template-create "Archive Template" --from-list-id 144 --include-completed --private
-remctl template-apply "Packing Template" --private --json
-remctl template-delete "Packing Template" --private --force
+remctl template-create "Packing Template" --from-list Packing --json
+remctl template-create "Archive Template" --from-list-id 144 --include-completed
+remctl template-apply "Packing Template" --json
+remctl template-delete "Packing Template" --force
 ```
 
-`template-create`, `template-apply`, and `template-delete` require `--private`. `template-create` takes one source list; `--include-completed` is the only content-selection flag. Verify template writes with `templates --json` and `template-info`; verify applied templates with `lists --json` and `show <new list> --json`.
-
-## Private API Features
-
-RemCTL's default writes use EventKit. For metadata Apple does not expose publicly, RemCTL has an explicit `--private` mode backed by `remctl-private`, an Objective-C helper that uses Apple's private ReminderKit framework and saves through the Reminders stack. RemCTL *never* writes directly to SQLite (which would break iCloud sync and cause database corruption issues).
-
-Private writes are opt-in and power-user only:
-
-```bash
-remctl add "Research" -l Projects --private --url "https://example.com" -t remctl --section "Research"
-remctl edit 23880 --private --section-id DCD255E2-7CF5-4B45-9566-3F9A5D84AFA8
-remctl add "Launch assets" -l Projects --private --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
-remctl add "Leave now" -l Work --private --urgent
-remctl add "Leave early" -l Work -d "today 14:00" --private --early-reminder 15m
-remctl edit 23880 --private --early-reminder 1h
-remctl edit 23880 --private --early-reminder clear
-remctl edit 23880 --private --image ~/Desktop/mockup.png --flagged --urgent
-remctl edit 23880 --private --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200
-remctl list-edit Projects --private --color '#FF8D28' --symbol education3
-remctl list-edit Projects --private --emoji 📌
-remctl list-create "Groceries" --private --groceries --grocery-locale en_US
-remctl add "Milk" -l Groceries --private --grocery
-remctl list-pin "Project X" --private
-remctl list-pin "Flagged" --private
-remctl list-unpin --list-id 144 --private
-remctl list-unpin --smart-list-id 4 --private
-remctl smart-list-create "Flagged Review" --private --flagged
-remctl smart-list-create "Priority or Today" --private --match any --priority high,medium --date today
-remctl smart-list-create "Projects Today" --private --include-list Projects --date today --date-today-include-past-due
-remctl smart-list-create "Near Home" --private --location-title Home --latitude 41.9 --longitude 12.5 --proximity enter
-remctl smart-list-edit "Priority or Today" --private --priority high --color red --emoji 📆
-remctl smart-list-delete "Flagged Review" --private --force
-remctl template-create "Packing Template" --from-list Packing --private --json
-remctl template-apply "Packing Template" --private --json
-remctl template-delete "Packing Template" --private --force
-```
-
-Private mode covers the parts of Reminders that EventKit does not expose:
-
-- Reminder metadata: synced web rich links, synced tags, sections, rich subtasks, image attachments, real flag state, urgent state, Early Reminders, and location alarms.
-- List metadata: exact `#RRGGBB` colors, official list symbols, emoji badges, Groceries list conversion/locale metadata, and regular or smart-list pin state.
-- Smart lists: custom smart-list create/edit/delete for the Reminders filters that RemCTL has verified to materialize correctly.
-- Templates: whole-list template create/apply/delete. Existing public template links can be read, but RemCTL does not create iCloud sharing links.
-
-A few rules keep this safe and predictable:
-
-- `edit -l/--list` and `edit --list-id` are normal EventKit moves; they do not require `--private`.
-- Location alarms still require the `--private` guardrail, but RemCTL saves them through `remctl-bridge` because EventKit structured-location alarms persist correctly on current macOS.
-- `--private --url` and rich subtask URLs must be public `http` or `https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected before writing.
-- Rich-link and image edit operations are additive. RemCTL can add them, but it does not remove or replace existing rich links/images.
-- `--early-reminder` accepts values such as `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Non-clear values require a due date.
-- `list-create --color` uses public EventKit for normal color names. Add `--private` for exact colors, official symbols, or emoji badges.
-- `list-symbols` prints the 71 official Reminders emblem names. Use `list-symbols --preview` for the native badge contact sheet. Use `--emoji` for custom emoji badges.
-- Groceries writes verify Reminders' automatic sorter first, then use the private categorizer only if needed.
-- If a section name is duplicated in the same list, RemCTL uses the single non-empty match when possible. Otherwise, pass `--section-id`.
-
-Verify with:
-
-- `remctl info ID --json` for reminder metadata.
-- `lists --json` for list `color`, `badge`, `badgeEmblem`, and Groceries metadata.
-- `smart-lists --json` for smart-list filters and pin state.
-- `templates --json` or `template-info` for templates.
-
-This is the major difference from ordinary EventKit-only Reminders CLIs, but it is still unsupported by Apple:
-
-- Private-only flags fail before writing unless `--private` is present.
-- Generic file/PDF attachments are intentionally rejected.
-- Smart-list and template writes should get a UI/device check when sync behavior matters.
+`template-create` takes one source list; `--include-completed` is the only content-selection flag. Verify with `templates --json` / `template-info`, and applied templates with `lists --json` and `show <new list> --json`.
 
 ## Output
 
 RemCTL output is designed for both humans and agents:
 
-- reminder IDs are shown as `#ID`
-- `#ID` is colored with the reminder list color when RemCTL can read list colors
-- flagged reminders show `⚑`
-- macOS 26 urgent reminders show `⏰`
-- `info --json` reports the actual due date as `dueDate`; if Reminders stores a separate display/alert date, it appears as `displayDate`
-- `edit -d` carries a single absolute alarm forward when it matches the old due/display time, keeping Reminders.app's visible time aligned for ordinary reschedules
-- `edit -d clear` removes a single matching absolute alarm/display time; `edit --alarm clear` removes normal alarms explicitly
-- normal EventKit alarms and location alarms appear in `info --json` as `alarms`
-- Early Reminders appear in verbose/info JSON as labels such as `15 minutes before`
-- recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`
-- Groceries lists show `🥕` in list headings and list summaries
-- table output keeps a dedicated `Repeat` column when any row is recurring
-- human output strips terminal control characters from Reminders text before printing
-- every read command supports JSON output
+- reminder IDs are shown as `#ID`, colored with the reminder's list color when readable
+- flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`
+- Groceries lists show `🥕` in headings and summaries
+- `info --json` reports the actual due date as `dueDate`; a separate display/alert date appears as `displayDate`; EventKit and location alarms appear as `alarms`; Early Reminders appear as labels such as `15 minutes before`
+- `edit -d` carries a single matching absolute alarm forward; `edit -d clear` removes a single matching absolute alarm/display time; `edit --alarm clear` removes normal alarms explicitly
+- table output keeps a dedicated `Repeat` column when any row recurs
+- human output strips terminal control characters from Reminders text; every read command supports `--json`
 
 ```bash
 remctl today --json
@@ -250,25 +198,18 @@ NO_COLOR=1 remctl today
 
 ## macOS Permissions
 
-RemCTL may need three macOS permission grants:
+RemCTL needs two macOS permission grants:
 
-- Reminders access for EventKit writes
-- Automation access for AppleScript fallback operations
-- Full Disk Access for direct database reads
-
-Run:
+- **Reminders access** — for EventKit and ReminderKit writes (prompted on first write, or via `remctl onboard`)
+- **Full Disk Access** — for the direct Reminders database reads
 
 ```bash
-remctl onboard
-remctl permissions full-disk-access
-remctl doctor
+remctl onboard                      # triggers the Reminders prompt; guides Full Disk Access
+remctl permissions full-disk-access # opens System Settings + prints the exact target
+remctl doctor                       # verifies the current context
 ```
 
-The visual permission helper opens System Settings, copies the first target path, shows draggable targets for the current CLI process, and marks verified targets with a green check.
-
-Full Disk Access is scoped to the process context. A Terminal session can pass `remctl doctor` while Codex, another agent runner, or a different host app fails. Run `remctl doctor` from the same context that will run RemCTL commands; for agent setup, use `remctl doctor --for-agent`.
-
-Manual fallback: run `remctl doctor --for-agent`, then add the printed target in System Settings > Privacy & Security > Full Disk Access. In the file picker, press `Command-Shift-G`, paste the path, press Return, then click Open.
+Full Disk Access is scoped to the **process context**. A Terminal session can pass `remctl doctor` while a different app or agent runner fails. Run `remctl doctor` from the same context that will run RemCTL; for agent setup, use `remctl doctor --for-agent`. Manual path: System Settings → Privacy & Security → Full Disk Access, add the target printed by `remctl doctor --for-agent` (in the picker, press `Command-Shift-G`, paste the path, Return, Open).
 
 ## For Agents
 
@@ -282,61 +223,22 @@ remctl info 23880 --json
 remctl doctor --for-agent --json
 ```
 
-`search` matches reminder titles and notes. By default it searches active reminders; pass `--completed` to include completed reminders too.
+- `search` matches titles and notes; `--completed` includes completed reminders.
+- For fast writes, call `remctl add ... --json`, use the returned `numericId` when present, then verify with `remctl info <numericId> --json`. `info --json` includes rich-link URLs, attachments, alarms, location alarms, Early Reminders, and recurrence — so agents do not need raw SQLite checks.
+- Pass deterministic due dates (ideally `YYYY-MM-DD HH:MM` resolved in the user's timezone). On an invalid date, RemCTL exits before writing with a structured `invalid_due_date` JSON error on stderr; retry with a corrected date rather than creating then patching.
+- List names resolve exact → case-insensitive → normalized (handles emoji prefixes). If more than one matches, RemCTL fails and asks for `--list-id`. `show`, `add`, `edit`, `link`, `export`, and the `list-*` commands accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
+- Never mutate the Reminders SQLite database — use RemCTL commands.
+- For setup troubleshooting, trust the `context` object in `doctor --for-agent --json`: a green Terminal does not imply a green agent runner; grant Full Disk Access to the app/interpreter reported there.
 
-For fast agent writes, call `remctl add ... --json`, use the returned `numericId` when present, then verify with `remctl info <numericId> --json`. `info` includes private rich-link URLs, parent and subtask image attachments, EventKit alarms, location alarms, Early Reminders, and recurrence metadata, so agents should not need raw SQLite checks for ordinary reminder metadata verification.
-
-Use JSON for automation when exact raw text matters. Human output is terminal-safe and strips control characters; JSON preserves the underlying Reminders values.
-
-For smart-list automation, use `smart-list-create`, `smart-list-edit`, and `smart-list-delete` with `--private`, prefer `--smart-list-id` when editing or deleting an existing custom smart list, and verify with `remctl smart-lists --json`. `smart-lists --json` also reports smart-list pin state; on macOS 26, smart-list pinning is verified from `pinnedDate` because the regular-list boolean can stay empty. Reminders.app currently materializes only one included-list filter at a time; RemCTL rejects repeated included lists and list exclusions before writing. The smart-list command surface and examples are documented in [docs/commands.md#smart-lists](docs/commands.md#smart-lists); the private ReminderKit behavior and filter storage details are in [docs/private-metadata.md#smart-list-examples](docs/private-metadata.md#smart-list-examples).
-
-For template automation, use `templates --json` and `template-info` to inspect saved templates. Use `template-create`, `template-apply`, and `template-delete` with `--private`; verify template rows with `templates --json` or `template-info`, and verify applied lists with `show <list> --json`. Template writes are list-level only: do not assume support for appending individual reminders to a template or excluding subtasks/due dates. Existing iCloud template links are read-only metadata.
-
-For Groceries automation, use `lists --json` to detect `listType: "groceries"` and `grocery.locale`, then use `add --private --grocery` or `edit --private --grocery` only against an existing Groceries list. Verify with `show <list> --json` and check the reminder's `section` after categorization.
-
-Agents should pass deterministic due dates, ideally `YYYY-MM-DD HH:MM` after resolving the user's request in their timezone. If a due date is invalid, RemCTL exits before writing and emits a structured `invalid_due_date` JSON error on stderr with examples. Retry with a corrected date; do not create a reminder first and patch the due date afterward.
-
-List names are resolved conservatively: exact match first, then case-insensitive match, then a normalized fallback that can handle decorative prefixes such as emoji. If more than one list matches, RemCTL fails before writing and asks for `--list-id`. Commands that target lists use the same rule: pass a name, or use `--list-id` for exact agent-safe targeting on `show`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, and smart-list list filters. `list-pin` and `list-unpin` can also target smart lists by name or `--smart-list-id`.
-
-Do not mutate the Reminders SQLite database. Use RemCTL commands or EventKit.
-
-For troubleshooting, trust the `context` object in `doctor --for-agent --json`. If Terminal is green but the agent runner is red, the install is not necessarily broken; grant Full Disk Access to the app or interpreter reported by the agent context, or run a one-off command through an already-authorized Terminal session.
-
-After a repo update, reinstall the copied CLI before testing:
-
-```bash
-git pull
-./install.sh
-hash -r
-remctl --version
-remctl doctor
-```
+The concise agent contract is in [SKILL.md](SKILL.md).
 
 ## Docs
 
 - [Installation and onboarding](docs/installation.md)
 - [Command guide](docs/commands.md)
-- [Smart-list command syntax](docs/commands.md#smart-lists)
-- [Template command syntax](docs/commands.md#templates)
-- [Private metadata writes](docs/private-metadata.md)
-- [Smart-list private API notes](docs/private-metadata.md#smart-list-examples)
-- [Template private API notes](docs/private-metadata.md#template-examples)
+- [Private metadata](docs/private-metadata.md)
 - [Architecture](docs/architecture.md)
-
-## Project Layout
-
-| Path | Purpose |
-| --- | --- |
-| `remctl` | Main Python CLI |
-| `remctl-bridge.swift` | Swift/EventKit write helper source |
-| `remctl-private.m` | Unsupported private ReminderKit metadata helper source |
-| `remctl-permissions.swift` | Swift/AppKit guided Full Disk Access helper source |
-| `remctl_runtime.py` | Shared paths, config, date windows, safety helpers |
-| `remctl_serialization.py` | Shared reminder JSON serialization |
-| `remctl_smart_lists.py` | Smart-list filter decoding and safe v1 encoding |
-| `scripts/live_edit_matrix.py` | Opt-in live edit-mode matrix for due/display/alarm regressions |
-| `scripts/live_private_matrix.py` | Opt-in live private command matrix using disposable Reminders data |
-| `install.sh` | Copy-based installer and bootstrap script |
+- [Agent contract](SKILL.md)
 
 ## License
 

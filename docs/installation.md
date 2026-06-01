@@ -1,146 +1,107 @@
 # Installation and Onboarding
 
-RemCTL is a copy-based install, not a Python package. The installer copies the CLI and helper files into a bin directory such as `~/bin` or `~/.local/bin`.
+RemCTL is a single self-contained Swift binary — no helpers, no daemon, no service, no token. It reads your local Reminders database directly (read-only, via GRDB) for fast, detailed output, and writes through Apple's EventKit and ReminderKit frameworks **in-process**. It never writes the Reminders database directly.
 
 ## Requirements
 
-- macOS 14 or later
-- Python 3.10 or later
-- iCloud Reminders enabled
-- Xcode Command Line Tools for the Swift write bridge, permission helper, and optional private ReminderKit helper
+- **macOS 14 (Sonoma) or later.**
+- iCloud Reminders enabled.
+- The two macOS permissions covered below: **Full Disk Access** (for the direct database reads) and **Reminders access** (for writes).
 
-Install Xcode Command Line Tools if needed:
-
-```bash
-xcode-select --install
-```
+RemCTL installs from a prebuilt bottle (fast, ~3s) on Apple-Silicon macOS 15 (Sequoia) and 26 (Tahoe) when one is available; other configurations build from source, which needs Xcode or a Swift 6 toolchain. Because RemCTL links Apple's private ReminderKit framework, it is distributed as a Homebrew source/bottle install rather than a notarized App Store binary — but that is transparent to `brew install`.
 
 ## Install
 
-Default install to `~/bin`:
-
 ```bash
-git clone https://github.com/viticci/remctl.git
-cd remctl
-./install.sh --bootstrap
+brew install markmals/tap/remctl
+remctl onboard                      # grant Reminders access (and Full Disk Access)
+remctl doctor                       # confirm setup
+remctl today
 ```
 
-Install to `~/.local/bin`:
+`brew install` is the only supported install path. If a bottle is not available for your platform, Homebrew builds RemCTL from source automatically; install Xcode (or a Swift 6 toolchain) first if the build reports a missing compiler.
 
-```bash
-PREFIX="$HOME/.local" ./install.sh --bootstrap
-```
-
-`--bootstrap` copies files, compiles `remctl-bridge` and `remctl-permissions` when `swiftc` is available, compiles the optional `remctl-private` helper when `clang` is available, creates `~/.config/remctl`, and installs shell completion when supported.
-
-It does not grant macOS permissions. Apple requires those grants to happen interactively.
-
-It also does not run `doctor` by default. A new user should grant permissions first, then verify with `doctor` so the first health report is meaningful. For upgrades on an already-authorized Mac, use `./install.sh --doctor` if you want an immediate health check.
-
-If the installer says `PATH action required`, add the printed line to your shell profile, then open a new Terminal window before typing `remctl`. The current Terminal keeps its old PATH until you start a new session. You can also run commands with the full installed path, such as `~/bin/remctl onboard`.
+The install does not grant macOS permissions — Apple requires those grants to happen interactively. Run `remctl onboard` next, then verify with `remctl doctor` so the first health report is meaningful.
 
 ## First Run
 
 ```bash
-remctl onboard
-remctl permissions full-disk-access
-remctl doctor
+remctl onboard                      # triggers the Reminders prompt; guides Full Disk Access
+remctl permissions full-disk-access # opens System Settings + prints the exact target
+remctl doctor                       # verifies the current context
 remctl today
 ```
 
-`remctl onboard`:
+`remctl onboard` runs the guided first-run flow: it triggers the native **Reminders access** prompt used by EventKit and ReminderKit writes, checks direct database access, and guides you to **Full Disk Access** when that read path is not yet authorized.
 
-1. Opens Reminders.app.
-2. Triggers the native Reminders permission prompt.
-3. Triggers the Automation prompt used by AppleScript fallback operations.
-4. Checks direct database access.
-5. Opens the guided Full Disk Access helper when needed.
+Private metadata writes do not need a separate first-run flow. Sections, subtasks, tags, attachments, urgent state, Early Reminders, list/smart-list appearance, Groceries metadata, and templates are first-class: the relevant flags just work, in-process, using the same Reminders grant as ordinary EventKit writes. See [private-metadata.md](private-metadata.md) for the supported fields and examples.
 
-Private metadata writes do not require a separate first-run flow. They use the same Reminders permission grant as normal EventKit writes, but they also require the optional `remctl-private` binary installed next to `remctl`. `remctl doctor` reports this as `private_helper`. If it is missing, normal commands keep working; only `--private` writes are unavailable.
+`remctl permissions full-disk-access` is safe to run even if direct reads already work — it opens System Settings to the right pane and prints the exact target path you need to add, which makes it the clearest first-run path before you run `doctor`.
 
-See [private-metadata.md](private-metadata.md) for supported private fields and examples.
+## macOS Permissions
 
-`remctl permissions full-disk-access` is safe to run even if direct CLI reads already work. It is the clearest first-run path because it shows the Full Disk Access targets visually before you run `doctor`.
+RemCTL needs two macOS permission grants:
 
-## Full Disk Access
+- **Full Disk Access** — for the direct Reminders database reads. Grant it to the terminal, app, or agent-runner process that will run RemCTL.
+- **Reminders access** — for EventKit and ReminderKit writes. Prompted on first write, or up front via `remctl onboard`.
 
-macOS does not provide a native Full Disk Access prompt for command-line tools.
+### Granting Reminders access
 
-Full Disk Access is scoped to the exact process context. The same Mac can have:
+`remctl onboard` triggers the native Reminders prompt; approve it. If you skip onboarding, the prompt appears the first time you run a write command (`add`, `edit`, `done`, a `list-*` command, etc.). You can confirm the result with the `eventkit` and `reminderkit` lines in `remctl doctor` (see below).
 
-- Terminal green: `remctl doctor` passes from Terminal.
-- Agent runner red: `remctl doctor` fails from Codex or another app runner.
+### Granting Full Disk Access
 
-That is normal TCC behavior, not a broken RemCTL install. Run `doctor` from the same context that will run the write. For agents, use:
-
-```bash
-remctl doctor --for-agent --json
-```
-
-Grant access to the target printed by that context, then relaunch the app or terminal that will run RemCTL.
-
-Default visual flow:
+macOS does not provide a native Full Disk Access prompt for command-line tools, so this grant is manual.
 
 ```bash
 remctl permissions full-disk-access
 ```
 
-The helper opens System Settings, copies the first target path, shows draggable targets, and marks a target with a green check when that process can read the Reminders store. In the System Settings file picker:
+This opens **System Settings → Privacy & Security → Full Disk Access** and prints the exact target path to add. In the file picker:
 
 1. Click `+`.
-2. Drag a target row from the RemCTL helper into the picker.
-3. If dragging is not accepted, press `Command-Shift-G`, paste the copied path, press Return, then click Open.
-4. Run `remctl doctor` again.
+2. Press `Command-Shift-G`, paste the printed path, press Return, then click **Open**.
+3. Run `remctl doctor` again to confirm the read path is now green.
 
-Manual fallback:
+`remctl permissions --json` reports `available: false` — there is no bundled GUI helper; the command degrades to opening System Settings and printing guidance.
 
-```bash
-remctl doctor --for-agent
-```
+### Full Disk Access is per process context
 
-Use the exact target printed by `doctor`. Open System Settings > Privacy & Security > Full Disk Access, click `+`, press `Command-Shift-G`, paste the path, press Return, then click Open.
+Full Disk Access is scoped to the **process context** that runs RemCTL. The same Mac can have:
 
-If an agent cannot get Full Disk Access but the user's Terminal already passes `doctor`, a one-off Terminal relay can unblock testing: ask the user for approval, run the requested `remctl` command in Terminal via AppleScript, and capture stdout/stderr through temporary files. Do not treat that as the default automation path; the durable fix is granting access to the actual runner.
+- Terminal green: `remctl doctor` passes when run from Terminal.app.
+- A different app or agent runner red: `remctl doctor` fails when run from that other context.
 
-## Upgrading
+That is normal macOS TCC scoping, not a broken RemCTL install. A green `remctl doctor` in Terminal.app does **not** grant access to a different app or agent runner. Always run `remctl doctor` from the same context that will run RemCTL, and grant Full Disk Access to that exact process. For agent runners, use `remctl doctor --for-agent` (see [For Agents and CI](#for-agents-and-ci) below).
 
-`git pull` updates the checkout only. It does not update the copied CLI in your `PATH`.
+## Verifying with `doctor`
 
-```bash
-git pull
-./install.sh
-hash -r
-remctl --version
-remctl doctor
-```
-
-If you installed to `~/.local/bin`:
+`remctl doctor` verifies the current execution context.
 
 ```bash
-git pull
-PREFIX="$HOME/.local" ./install.sh
-hash -r
+remctl doctor                       # human-readable report for the current context
+remctl doctor --for-agent           # report framed for an agent/runner context
+remctl doctor --json                # machine-readable; add --for-agent for agents
 ```
 
-## PATH Checks
+`doctor` reports these checks:
 
-```bash
-which remctl
-remctl --version
-remctl doctor
-```
+- `platform`, `macos` — OS and platform sanity.
+- `store_dir`, `database` — the direct Reminders read path (Full Disk Access). These are the read checks that must pass.
+- `cli` — RemCTL itself.
+- `config_dir`, `completion` — configuration directory and shell completion.
+- `eventkit` — EventKit authorization for writes. This is a **warning-level** check.
+- `reminderkit` — ReminderKit availability for private-metadata writes. Also **warning-level**.
 
-If `which remctl` does not find RemCTL after install, add the installer's PATH line to your shell profile, then open a new Terminal window. If `which remctl` points at `~/.local/bin/remctl`, keep using `PREFIX="$HOME/.local"` for upgrades.
+The checks that gate functionality are `platform`, `store_dir`, `database`, and `cli`; `eventkit` and `reminderkit` surface write-access state as warnings. Treat `remctl doctor --json` as the first setup check, and remember it must pass in the **same** context that will run your writes.
 
 ## Shell Completion
 
-Recommended:
-
 ```bash
-remctl setup --shell auto
+remctl setup
 ```
 
-Manual:
+`remctl setup` installs shell completion. To load completion directly in the current shell:
 
 ```bash
 eval "$(remctl completion zsh)"
@@ -148,21 +109,31 @@ eval "$(remctl completion bash)"
 remctl completion fish | source
 ```
 
-## Manual Install
+## For Agents and CI
 
-Use this only for custom setups:
+Agent runners and CI processes run RemCTL from their own process context, which has its own Full Disk Access state. A green `remctl doctor` in your Terminal does **not** imply the agent's interpreter or runner is authorized.
 
 ```bash
-mkdir -p ~/bin
-cp remctl ~/bin/remctl && chmod +x ~/bin/remctl
-cp remctl_runtime.py ~/bin/remctl_runtime.py
-cp remctl_serialization.py ~/bin/remctl_serialization.py
-cp remctl_smart_lists.py ~/bin/remctl_smart_lists.py
-swiftc -O -framework EventKit -framework Foundation -o ~/bin/remctl-bridge remctl-bridge.swift
-swiftc -O -framework AppKit -framework Foundation -o ~/bin/remctl-permissions remctl-permissions.swift
-clang -fobjc-arc -O -F/System/Library/PrivateFrameworks -framework Foundation -framework AppKit -framework ReminderKit -o ~/bin/remctl-private remctl-private.m
-~/bin/remctl setup --shell auto
-~/bin/remctl onboard
-~/bin/remctl permissions full-disk-access
-~/bin/remctl doctor
+remctl doctor --for-agent --json
 ```
+
+To set up an agent or CI runner:
+
+1. Run `remctl doctor --for-agent` from the runner (or as the runner's process). It prints the exact target — the interpreter or runner executable — to grant Full Disk Access.
+2. Open **System Settings → Privacy & Security → Full Disk Access**, click `+`, press `Command-Shift-G`, paste that printed path, press Return, then click **Open**.
+3. Relaunch the agent runner and re-run `remctl doctor --for-agent --json` until the read checks pass.
+4. Grant **Reminders access** the same way as for interactive use — run a write (or `remctl onboard`) from the runner's context and approve the prompt.
+
+The durable fix is granting Full Disk Access to the actual runner. Trust the context reported by `doctor --for-agent --json`: a green Terminal does not imply a green agent runner.
+
+## Upgrading
+
+```bash
+brew upgrade remctl
+remctl --version
+remctl doctor
+```
+
+## Building from Source
+
+If no bottle is available for your platform, Homebrew builds RemCTL from source automatically during `brew install`. This needs Xcode or a Swift 6 toolchain. The project source lives at `github.com/markmals/remctl`.
