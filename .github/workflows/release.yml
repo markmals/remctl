@@ -1,0 +1,148 @@
+name: Release
+
+# Cuts a git tag + GitHub Release for a version bump, then opens a bottle-bump PR
+# on the Homebrew tap. The tap's `brew test-bot` builds the bottles on that PR;
+# adding the `pr-pull` label publishes them and updates the formula. See
+# docs/releasing.md for the full runbook and the one-time token setup.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 (must already be set in GlobalOptions.swift and pushed to main)"
+        required: true
+
+permissions:
+  contents: write # create the tag + GitHub Release
+
+env:
+  TAP_REPO: markmals/homebrew-tap
+  FORMULA: Formula/remctl.rb
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$REF_NAME"
+          fi
+          VERSION="${VERSION#v}"
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$'; then
+            echo "::error::'$VERSION' is not a valid version (expected e.g. 0.2.0)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version $VERSION (tag v$VERSION)."
+
+      - name: Verify version matches remctlVersion
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          CODE_VERSION="$(sed -nE 's/.*remctlVersion = "([^"]+)".*/\1/p' Sources/RemindersControl/GlobalOptions.swift)"
+          if [ "$CODE_VERSION" != "$VERSION" ]; then
+            echo "::error::Release version '$VERSION' != remctlVersion '$CODE_VERSION' in GlobalOptions.swift."
+            echo "Bump remctlVersion to $VERSION, commit, and push to main before releasing."
+            exit 1
+          fi
+          echo "remctlVersion matches ($VERSION)."
+
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists on origin; skipping creation."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "remctl $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed $TAG."
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving as-is."
+          else
+            gh release create "$TAG" --title "remctl $TAG" --generate-notes
+            echo "Created GitHub Release $TAG."
+          fi
+
+      - name: Compute source tarball sha256
+        id: sha
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+          for i in $(seq 1 12); do
+            if curl -fsSL "$URL" -o source.tar.gz; then break; fi
+            echo "Tarball not ready yet (attempt $i); retrying..."
+            sleep 5
+          done
+          SHA="$(sha256sum source.tar.gz | awk '{print $1}')"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Source tarball sha256: $SHA"
+
+      - name: Open bottle-bump PR on the tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+          URL: ${{ steps.sha.outputs.url }}
+          SHA: ${{ steps.sha.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing secret HOMEBREW_TAP_TOKEN (PAT with Contents + Pull-requests write on ${TAP_REPO}). See docs/releasing.md."
+            exit 1
+          fi
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git" tap
+          cd tap
+          BRANCH="remctl-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          # Update only the top-level source url + sha256 (the bottle-block sha256
+          # lines are indented 4 spaces and prefixed `sha256 cellar:`, so they do
+          # not match these 2-space-anchored patterns). brew pr-pull rewrites the
+          # bottle block with fresh sha256s when the `pr-pull` label is applied.
+          perl -i -pe 's|^  url ".*"|  url "$ENV{URL}"|' "$FORMULA"
+          perl -i -pe 's|^  sha256 "[0-9a-f]+"|  sha256 "$ENV{SHA}"|' "$FORMULA"
+          if git diff --quiet; then
+            echo "::error::${FORMULA} unchanged after bump (already at ${VERSION}?). Aborting."
+            exit 1
+          fi
+          git commit -am "remctl ${VERSION}"
+          git push -u origin "$BRANCH"
+          gh pr create -R "$TAP_REPO" --head "$BRANCH" --base main \
+            --title "remctl ${VERSION}" \
+            --body "Automated bump for remctl ${VERSION}. \`brew test-bot\` will build bottles on this PR; add the \`pr-pull\` label once green to publish them and update the formula."
+          echo "Opened bottle-bump PR on ${TAP_REPO} (branch ${BRANCH})."

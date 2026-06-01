@@ -239,6 +239,7 @@ The concise agent contract is in [SKILL.md](SKILL.md).
 - [Private metadata](docs/private-metadata.md)
 - [Architecture](docs/architecture.md)
 - [Agent contract](SKILL.md)
+- [Releasing (maintainers)](docs/releasing.md)
 
 ## License
 
