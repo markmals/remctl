@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GRDB
 @testable import RemindersControl
 
 @Suite struct AppleEpochTests {
@@ -63,6 +64,35 @@ import Foundation
     @Test func findMainDBThrowsWhenNone() throws {
         let tmp = try makeTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
         #expect(throws: RemindersDBUnavailable.self) { _ = try Paths.findMainDB(storeDir: tmp) }
+    }
+
+    // ── content-scored selection (port upstream aba7cf5) ──────────────────────
+
+    /// Write a real Reminders-schema sqlite at `name` with `reminders` active rows.
+    private func makeRemindersDB(in dir: URL, name: String, reminders: Int) throws {
+        let q = try DatabaseQueue(path: dir.appendingPathComponent(name).path)
+        try q.write { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0)")
+            for i in 0..<reminders {
+                try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZMARKEDFORDELETION) VALUES (\(i + 1),'R\(i)',1,0)")
+            }
+        }
+    }
+
+    @Test func findMainDBPrefersContentOverSize() throws {
+        let tmp = try makeTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        // The stale/wrong store is MUCH larger but has no Reminders schema.
+        try Data(count: 5_000_000).write(to: tmp.appendingPathComponent("Data-stale.sqlite"))
+        try makeRemindersDB(in: tmp, name: "Data-live.sqlite", reminders: 3)
+        #expect(Paths.findMainDBPath(storeDir: tmp)?.lastPathComponent == "Data-live.sqlite")
+    }
+
+    @Test func findMainDBPrefersMoreReminders() throws {
+        let tmp = try makeTempDir(); defer { try? FileManager.default.removeItem(at: tmp) }
+        try makeRemindersDB(in: tmp, name: "Data-few.sqlite", reminders: 1)
+        try makeRemindersDB(in: tmp, name: "Data-many.sqlite", reminders: 8)
+        #expect(Paths.findMainDBPath(storeDir: tmp)?.lastPathComponent == "Data-many.sqlite")
     }
 }
 

@@ -255,6 +255,21 @@ import GRDB
             try store.queue.write { try $0.execute(sql: "INSERT INTO ZREMCDHASHTAGLABEL(ZNAME) VALUES('x')") }
         }
     }
+    @Test func openRejectsForeignSchema() throws {
+        // A sqlite DB without ZREMCDREMINDER is not a Reminders store (port upstream aba7cf5).
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remctl-foreign-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let q = try DatabaseQueue(path: dir.appendingPathComponent("Data-x.sqlite").path)
+        try q.write { try $0.execute(sql: "CREATE TABLE NOTREMINDERS (id INTEGER)") }
+        #expect {
+            _ = try RemindersStore.open(storeDir: dir)
+        } throws: { error in
+            (error as? RemindersDBUnavailable)?.message.contains("ZREMCDREMINDER") == true
+        }
+    }
+
     @Test func rowAccessorsTolerateMissingAndNullColumns() throws {
         let q = try FixtureDB.inMemory { db in
             try FixtureDB.createRemindersSchema(db)
