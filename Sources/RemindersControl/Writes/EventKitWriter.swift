@@ -260,10 +260,13 @@ public final class EventKitWriter: RemindersWriter {
         return WriteResult(status: "deleted", id: id)
     }
 
-    public func complete(id: String) async throws -> WriteResult {
+    public func complete(id: String, completionDate: Date?) async throws -> WriteResult {
         try await requestAccess()
         let reminder = try findReminder(id: id)
         reminder.isCompleted = true
+        // Explicit completion date must be set AFTER isCompleted — setting isCompleted
+        // stamps "now", which would overwrite a date assigned first.
+        if let completionDate { reminder.completionDate = completionDate }
         do {
             try store.save(reminder, commit: true)
         } catch {

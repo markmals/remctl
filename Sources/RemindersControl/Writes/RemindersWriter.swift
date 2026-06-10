@@ -74,9 +74,16 @@ public protocol RemindersWriter {
     func create(_ write: ReminderWrite) async throws -> WriteResult
     func update(id: String, _ write: ReminderWrite) async throws -> WriteResult
     func delete(id: String) async throws -> WriteResult
-    func complete(id: String) async throws -> WriteResult
+    func complete(id: String, completionDate: Date?) async throws -> WriteResult
     func uncomplete(id: String) async throws -> WriteResult
     func createList(title: String, color: String?) async throws -> WriteResult
     func renameList(currentTitle: String, newTitle: String) async throws -> WriteResult
     func deleteList(title: String) async throws -> WriteResult
+}
+
+public extension RemindersWriter {
+    /// Complete with the default completion date (now).
+    func complete(id: String) async throws -> WriteResult {
+        try await complete(id: id, completionDate: nil)
+    }
 }

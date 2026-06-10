@@ -697,23 +697,92 @@ struct Edit: AsyncParsableCommand {
 struct Done: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "done", abstract: "Mark reminders complete.")
     @Argument(help: "Reminder ID") var id: Int
+    @Option(name: .long, help: "Completion date (YYYY-MM-DD or YYYY-MM-DD HH:MM); defaults to now") var date: String?
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
+        let id = self.id, date = self.date, json = self.json
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
-            try await Self.perform(id: id, json: json, store: store, writer: writer)
+            try await Self.perform(id: id, date: date, json: json, store: store, writer: writer)
         })
     }
 
     /// Testable core (no print/exit). Tests call this with a FixtureDB store + MockWriter.
-    static func perform(id: Int, json: Bool, store: RemindersStore, writer: RemindersWriter) async throws -> WriteOutcome {
+    /// `date` is the raw `--date` text (port of cmd_done's completion-date support, upstream aba7cf5).
+    static func perform(id: Int, date: String? = nil, json: Bool, store: RemindersStore, writer: RemindersWriter,
+                        calendar: Calendar = .current) async throws -> WriteOutcome {
         let (title, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "complete it")
-        _ = try await writer.complete(id: ckid)
-        if json {
-            let obj: JSONValue = .object([("status", .string("completed")), ("id", .int(id)), ("title", .string(title))])
-            return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
+
+        var completionDate: Date? = nil
+        var completionISO: String? = nil
+        if let date, !date.isEmpty {
+            guard let parsed = WriteParsing.parseCompletionDate(date, calendar: calendar) else {
+                return failInvalidCompletionDate(date, json: json)   // exit 2
+            }
+            completionDate = parsed
+            completionISO = isoDateTime(parsed, calendar: calendar)
         }
-        return .ok("Completed: \(safeDisplay(title))\n")
+
+        // Recurring guard (upstream aba7cf5): an explicit completion date would break the
+        // series-advance semantics, so refuse it outright.
+        if completionISO != nil, let row = store.reminder(pk: id),
+           recurrenceFromRow(row, ts: { AppleEpoch.ts($0) }) != nil {
+            let message = "--date is not supported for recurring reminders. "
+                + "Use 'remctl done \(id)' without --date to advance the series."
+            if json {
+                let payload: JSONValue = .object([
+                    ("status", .string("error")),
+                    ("code", .string("completion_date_unsupported_for_recurring")),
+                    ("message", .string(message)),
+                    ("id", .int(id)),
+                ])
+                return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+            }
+            return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
+        }
+
+        _ = try await writer.complete(id: ckid, completionDate: completionDate)
+        if json {
+            var pairs: [(String, JSONValue)] = [
+                ("status", .string("completed")), ("id", .int(id)), ("title", .string(title)),
+            ]
+            if let completionISO { pairs.append(("completionDate", .string(completionISO))) }
+            return .ok(JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
+        }
+        let suffix = completionISO.map { " (\($0))" } ?? ""
+        return .ok("Completed: \(safeDisplay(title))\(suffix)\n")
+    }
+
+    /// Python `datetime.isoformat()` for a whole-second local datetime: yyyy-MM-ddTHH:mm:ss.
+    private static func isoDateTime(_ date: Date, calendar: Calendar) -> String {
+        let df = DateFormatter()
+        df.calendar = calendar
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = calendar.timeZone
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return df.string(from: date)
+    }
+
+    /// Build the exit-2 invalid-completion-date outcome (port of `fail_invalid_completion_date`).
+    private static func failInvalidCompletionDate(_ value: String, json: Bool) -> WriteOutcome {
+        let examples = ["2026-05-27", "2026-05-27 09:30"]
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("invalid_completion_date")),
+                ("field", .string("date")),
+                ("input", .string(value)),
+                ("message", .string("Could not parse completion date. No reminder was changed.")),
+                ("examples", .array(examples.map { .string($0) })),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 2)
+        }
+        var s = "Error: could not parse completion date \(WriteFormatting.pyRepr(value)).\n"
+        s += "No reminder was changed.\n"
+        s += "\n"
+        s += "Use exact forms like:\n"
+        for e in examples { s += "  \(e)\n" }
+        return WriteOutcome(stderr: s, exitCode: 2)
     }
 }
 

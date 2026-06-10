@@ -141,6 +141,12 @@ _remctl() {
                 '--json[JSON output]'
             return
             ;;
+        done)
+            _arguments \
+                '--date[Set completion date]:date:' \
+                '--json[JSON output]'
+            return
+            ;;
         doctor)
             _arguments \
                 '--for-agent[Print agent-focused context and TCC guidance]' \
@@ -330,6 +336,9 @@ _remctl() {
         return
     elif [ "$cmd" = "edit" ]; then
         COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "done" ]; then
+        COMPREPLY=( $(compgen -W "--date --json" -- "$cur") )
         return
     elif [ "$cmd" = "doctor" ]; then
         COMPREPLY=( $(compgen -W "--for-agent --json" -- "$cur") )
@@ -539,6 +548,8 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l early-reminder -d "Se
 complete -c remctl -n "__fish_seen_subcommand_from add" -l url -d "URL, web rich link with --private" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags, synced with --private" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l list-id -d "Target list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from done" -l date -d "Set completion date" -r
+complete -c remctl -n "__fish_seen_subcommand_from done" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assign to section by stable ID" -r

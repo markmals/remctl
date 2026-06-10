@@ -7,7 +7,7 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
         case create(ReminderWrite)
         case update(id: String, ReminderWrite)
         case delete(id: String)
-        case complete(id: String)
+        case complete(id: String, completionDate: Date?)
         case uncomplete(id: String)
         case createList(title: String, color: String?)
         case renameList(currentTitle: String, newTitle: String)
@@ -26,7 +26,7 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
     func create(_ w: ReminderWrite) async throws -> WriteResult { calls.append(.create(w)); return try resultOr("created") }
     func update(id: String, _ w: ReminderWrite) async throws -> WriteResult { calls.append(.update(id: id, w)); return try resultOr("updated") }
     func delete(id: String) async throws -> WriteResult { calls.append(.delete(id: id)); return try resultOr("deleted") }
-    func complete(id: String) async throws -> WriteResult { calls.append(.complete(id: id)); return try resultOr("completed") }
+    func complete(id: String, completionDate: Date?) async throws -> WriteResult { calls.append(.complete(id: id, completionDate: completionDate)); return try resultOr("completed") }
     func uncomplete(id: String) async throws -> WriteResult { calls.append(.uncomplete(id: id)); return try resultOr("uncompleted") }
     func createList(title: String, color: String?) async throws -> WriteResult { calls.append(.createList(title: title, color: color)); return try resultOr("created") }
     func renameList(currentTitle: String, newTitle: String) async throws -> WriteResult { calls.append(.renameList(currentTitle: currentTitle, newTitle: newTitle)); return try resultOr("renamed") }

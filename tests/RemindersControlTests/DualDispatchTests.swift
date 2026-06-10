@@ -102,7 +102,7 @@ import GRDB
                 return .ok("both\n")
             }
 
-            #expect(mockWriter.calls == [.complete(id: "EK-99")])
+            #expect(mockWriter.calls == [.complete(id: "EK-99", completionDate: nil)])
             #expect(mockPrivate.calls == [.setFlagged(id: "CK-99", flagged: false)])
             #expect(outcome == .ok("both\n"))
         })

@@ -225,6 +225,26 @@ import Foundation
         }
     }
 
+    // ── parse_completion_date (port upstream aba7cf5) ─────────────────────────
+
+    @Test func completionDateAcceptsStrictISO() {
+        let c = cal()
+        let d1 = WriteParsing.parseCompletionDate("2026-05-27", calendar: c)
+        #expect(d1 != nil && c.component(.day, from: d1!) == 27 && c.component(.hour, from: d1!) == 0)
+        let d2 = WriteParsing.parseCompletionDate("2026-05-27 09:30", calendar: c)
+        #expect(d2 != nil && c.component(.hour, from: d2!) == 9 && c.component(.minute, from: d2!) == 30)
+        let d3 = WriteParsing.parseCompletionDate("2026-05-27T09:30", calendar: c)
+        #expect(d3 == d2)
+        let d4 = WriteParsing.parseCompletionDate("2026-05-27 09:30:15", calendar: c)
+        #expect(d4 != nil && c.component(.second, from: d4!) == 15)
+    }
+
+    @Test func completionDateRejectsLooseForms() {
+        for bad in ["tomorrow", "2026-5-7", "notadate", "", "2026-05-27 9:30", "+3d"] {
+            #expect(WriteParsing.parseCompletionDate(bad) == nil, "expected reject: \(bad)")
+        }
+    }
+
     @Test func dueSpecAllDayNonWeekdayWordIsNotAllDay() {
         // Bare words that aren't weekdays fall through every branch → false.
         #expect(!WriteParsing.dueSpecIsAllDay("someday"))

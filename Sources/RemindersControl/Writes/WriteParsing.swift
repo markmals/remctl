@@ -235,6 +235,23 @@ public enum WriteParsing {
         return nil
     }
 
+    // MARK: - Completion date
+
+    /// Port of `parse_completion_date` (remctl:4641, upstream aba7cf5). Strict —
+    /// COMPLETION_DATE_RE is ^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$ —
+    /// then parsed naive-local. No natural-language forms.
+    public static func parseCompletionDate(_ value: String, calendar: Calendar = .current) -> Date? {
+        let text = value.trimmingCharacters(in: .whitespaces)
+        guard firstMatch(in: text, pattern: #"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$"#, groupCount: 0) != nil else {
+            return nil
+        }
+        let normalized = text.replacingOccurrences(of: "T", with: " ")
+        for fmt in ["yyyy-MM-dd", "yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss"] {
+            if let d = strptime(normalized, format: fmt, calendar: calendar) { return d }
+        }
+        return nil
+    }
+
     // MARK: - All-day detection
 
     /// Port of `due_spec_is_all_day` (remctl:4287, upstream 6755b8e): true when the
