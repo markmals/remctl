@@ -41,6 +41,7 @@ _remctl() {
         'subtasks:Show subtasks'
         'info:Full detail view'
         'sections:Show sections'
+        'sharees:Show people available for assignment in a shared list'
         'stats:Statistics'
         'link:Get deep links'
         'open:Open in Reminders.app'
@@ -144,6 +145,12 @@ _remctl() {
         done)
             _arguments \
                 '--date[Set completion date]:date:' \
+                '--json[JSON output]'
+            return
+            ;;
+        sharees)
+            _arguments \
+                '--list-id[Shared list by stable numeric ID]:id:' \
                 '--json[JSON output]'
             return
             ;;
@@ -328,7 +335,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections sharees stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -339,6 +346,9 @@ _remctl() {
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "sharees" ]; then
+        COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "doctor" ]; then
         COMPREPLY=( $(compgen -W "--for-agent --json" -- "$cur") )
@@ -426,6 +436,7 @@ complete -c remctl -n "__fish_use_subcommand" -a tags -d "List all tags"
 complete -c remctl -n "__fish_use_subcommand" -a subtasks -d "Show subtasks"
 complete -c remctl -n "__fish_use_subcommand" -a info -d "Full detail view"
 complete -c remctl -n "__fish_use_subcommand" -a sections -d "Show sections"
+complete -c remctl -n "__fish_use_subcommand" -a sharees -d "Show people available for assignment in a shared list"
 complete -c remctl -n "__fish_use_subcommand" -a stats -d "Statistics"
 complete -c remctl -n "__fish_use_subcommand" -a link -d "Get deep links"
 complete -c remctl -n "__fish_use_subcommand" -a open -d "Open in Reminders.app"
@@ -550,6 +561,8 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags, s
 complete -c remctl -n "__fish_seen_subcommand_from add" -l list-id -d "Target list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from done" -l date -d "Set completion date" -r
 complete -c remctl -n "__fish_seen_subcommand_from done" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from sharees" -l list-id -d "Shared list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from sharees" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assign to section by stable ID" -r

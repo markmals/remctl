@@ -5,7 +5,7 @@ import Foundation
 
 let readCommands: [ParsableCommand.Type] = [
     Today.self, Upcoming.self, Overdue.self, Search.self, Flagged.self, Urgent.self,
-    Tags.self, Subtasks.self, Sections.self, Stats.self, Show.self, Info.self,
+    Tags.self, Subtasks.self, Sections.self, Sharees.self, Stats.self, Show.self, Info.self,
 ]
 
 struct Today: ParsableCommand {
@@ -392,6 +392,73 @@ struct Sections: ParsableCommand {
             }
             let n = rows.count
             print("\n\(n) section\(n == 1 ? "" : "s")")
+        }
+    }
+}
+
+/// Port of `cmd_sharees` (upstream 683c362): show the people available for assignment
+/// in a shared list. Read-only; assignment writes live on add/edit (--assign).
+struct Sharees: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "sharees", abstract: "Show people available for assignment in a shared list.")
+    @OptionGroup var opts: JSONOnlyOptions
+    @Argument(help: "List name") var list: String?
+    @Option(name: .long, help: "Shared list by stable numeric ID") var listId: Int?
+
+    func run() throws {
+        Dispatch.runRead { store in
+            let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+            let currentUserCkid = store.listSharedOwnerCkid(listPk: target.id)
+            let rows = store.sharees(listPk: target.id)
+            let shareeObjs = rows.map { shareeToDict($0, currentUserCkid: currentUserCkid) }
+
+            if opts.json {
+                // payload["list"] is the full list_ref_payload (id/title/objectUUID/
+                // requested/method/isGroceries), like every other list-ref JSON.
+                let requested = listId != nil ? String(listId!) : (list ?? "")
+                let method = store.resolveListRefWithMethod(name: list, listId: listId).method
+                let listRef: JSONValue
+                if let fullRow = store.listRowByPkFull(target.id) {
+                    listRef = .object(listRefPayload(fullRow, requested: requested, method: method))
+                } else {
+                    listRef = .object([
+                        ("id", .int(target.id)), ("title", .string(target.title)),
+                        ("objectUUID", target.objectUUID.map(JSONValue.string) ?? .null),
+                        ("requested", .string(requested)), ("method", .string(method)),
+                        ("isGroceries", .bool(false)),
+                    ])
+                }
+                let payload: JSONValue = .object([
+                    ("list", listRef),
+                    ("currentUserSharee", currentUserCkid.map(JSONValue.string) ?? .null),
+                    ("sharees", .array(shareeObjs.map { .object($0) })),
+                ])
+                Dispatch.printJSON(payload, ensureAscii: false)
+                return
+            }
+
+            let ansi = opts.ansi()
+            print(ansi.bold("Sharees for \(safeDisplay(target.title)):"))
+            if rows.isEmpty {
+                print("  No sharees")
+                return
+            }
+            for obj in shareeObjs {
+                func str(_ key: String) -> String? {
+                    for (k, v) in obj where k == key { if case let .string(s) = v { return s } }
+                    return nil
+                }
+                func intval(_ key: String) -> Int? {
+                    for (k, v) in obj where k == key { if case let .int(i) = v { return i } }
+                    return nil
+                }
+                let isMe = obj.contains { $0.0 == "currentUser" && $0.1 == .bool(true) }
+                let current = isMe ? ansi.dim(" (me)") : ""
+                let address = str("address").map { " \(ansi.dim($0))" } ?? ""
+                let idText = ansi.dim("(id: \(intval("id").map(String.init) ?? "?"))")
+                print("  - \(safeDisplay(str("name") ?? ""))\(current)\(address) \(idText)")
+            }
+            let n = rows.count
+            print("\n\(n) sharee\(n == 1 ? "" : "s")")
         }
     }
 }

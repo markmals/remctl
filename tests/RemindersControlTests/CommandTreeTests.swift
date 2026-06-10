@@ -58,9 +58,9 @@ func opsCommandsRegistered() {
     }
 }
 
-@Test("Exactly 45 unique subcommands are registered")
-func allFortyFiveRegistered() {
+@Test("Exactly 46 unique subcommands are registered")
+func allFortySixRegistered() {
     let names = RemindersControl.configuration.subcommands.compactMap { $0.configuration.commandName }
-    #expect(names.count == 45)
-    #expect(Set(names).count == 45, "duplicate command names: \(names)")
+    #expect(names.count == 46)
+    #expect(Set(names).count == 46, "duplicate command names: \(names)")
 }

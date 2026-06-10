@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Zent {
-    public static let list = 3, smartList = 4, alarm = 15, recurrence = 34
+    public static let list = 3, smartList = 4, alarm = 15, assignment = 21, recurrence = 34, sharee = 36
 }
 
 extension RemindersStore {
