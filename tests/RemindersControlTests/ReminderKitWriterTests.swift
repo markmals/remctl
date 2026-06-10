@@ -192,3 +192,24 @@ final class ReminderKitWriterTests: XCTestCase {
         XCTAssertEqual(intOne, .int(1))
     }
 }
+
+// MARK: - remindd hint on transient errors (adapted from upstream aba7cf5)
+
+final class ReminddHintTests: XCTestCase {
+    let transient = "Couldn’t communicate with a helper application."
+
+    func testAppendsHintWhenReminddStopped() {
+        let enriched = ReminderKitWriter.enrichTransientMessage(transient, remindd: false)
+        XCTAssertEqual(enriched, transient + " Reminders daemon (remindd) is not running; open Reminders.app, then retry.")
+    }
+
+    func testLeavesMessageWhenReminddRunningOrUnknown() {
+        XCTAssertEqual(ReminderKitWriter.enrichTransientMessage(transient, remindd: true), transient)
+        XCTAssertEqual(ReminderKitWriter.enrichTransientMessage(transient, remindd: nil), transient)
+    }
+
+    func testLeavesNonTransientMessages() {
+        XCTAssertEqual(ReminderKitWriter.enrichTransientMessage("Reminder not found", remindd: false), "Reminder not found")
+        XCTAssertNil(ReminderKitWriter.enrichTransientMessage(nil, remindd: false))
+    }
+}

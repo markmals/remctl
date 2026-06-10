@@ -112,14 +112,13 @@ public final class ReminderKitWriter: PrivateWriter {
 
     /// Dispatches `request`, retrying up to 3 times (total) for idempotent actions
     /// when a transient ReminderKit error is detected. Non-idempotent actions are
-    /// attempted exactly once.
+    /// attempted exactly once. A final transient failure gets the remindd hint
+    /// appended when the daemon is verifiably not running (upstream aba7cf5).
     private func dispatchWithRetry(_ request: [String: Any]) async -> PrivateResult {
         let action = request["action"] as? String ?? ""
         let maxAttempts = ReminderKitWriter.idempotentActions.contains(action) ? 3 : 1
 
         var result = dispatch(request)
-        if maxAttempts == 1 { return result }
-
         var attempt = 1
         while attempt < maxAttempts {
             if result.status != "error" { break }
@@ -128,7 +127,34 @@ public final class ReminderKitWriter: PrivateWriter {
             result = dispatch(request)
             attempt += 1
         }
+        if result.status == "error", ReminderKitWriter.isTransient(message: result.message) {
+            let enriched = ReminderKitWriter.enrichTransientMessage(
+                result.message, remindd: ReminderKitWriter.reminddRunning())
+            return PrivateResult(status: result.status, fields: result.fields, message: enriched)
+        }
         return result
+    }
+
+    /// Port of `remindd_running` (upstream aba7cf5): pgrep -x remindd; nil when the
+    /// probe itself fails or times out (then no hint is added).
+    static func reminddRunning() -> Bool? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", "remindd"]
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let deadline = Date().addingTimeInterval(5)
+        while p.isRunning && Date() < deadline { usleep(10_000) }
+        if p.isRunning { p.terminate(); return nil }
+        return p.terminationStatus == 0
+    }
+
+    /// Append the "open Reminders.app" guidance to a TRANSIENT error message when
+    /// remindd is verifiably stopped. Non-transient messages and unknown daemon
+    /// state pass through unchanged.
+    static func enrichTransientMessage(_ message: String?, remindd: Bool?) -> String? {
+        guard let message, isTransient(message: message), remindd == false else { return message }
+        return message + " Reminders daemon (remindd) is not running; open Reminders.app, then retry."
     }
 
     // MARK: - Appearance helper
