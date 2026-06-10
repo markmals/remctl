@@ -436,6 +436,8 @@ struct Edit: AsyncParsableCommand {
             }
             dueDate = parsed
         }
+        // Date-only due text keeps the reminder all-day through the edit (upstream ee8a120).
+        let dueAllDay = dueDate != nil && WriteParsing.dueSpecIsAllDay(due ?? "")
 
         // 4a. Early-Reminder due-date guard (cmd_edit:5466-5469): a non-clear early-reminder
         //     requires a due date. Clearing the due (-d clear) removes it → fail; otherwise fail
@@ -492,6 +494,7 @@ struct Edit: AsyncParsableCommand {
             write.due = .clear; hasChanges = true
         } else if let dueDate {
             write.due = .set(dueDate); hasChanges = true
+            if dueAllDay { write.allDay = true }
         }
 
         if let parsedRecurrence { write.recurrence = parsedRecurrence; hasChanges = true }
@@ -502,7 +505,9 @@ struct Edit: AsyncParsableCommand {
         if let dueDate, let currentDue {
             let currentUnix = currentDue + AppleEpoch.offset
             if Int(dueDate.timeIntervalSince1970) == Int(currentUnix) {
-                nudgeDate = dueDate.addingTimeInterval(3600)
+                // All-day dues nudge by a full day — a +1h nudge would re-introduce a
+                // time component on a date-only reminder (upstream ee8a120).
+                nudgeDate = dueDate.addingTimeInterval(dueAllDay ? 86_400 : 3_600)
             }
         }
 
@@ -563,6 +568,7 @@ struct Edit: AsyncParsableCommand {
         if let nudgeDate {
             var nudge = ReminderWrite()
             nudge.due = .set(nudgeDate)
+            if dueAllDay { nudge.allDay = true }
             _ = try await writer.update(id: ckid, nudge)
         }
         _ = try await writer.update(id: ckid, write)

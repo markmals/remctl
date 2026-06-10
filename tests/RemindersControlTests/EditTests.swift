@@ -111,6 +111,50 @@ import GRDB
         } else { Issue.record("second call should be the real update") }
     }
 
+    // MARK: - All-day edits (port upstream ee8a120)
+
+    @Test func dateOnlyDueEditSetsAllDay() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "2026-06-01", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        let u = updatedWrite(m)
+        #expect(u?.write.allDay == true)
+        if case .set? = u?.write.due {} else { Issue.record("expected due == .set(date)") }
+    }
+
+    @Test func timedDueEditDoesNotSetAllDay() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, due: "2026-06-01 14:00", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(updatedWrite(m)?.write.allDay == nil)
+    }
+
+    @Test func allDayDoubleTapNudgeUsesOneDay() async throws {
+        // ZDUEDATE equals the parsed date-only due → the nudge must be +1 DAY (not +1h)
+        // and must itself carry allDay so the intermediate save stays date-only.
+        let cal = Calendar.current
+        let instant = cal.date(from: DateComponents(year: 2026, month: 6, day: 1))!  // local midnight
+        let apple = AppleEpoch.toTs(instant)
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Work',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',\(apple))")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "2026-06-01", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        #expect(out.exitCode == 0)
+        #expect(m.calls.count == 2)
+        if case let .update(_, nudge) = m.calls[0] {
+            #expect(nudge.due == .set(instant.addingTimeInterval(86_400)))
+            #expect(nudge.allDay == true)
+        } else { Issue.record("first call should be the nudge update, got \(m.calls)") }
+        if case let .update(_, real) = m.calls[1] {
+            #expect(real.due == .set(instant))
+            #expect(real.allDay == true)
+        } else { Issue.record("second call should be the real update") }
+    }
+
     // MARK: - List move
 
     @Test func listMove() async throws {
