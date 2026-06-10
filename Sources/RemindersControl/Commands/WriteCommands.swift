@@ -48,6 +48,8 @@ struct Add: AsyncParsableCommand {
     @Option(name: .long, help: "Add an image attachment path (repeatable)") var image: [String] = []
     @Flag(inversion: .prefixedNo, help: "Set urgent state") var urgent: Bool?
     @Option(name: .long, help: "Early Reminder before due date, e.g. 15m, 1h, 2d") var earlyReminder: String?
+    @Option(name: .long, help: "Assign to a shared-list user (name, email, phone, sharee ID, or 'me')") var assign: String?
+    @Flag(name: .long, help: "Clear the existing assignment") var unassign = false
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
@@ -60,6 +62,7 @@ struct Add: AsyncParsableCommand {
                 url: args.url, flag: args.flag, tags: args.tags, grocery: args.grocery,
                 section: args.section, sectionId: args.sectionId, newSection: args.newSection,
                 subtask: args.subtask, image: args.image, urgent: args.urgent, earlyReminder: args.earlyReminder,
+                assign: args.assign, unassign: args.unassign,
                 json: args.json, store: store, writer: writer, private: priv)
         })
     }
@@ -72,18 +75,26 @@ struct Add: AsyncParsableCommand {
         url: String? = nil, flag: Bool = false, tags: String? = nil, grocery: Bool = false,
         section: String? = nil, sectionId: String? = nil, newSection: String? = nil,
         subtask: [String] = [], image: [String] = [], urgent: Bool? = nil, earlyReminder: String? = nil,
+        assign: String? = nil, unassign: Bool = false,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
         groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> WriteOutcome {
 
+        // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
+        if assign != nil && unassign {
+            throw CLIError("pass either --assign or --unassign, not both.")
+        }
+
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
-        // The private-only flags are section/section-id/new-section/urgent/early-reminder/grocery plus
-        // P13's --subtask/--image (both imply-private — apply_private_changes runs them on the ckid).
-        // When wantsPrivate, --flag/--tags/--url route through the private writer; otherwise they
-        // keep their Phase-2 public behavior (EventKit flag-proxy / title #hashtags / notes-append).
+        // The private-only flags are section/section-id/new-section/urgent/early-reminder/grocery/
+        // assign/unassign plus P13's --subtask/--image (both imply-private — apply_private_changes
+        // runs them on the ckid). When wantsPrivate, --flag/--tags/--url route through the private
+        // writer; otherwise they keep their Phase-2 public behavior (EventKit flag-proxy / title
+        // #hashtags / notes-append).
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
             || urgent != nil || earlyReminder != nil || grocery
+            || assign != nil || unassign
             || !subtask.isEmpty || !image.isEmpty
 
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
@@ -205,6 +216,7 @@ struct Add: AsyncParsableCommand {
                 section: section, sectionId: sectionId, newSection: newSection,
                 subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
+                assign: assign, unassign: unassign,
                 grocery: grocery,
                 store: store, listPk: resolution?.id,
                 writer: writer, private: priv, now: now, calendar: calendar,
@@ -326,6 +338,8 @@ struct Edit: AsyncParsableCommand {
     @Flag(inversion: .prefixedNo, help: "Set the real flagged state") var flagged: Bool?
     @Flag(inversion: .prefixedNo, help: "Set urgent state") var urgent: Bool?
     @Option(name: .long, help: "Early Reminder before due date") var earlyReminder: String?
+    @Option(name: .long, help: "Assign to a shared-list user (name, email, phone, sharee ID, or 'me')") var assign: String?
+    @Flag(name: .long, help: "Clear the existing assignment") var unassign = false
     @Option(name: .long, help: "Location address (not supported for location alarms)") var address: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
@@ -341,7 +355,8 @@ struct Edit: AsyncParsableCommand {
                 radius: args.radius, proximity: args.proximity,
                 tags: args.tags, grocery: args.grocery, section: args.section, sectionId: args.sectionId,
                 newSection: args.newSection, subtask: args.subtask, image: args.image,
-                flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder, address: args.address,
+                flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder,
+                assign: args.assign, unassign: args.unassign, address: args.address,
                 json: args.json, store: store, writer: writer, private: priv)
         })
     }
@@ -356,11 +371,17 @@ struct Edit: AsyncParsableCommand {
         radius: Double = 100.0, proximity: Proximity = .arriving,
         tags: String? = nil, grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
-        flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil, address: String? = nil,
+        flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil,
+        assign: String? = nil, unassign: Bool = false, address: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
         groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> WriteOutcome {
+
+        // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
+        if assign != nil && unassign {
+            throw CLIError("pass either --assign or --unassign, not both.")
+        }
 
         // 1. Resolve pk -> (title, ckid) with the "edit it" refusal, and read the current row
         //    for ZDUEDATE / ZDISPLAYDATEDATE / ZLIST (needed for nudge / carry / clear).
@@ -384,6 +405,7 @@ struct Edit: AsyncParsableCommand {
         // it. So when --tags is the only private flag, we still want it private. Fold that in.
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
+            || assign != nil || unassign
             || !subtask.isEmpty || !image.isEmpty
 
         // Parse the early-reminder spec up front (validates format; bad → CLIError).
@@ -547,7 +569,8 @@ struct Edit: AsyncParsableCommand {
             let privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
-                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly, grocery: grocery,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                assign: assign, unassign: unassign, grocery: grocery,
                 store: store, listPk: resolution?.id ?? row.int("ZLIST"),
                 writer: writer, private: priv, now: now, calendar: calendar,
                 groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
@@ -579,7 +602,8 @@ struct Edit: AsyncParsableCommand {
             privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
-                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly, grocery: grocery,
+                flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
+                assign: assign, unassign: unassign, grocery: grocery,
                 store: store, listPk: resolution?.id ?? row.int("ZLIST"),
                 writer: writer, private: priv, now: now, calendar: calendar,
                 groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
@@ -618,7 +642,8 @@ struct Edit: AsyncParsableCommand {
         reminderCkid: String, url: String?, tags: String?,
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec], images: [String],
-        flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?, grocery: Bool,
+        flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
+        assign: String?, unassign: Bool, grocery: Bool,
         store: RemindersStore, listPk: Int?,
         writer: RemindersWriter, private priv: PrivateWriter,
         now: Date, calendar: Calendar,
@@ -629,7 +654,8 @@ struct Edit: AsyncParsableCommand {
             url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
             section: section, sectionId: sectionId, newSection: newSection,
             subtasks: subtasks, images: images,
-            flagged: flagged, urgent: urgent, earlyReminder: earlyReminder, grocery: grocery,
+            flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,
+            assign: assign, unassign: unassign, grocery: grocery,
             store: store, listPk: listPk,
             writer: writer, private: priv, now: now, calendar: calendar,
             groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)

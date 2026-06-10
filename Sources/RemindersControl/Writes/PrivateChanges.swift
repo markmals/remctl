@@ -37,6 +37,7 @@ public enum PrivateChanges {
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec] = [], images: [String] = [],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
+        assign: String? = nil, unassign: Bool = false,
         grocery: Bool = false,
         store: RemindersStore, listPk: Int?,
         writer: RemindersWriter, private p: PrivateWriter,
@@ -122,6 +123,24 @@ public enum PrivateChanges {
         //    private fan-out. (Only the SUBTASK path emits add_location_alarm — see
         //    applySubtaskPrivateMetadata above — because subtask children have no EventKit bridge for
         //    location.) So the parent path has nothing to do at this slot.
+
+        // 9.5. assign_sharee / clear_assignment (upstream 683c362, apply_private_changes:3404):
+        //      resolve the assignee + originator against the target shared list's sharees, then
+        //      emit the private actions. The either/or validation lives in Add/Edit (validate_private_args).
+        if let assign {
+            guard let listPk else {
+                throw CLIError("--assign requires a target shared list via -l/--list or --list-id.")
+            }
+            let assignee = try resolveSharee(store: store, listPk: listPk, value: assign)
+            let originator = try resolveAssignmentOriginator(store: store, listPk: listPk)
+            results.append(try await p.assignSharee(
+                id: reminderCkid,
+                assigneeId: assignee.string("ZCKIDENTIFIER") ?? "",
+                originatorId: originator.string("ZCKIDENTIFIER") ?? ""))
+        }
+        if unassign {
+            results.append(try await p.clearAssignment(id: reminderCkid))
+        }
 
         // 10. categorize_grocery_items — the LAST private action (apply_private_changes:3133). Polls
         //     for Reminders.app auto-sectioning and only calls the private helper if it didn't happen.

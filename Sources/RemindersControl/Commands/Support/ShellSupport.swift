@@ -94,6 +94,8 @@ _remctl() {
                 '--new-section[Create and assign to new section]:section:' \
                 '--subtask[Add private subtask title or JSON object]:subtask:' \
                 '--image[Add private image attachment]:path:_files' \
+                '--assign[Assign to shared-list user]:sharee:' \
+                '--unassign[Clear existing assignment]' \
                 '--grocery[Auto-categorize in a Groceries list]' \
                 '--urgent[Set private urgent state]' \
                 '--no-urgent[Clear private urgent state]' \
@@ -118,6 +120,8 @@ _remctl() {
                 '--new-section[Create and assign to new section]:section:' \
                 '--subtask[Add private subtask title or JSON object]:subtask:' \
                 '--image[Add private image attachment]:path:_files' \
+                '--assign[Assign to shared-list user]:sharee:' \
+                '--unassign[Clear existing assignment]' \
                 '--grocery[Auto-categorize in the reminder Groceries list]' \
                 '--flagged[Set real private flag]' \
                 '--no-flagged[Clear real private flag]' \
@@ -339,10 +343,10 @@ _remctl() {
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --urgent --no-urgent --early-reminder --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --json" -- "$cur") )
@@ -552,6 +556,8 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l section-id -d "Assign
 complete -c remctl -n "__fish_seen_subcommand_from add" -l new-section -d "Create and assign to new section" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l subtask -d "Add private subtask title or JSON object" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l image -d "Add private image attachment" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l assign -d "Assign to shared-list user" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l unassign -d "Clear existing assignment"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l grocery -d "Auto-categorize in a Groceries list"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l urgent -d "Set private urgent state"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l no-urgent -d "Clear private urgent state"
@@ -569,6 +575,8 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assig
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l new-section -d "Create and assign to new section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l subtask -d "Add private subtask title or JSON object" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l image -d "Add private image attachment" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l assign -d "Assign to shared-list user" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l unassign -d "Clear existing assignment"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l grocery -d "Auto-categorize in the reminder Groceries list"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l flagged -d "Set real private flag"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l no-flagged -d "Clear real private flag"

@@ -98,6 +98,7 @@
 @end
 
 @interface REMReminderChangeItem : NSObject
+- (id)assignmentContext;
 - (id)attachmentContext;
 - (id)dueDateDeltaAlertContext;
 - (id)flaggedContext;
@@ -105,6 +106,11 @@
 - (id)subtaskContext;
 - (id)urgentAlarmContext;
 - (void)addAlarm:(id)alarm;
+@end
+
+@interface REMReminderAssignmentContextChangeItem : NSObject
+- (id)addAssignmentWithAssigneeID:(id)assigneeID originatorID:(id)originatorID status:(NSInteger)status;
+- (void)removeAllAssignments;
 @end
 
 @interface REMReminderDueDateDeltaAlertContextChangeItem : NSObject
@@ -394,6 +400,10 @@ static NSURL *sectionURL(NSString *ckIdentifier) {
     return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDListSection/%@", ckIdentifier]];
 }
 
+static NSURL *shareeURL(NSString *ckIdentifier) {
+    return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDSharee/%@", ckIdentifier]];
+}
+
 static NSURL *listURL(NSString *ckIdentifier) {
     return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDList/%@", ckIdentifier]];
 }
@@ -621,6 +631,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"add_subtasks",
                 @"assign_section",
                 @"add_section_and_assign",
+                @"assign_sharee",
+                @"clear_assignment",
                 @"add_attachments",
                 @"set_flagged",
                 @"set_urgent",
@@ -1270,6 +1282,31 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 [sectionContext setUnsavedSectionIDsOrdering:@[sectionObjectID]];
                 [sectionContext setShouldUpdateSectionsOrdering:YES];
                 details[@"sectionURL"] = [[sectionObjectID urlRepresentation] absoluteString] ?: @"";
+            } else if ([action isEqualToString:@"assign_sharee"]) {
+                NSString *assigneeID = cmd[@"assigneeId"];
+                NSString *originatorID = cmd[@"originatorId"];
+                if (![assigneeID isKindOfClass:[NSString class]] || assigneeID.length == 0) { RKP_FAIL(@"assigneeId is required"); }
+                if (![originatorID isKindOfClass:[NSString class]] || originatorID.length == 0) { RKP_FAIL(@"originatorId is required"); }
+                id assignmentContext = [change assignmentContext];
+                if (!assignmentContext || ![assignmentContext respondsToSelector:@selector(addAssignmentWithAssigneeID:originatorID:status:)]) {
+                    RKP_FAIL(@"ReminderKit reminder change item does not support assignment");
+                }
+                id assigneeObjectID = [REMObjectID objectIDWithURL:shareeURL(assigneeID)];
+                id originatorObjectID = [REMObjectID objectIDWithURL:shareeURL(originatorID)];
+                if (!assigneeObjectID) { RKP_FAIL(@"Could not build ReminderKit assignee object ID"); }
+                if (!originatorObjectID) { RKP_FAIL(@"Could not build ReminderKit originator object ID"); }
+                [assignmentContext removeAllAssignments];
+                id assignment = [(REMReminderAssignmentContextChangeItem *)assignmentContext addAssignmentWithAssigneeID:assigneeObjectID originatorID:originatorObjectID status:1];
+                if (!assignment) { RKP_FAIL(@"Could not create ReminderKit assignment"); }
+                details[@"assigneeId"] = assigneeID;
+                details[@"originatorId"] = originatorID;
+            } else if ([action isEqualToString:@"clear_assignment"]) {
+                id assignmentContext = [change assignmentContext];
+                if (!assignmentContext || ![assignmentContext respondsToSelector:@selector(removeAllAssignments)]) {
+                    RKP_FAIL(@"ReminderKit reminder change item does not support assignment");
+                }
+                [assignmentContext removeAllAssignments];
+                details[@"assignmentCleared"] = @YES;
             } else if ([action isEqualToString:@"add_attachments"]) {
                 NSString *filesError = nil;
                 NSArray<NSString *> *files = stringArray(cmd[@"files"], @"files", &filesError);

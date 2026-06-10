@@ -22,6 +22,8 @@ public final class ReminderKitWriter: PrivateWriter {
     private static let idempotentActions: Set<String> = [
         "set_flagged",
         "assign_section",
+        "assign_sharee",
+        "clear_assignment",
         "set_urgent",
         "set_early_reminder",
     ]
@@ -187,6 +189,16 @@ public final class ReminderKitWriter: PrivateWriter {
 
     public func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult {
         let req: [String: Any] = ["action": "add_section_and_assign", "id": id, "name": name]
+        return await dispatchWithRetry(req)
+    }
+
+    public func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult {
+        let req: [String: Any] = ["action": "assign_sharee", "id": id, "assigneeId": assigneeId, "originatorId": originatorId]
+        return await dispatchWithRetry(req)
+    }
+
+    public func clearAssignment(id: String) async throws -> PrivateResult {
+        let req: [String: Any] = ["action": "clear_assignment", "id": id]
         return await dispatchWithRetry(req)
     }
 

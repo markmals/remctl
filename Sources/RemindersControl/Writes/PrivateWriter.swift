@@ -77,6 +77,8 @@ public protocol PrivateWriter {
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult
     func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult
+    func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult
+    func clearAssignment(id: String) async throws -> PrivateResult
     func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult
     func addAttachments(id: String, images: [String]) async throws -> PrivateResult
     func setUrgent(id: String, urgent: Bool) async throws -> PrivateResult

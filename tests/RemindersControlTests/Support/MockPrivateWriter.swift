@@ -6,6 +6,8 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case setFlagged(id: String, flagged: Bool)
         case addPrivateMetadata(id: String, urls: [String], tags: [String])
         case assignSection(id: String, sectionId: String)
+        case assignSharee(id: String, assigneeId: String, originatorId: String)
+        case clearAssignment(id: String)
         case addSectionAndAssign(id: String, name: String)
         case addSubtasks(id: String, subtasks: [SubtaskSpec])
         case addAttachments(id: String, images: [String])
@@ -42,6 +44,8 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult { calls.append(.setFlagged(id: id, flagged: flagged)); return try resultOr("updated") }
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult { calls.append(.addPrivateMetadata(id: id, urls: urls, tags: tags)); return try resultOr("updated") }
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult { calls.append(.assignSection(id: id, sectionId: sectionId)); return try resultOr("updated") }
+    func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult { calls.append(.assignSharee(id: id, assigneeId: assigneeId, originatorId: originatorId)); return try resultOr("updated") }
+    func clearAssignment(id: String) async throws -> PrivateResult { calls.append(.clearAssignment(id: id)); return try resultOr("updated") }
     func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult { calls.append(.addSectionAndAssign(id: id, name: name)); return try resultOr("updated") }
     func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult { calls.append(.addSubtasks(id: id, subtasks: subtasks)); if let e = throwError { throw e }; return subtasksResult ?? result }
     func addAttachments(id: String, images: [String]) async throws -> PrivateResult { calls.append(.addAttachments(id: id, images: images)); return try resultOr("updated") }
