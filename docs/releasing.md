@@ -68,13 +68,13 @@ Access Token with write access to the tap, stored as a secret.
      **Release** workflow on `markmals/remctl`, click **Run workflow**, and enter
      the version (e.g. `0.2.0`). It creates and pushes the tag for you.
 
-   - **From the command line:** push the tag to the fork remote. In a local clone
-     the fork is usually the `fork` remote (the `origin` remote points at the
-     upstream `viticci/remctl` — **do not push there**):
+   - **From the command line:** push the tag to the fork remote. In this clone
+     `origin` is the fork `markmals/remctl` and `upstream` is `viticci/remctl`
+     (**never push to `upstream`**):
 
      ```bash
      git tag v0.2.0
-     git push fork v0.2.0     # NOT `origin` — origin is upstream viticci/remctl
+     git push origin v0.2.0   # origin = markmals/remctl; upstream = viticci (do not push)
      ```
 
    Either way, `release.yml` verifies the version matches `remctlVersion` (it
