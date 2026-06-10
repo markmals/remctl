@@ -31,7 +31,7 @@ struct Add: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Target list name") var list: String?
     @Option(name: .long, help: "Create in a list by stable numeric ID") var listId: Int?
     @Option(name: [.short, .long], help: "Notes / body") var notes: String?
-    @Option(name: [.short, .long], help: "Due date (YYYY-MM-DD, today, tomorrow, Friday at 15:00, +3d, eod, eow)") var due: String?
+    @Option(name: [.short, .long], help: "Due date; date-only forms (YYYY-MM-DD, today, +3d) create all-day reminders, explicit times (Friday at 15:00) create timed reminders") var due: String?
     @Option(name: [.short, .long], help: "Priority: high, medium, low, or none") var priority: String?
     @Option(name: .long, help: "Recurrence: daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', yearly") var recurrence: String?
     @Option(name: .long, help: "Alarm: 15m, 1h, 1d, or an absolute date") var alarm: String?
@@ -94,6 +94,9 @@ struct Add: AsyncParsableCommand {
             }
             dueDate = parsed
         }
+        // Date-only due text ("today", "2026-06-01", "+3d", "next friday") creates an
+        // all-day reminder (upstream 6755b8e `due_all_day`).
+        let dueAllDay = dueDate != nil && WriteParsing.dueSpecIsAllDay(due ?? "")
 
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty {
@@ -174,7 +177,10 @@ struct Add: AsyncParsableCommand {
         write.title = finalTitle
         if let resolvedListTitle { write.list = resolvedListTitle }
         if let notes, !notes.isEmpty { write.notes = notes }
-        if let dueDate { write.due = .set(dueDate) }
+        if let dueDate {
+            write.due = .set(dueDate)
+            if dueAllDay { write.allDay = true }
+        }
         if let priorityValue { write.priority = priorityValue }
         // --url: PUBLIC path only appends to notes (cmd_add:5203 `if a.url and not wants_private`).
         // When wantsPrivate, the url routes to addPrivateMetadata (step 7) instead.

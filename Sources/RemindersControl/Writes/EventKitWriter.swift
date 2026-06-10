@@ -136,8 +136,16 @@ public final class EventKitWriter: RemindersWriter {
         // successful but CloudKit silently ignored the dueDate field
         // (observed 2026-04-17, verified against AppleScript-authored pushes).
         if case .set(let date) = write.due {
-            reminder.dueDateComponents = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute, .second], from: date)
+            if write.allDay == true {
+                // All-day reminders store date-only components (no hour/minute/second),
+                // which is how Reminders.app encodes "all day" — a midnight timed
+                // component set is NOT equivalent.
+                reminder.dueDateComponents = Calendar.current.dateComponents(
+                    [.year, .month, .day], from: date)
+            } else {
+                reminder.dueDateComponents = Calendar.current.dateComponents(
+                    [.year, .month, .day, .hour, .minute, .second], from: date)
+            }
             reminder.timeZone = TimeZone.current
         } else if case .clear = write.due {
             reminder.dueDateComponents = nil

@@ -206,4 +206,28 @@ import Foundation
         #expect(WriteParsing.parseAlarmSpec("remove", allowClear: true) == .clear)
         #expect(WriteParsing.parseAlarmSpec("delete", allowClear: true) == .clear)
     }
+
+    // ── due_spec_is_all_day (port upstream 6755b8e) ───────────────────────────
+
+    @Test func dueSpecAllDayForms() {
+        for spec in ["today", "tomorrow", "eow", "2026-06-01", "+3d", "3d", "+2w", "+1m",
+                     "in 2 days", "in 2 weeks", "in 1 month",
+                     "friday", "next friday", "this fri", "Friday", "NEXT FRIDAY"] {
+            #expect(WriteParsing.dueSpecIsAllDay(spec), "expected all-day: \(spec)")
+        }
+    }
+
+    @Test func dueSpecTimedForms() {
+        for spec in ["eod", "+2h", "2h", "in 3 hours",
+                     "today at 3pm", "tomorrow 09:30", "friday at 15:00", "tonight at 11",
+                     "2026-06-01 14:00", "2026-06-01T14:00", ""] {
+            #expect(!WriteParsing.dueSpecIsAllDay(spec), "expected timed: \(spec)")
+        }
+    }
+
+    @Test func dueSpecAllDayNonWeekdayWordIsNotAllDay() {
+        // Bare words that aren't weekdays fall through every branch → false.
+        #expect(!WriteParsing.dueSpecIsAllDay("someday"))
+        #expect(!WriteParsing.dueSpecIsAllDay("notaday at 10"))
+    }
 }

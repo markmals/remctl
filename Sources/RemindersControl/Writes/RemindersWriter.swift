@@ -36,6 +36,7 @@ public struct ReminderWrite: Equatable {
     public var title: String?
     public var list: String?             // target list NAME (EventKit findList by title)
     public var due: DueWrite?
+    public var allDay: Bool?             // with .set due: store date-only components (mirrors bridge Command.allDay)
     public var priority: Int?            // 0/1/5/9
     public var notes: String?
     public var url: String?              // appended to notes (rich URL is Phase 3)

@@ -60,6 +60,23 @@ import GRDB
         if case .set? = w?.due {} else { Issue.record("expected due == .set(date), got \(String(describing: w?.due))") }
     }
 
+    @Test func dateOnlyDueCreatesAllDay() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Add.perform(title: "Pay rent", due: "2026-06-01", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        let w = createdWrite(m)
+        #expect(w?.allDay == true)
+        if case .set? = w?.due {} else { Issue.record("expected due == .set(date)") }
+    }
+
+    @Test func timedDueIsNotAllDay() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Add.perform(title: "Meet", due: "2026-06-01 14:00", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        let w = createdWrite(m)
+        #expect(w?.allDay == nil)
+    }
+
     @Test func badDueExitsTwoHuman() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()

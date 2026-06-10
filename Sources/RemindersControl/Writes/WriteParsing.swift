@@ -235,6 +235,31 @@ public enum WriteParsing {
         return nil
     }
 
+    // MARK: - All-day detection
+
+    /// Port of `due_spec_is_all_day` (remctl:4287, upstream 6755b8e): true when the
+    /// due-date TEXT names a day without a clock time. Branch order mirrors the
+    /// Python source; weekday lookup reuses `daysMap` (Python WEEKDAY_MAP).
+    public static func dueSpecIsAllDay(_ s: String) -> Bool {
+        if s.isEmpty { return false }
+        let sl = s.lowercased().trimmingCharacters(in: .whitespaces)
+        if ["today", "tomorrow", "eow"].contains(sl) { return true }
+        if sl == "eod" { return false }
+        if firstMatch(in: s.trimmingCharacters(in: .whitespaces), pattern: #"^\d{4}-\d{2}-\d{2}$"#, groupCount: 0) != nil {
+            return true
+        }
+        if let m = firstMatch(in: sl, pattern: #"^[+]?(\d+)([dwmh])$"#) {
+            return ["d", "w", "m"].contains(m[2])
+        }
+        if let m = firstMatch(in: sl, pattern: #"^in\s+(\d+)\s+(day|days|week|weeks|hour|hours|month|months)$"#) {
+            return !["hour", "hours"].contains(m[2])
+        }
+        if let m = firstMatch(in: sl, pattern: #"^(?:(next|this)\s+)?(\w+)(?:\s+(?:at\s+)?(.+))?$"#, groupCount: 3) {
+            return daysMap[m[2]] != nil && m[3].isEmpty
+        }
+        return false
+    }
+
     // MARK: - Helpers
 
     private static func isAllDigits(_ s: String) -> Bool {
