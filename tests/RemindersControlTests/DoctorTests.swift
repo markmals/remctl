@@ -514,3 +514,105 @@ private func check(_ checks: [DoctorCheck], _ name: String) -> DoctorCheck? {
         #expect(result.stdout.contains("Agent note: `doctor` must pass in the same context"))
     }
 }
+
+// MARK: - completion_fpath (port upstream aba7cf5)
+
+@Suite struct DoctorFpathTests {
+    private func zshProbes(loadable: Bool?) -> DoctorProbes {
+        DoctorProbes(
+            isDarwin: true, platformDetail: "macOS 15.5", macOSDetail: "macOS 15.5",
+            storeDirPath: "/tmp/store", storeDirExists: true, storeAccessError: nil,
+            dbPath: "/tmp/store/Data-1.sqlite",
+            cliPath: "/usr/local/bin/remctl", cliExists: true, cliOnPath: true,
+            eventKitAuthStatus: .fullAccess, reminderKitProbeResult: "reminderkit-ok",
+            configDirPath: "/home/test/.config/remctl", configDirExists: true,
+            shellName: "zsh",
+            completionTargetPath: "/home/test/.zsh/completions/_remctl",
+            completionTargetExists: true,
+            completionFpathLoadable: loadable,
+            fullDiskAccessFixText: { "FDA" })
+    }
+
+    @Test func loadableEmitsOk() {
+        let checks = gatherDoctorChecks(probes: zshProbes(loadable: true))
+        let c = checks.first { $0.name == "completion_fpath" }
+        #expect(c?.status == .ok)
+        #expect(c?.detail == "/home/test/.zsh/completions is on zsh fpath")
+        #expect(c?.fix == nil)
+    }
+
+    @Test func notLoadableWarnsWithHint() {
+        let checks = gatherDoctorChecks(probes: zshProbes(loadable: false))
+        let c = checks.first { $0.name == "completion_fpath" }
+        #expect(c?.status == .warn)
+        #expect(c?.detail == "/home/test/.zsh/completions is not on zsh fpath")
+        #expect(c?.fix?.contains("fpath=(/home/test/.zsh/completions $fpath)") == true)
+        #expect(c?.fix?.contains("autoload -Uz compinit && compinit") == true)
+    }
+
+    @Test func notApplicableEmitsNoCheck() {
+        let checks = gatherDoctorChecks(probes: zshProbes(loadable: nil))
+        #expect(!checks.contains { $0.name == "completion_fpath" })
+    }
+
+    @Test func fpathCheckFollowsCompletionCheck() {
+        let names = gatherDoctorChecks(probes: zshProbes(loadable: true)).map(\.name)
+        let ci = names.firstIndex(of: "completion")
+        let fi = names.firstIndex(of: "completion_fpath")
+        #expect(ci != nil && fi != nil && fi == ci.map { $0 + 1 })
+    }
+}
+
+// MARK: - zshCompletionLoadable (port upstream aba7cf5)
+
+@Suite struct ZshCompletionLoadableTests {
+    private func tempHome() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remctl-zshrc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @Test func trueWhenDirOnExportedFPATH() throws {
+        let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let completions = home.appendingPathComponent(".zsh/completions")
+        let path = completions.appendingPathComponent("_remctl")
+        let env = ["FPATH": "/usr/share/zsh:\(completions.path)", "HOME": home.path]
+        #expect(zshCompletionLoadable(path, env: env))
+    }
+
+    @Test func trueWhenZshrcMentionsDir() throws {
+        let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let completions = home.appendingPathComponent(".zsh/completions")
+        let path = completions.appendingPathComponent("_remctl")
+        try "fpath=(\(completions.path) $fpath)\n".write(
+            to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        #expect(zshCompletionLoadable(path, env: ["HOME": home.path]))
+    }
+
+    @Test func trueWhenZshrcMentionsTildeRelative() throws {
+        let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let completions = home.appendingPathComponent(".zsh/completions")
+        let path = completions.appendingPathComponent("_remctl")
+        try "fpath=(~/.zsh/completions $fpath)\n".write(
+            to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        #expect(zshCompletionLoadable(path, env: ["HOME": home.path]))
+    }
+
+    @Test func honorsZDOTDIR() throws {
+        let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let zdot = home.appendingPathComponent("zdot")
+        try FileManager.default.createDirectory(at: zdot, withIntermediateDirectories: true)
+        let completions = home.appendingPathComponent(".zsh/completions")
+        let path = completions.appendingPathComponent("_remctl")
+        try "fpath=(\(completions.path) $fpath)\n".write(
+            to: zdot.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
+        #expect(zshCompletionLoadable(path, env: ["HOME": home.path, "ZDOTDIR": zdot.path]))
+    }
+
+    @Test func falseWhenNowhere() throws {
+        let home = try tempHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let path = home.appendingPathComponent(".zsh/completions/_remctl")
+        #expect(!zshCompletionLoadable(path, env: ["HOME": home.path]))
+    }
+}

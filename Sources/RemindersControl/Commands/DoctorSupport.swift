@@ -75,6 +75,9 @@ public struct DoctorProbes: Sendable {
     /// `str(completion_target_path(shell))` (nil when shell is unsupported) and existence.
     public var completionTargetPath: String?
     public var completionTargetExists: Bool
+    /// `zsh_completion_loadable` result; nil when not applicable (non-zsh shell or
+    /// missing completion file) — then no completion_fpath check is emitted.
+    public var completionFpathLoadable: Bool?
 
     /// The full-disk-access fix text builder (closure so tests can inject a stub; the
     /// command supplies the real, environment-dependent text).
@@ -98,6 +101,7 @@ public struct DoctorProbes: Sendable {
         shellName: String,
         completionTargetPath: String?,
         completionTargetExists: Bool,
+        completionFpathLoadable: Bool? = nil,
         fullDiskAccessFixText: @escaping @Sendable () -> String
     ) {
         self.isDarwin = isDarwin
@@ -117,6 +121,7 @@ public struct DoctorProbes: Sendable {
         self.shellName = shellName
         self.completionTargetPath = completionTargetPath
         self.completionTargetExists = completionTargetExists
+        self.completionFpathLoadable = completionFpathLoadable
         self.fullDiskAccessFixText = fullDiskAccessFixText
     }
 }
@@ -218,6 +223,21 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
             status: p.completionTargetExists ? .ok : .warn,
             detail: "\(p.shellName): \(target)",
             fix: p.completionTargetExists ? nil : "Run remctl setup --shell \(p.shellName) to install completion."))
+        // 9a. completion_fpath (upstream aba7cf5) — zsh-only: an installed completion
+        //     that zsh can't load is indistinguishable from a missing one to the user.
+        if p.shellName == "zsh", p.completionTargetExists, let loadable = p.completionFpathLoadable {
+            let dir = parentDirectory(target)
+            if loadable {
+                checks.append(DoctorCheck(
+                    name: "completion_fpath", status: .ok,
+                    detail: "\(dir) is on zsh fpath", fix: nil))
+            } else {
+                checks.append(DoctorCheck(
+                    name: "completion_fpath", status: .warn,
+                    detail: "\(dir) is not on zsh fpath",
+                    fix: zshCompletionHint(URL(fileURLWithPath: target))))
+            }
+        }
     } else {
         checks.append(DoctorCheck(
             name: "completion",
@@ -487,6 +507,8 @@ public enum DoctorRuntime {
         let shell = detectShellName(env: env)
         let completionURL = try? completionTargetPath(shell, env: env)
         let completionExists = completionURL.map { fm.fileExists(atPath: $0.path) } ?? false
+        let fpathLoadable: Bool? = (shell == "zsh" && completionExists && completionURL != nil)
+            ? zshCompletionLoadable(completionURL!, env: env) : nil
 
         let osVersion = ProcessInfo.processInfo.operatingSystemVersion
         let macDetail = "macOS \(osVersion.majorVersion).\(osVersion.minorVersion)"
@@ -510,6 +532,7 @@ public enum DoctorRuntime {
             shellName: shell,
             completionTargetPath: completionURL?.path,
             completionTargetExists: completionExists,
+            completionFpathLoadable: fpathLoadable,
             fullDiskAccessFixText: { fullDiskAccessFixText(rerunCommand: "remctl doctor --for-agent", mentionOnboard: true, env: env) })
     }
 

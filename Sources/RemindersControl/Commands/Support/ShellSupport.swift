@@ -636,6 +636,51 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced
 
 /// Returns the basename of `$SHELL`, or `"zsh"` if unset/empty.
 /// Port of `detect_shell_name()` (remctl:6961).
+/// Port of `zsh_completion_hint` (upstream aba7cf5): the ~/.zshrc lines that make the
+/// installed completion loadable.
+public func zshCompletionHint(_ completionPath: URL) -> String {
+    let directory = completionPath.deletingLastPathComponent().path
+    return "Add to ~/.zshrc:\n    fpath=(\(directory) $fpath)\n    autoload -Uz compinit && compinit"
+}
+
+/// Port of `zsh_completion_loadable` (upstream aba7cf5): true when the completion
+/// directory is on the exported FPATH, or mentioned (absolute, ~/rel, or $HOME/rel)
+/// in the usual zsh startup files (honoring ZDOTDIR). False otherwise — doctor then
+/// warns with `zshCompletionHint`.
+public func zshCompletionLoadable(
+    _ completionPath: URL,
+    env: [String: String] = ProcessInfo.processInfo.environment
+) -> Bool {
+    let dir = completionPath.deletingLastPathComponent()
+    let target = dir.standardizedFileURL.resolvingSymlinksInPath().path
+
+    if let exported = env["FPATH"], !exported.isEmpty {
+        for entry in exported.split(separator: ":").map(String.init) where !entry.isEmpty {
+            let resolved = URL(fileURLWithPath: (entry as NSString).expandingTildeInPath)
+                .standardizedFileURL.resolvingSymlinksInPath().path
+            if resolved == target { return true }
+        }
+    }
+
+    let home = env["HOME"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser
+    let zdotdir = env["ZDOTDIR"].map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? home
+    let configFiles = [".zshrc", ".zprofile", ".zshenv"].map { zdotdir.appendingPathComponent($0) }
+
+    var needles = Set([dir.path, target])
+    let homePath = home.standardizedFileURL.resolvingSymlinksInPath().path
+    if target.hasPrefix(homePath + "/") {
+        let rel = String(target.dropFirst(homePath.count + 1))
+        needles.insert("~/" + rel)
+        needles.insert("$HOME/" + rel)
+    }
+    for configFile in configFiles {
+        guard let text = try? String(contentsOf: configFile, encoding: .utf8) else { continue }
+        if needles.contains(where: { !$0.isEmpty && text.contains($0) }) { return true }
+    }
+    return false
+}
+
 public func detectShellName(env: [String: String] = ProcessInfo.processInfo.environment) -> String {
     let shell = env["SHELL"] ?? ""
     guard !shell.isEmpty else { return "zsh" }

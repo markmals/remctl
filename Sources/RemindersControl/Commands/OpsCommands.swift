@@ -548,6 +548,13 @@ struct Setup: ParsableCommand {
             } else {
                 lines.append("Shell completion: skipped")
             }
+            if selectedShell == "zsh", let path = completionPath {
+                lines.append("")
+                lines.append(ansi.bold("Enable zsh completions:"))
+                lines.append("  Add these lines to ~/.zshrc, then open a new terminal:")
+                lines.append("    fpath=(\(path.deletingLastPathComponent().path) $fpath)")
+                lines.append("    autoload -Uz compinit && compinit")
+            }
             lines.append("")
             lines.append("Next:")
             lines.append("  1. remctl onboard   # trigger macOS Reminders and Automation prompts")
