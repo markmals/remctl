@@ -218,7 +218,7 @@ private func stateMarkers(_ row: ReminderRow, ansi: Ansi) -> String {
 /// Port of `fmt`. Human-readable single-reminder line (plus verbose detail lines).
 public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ansi,
                 now: Date = Date(), verbose: Bool = false, indent: String = "",
-                rgb: ListColorResolver? = nil) -> String {
+                rgb: ListColorResolver? = nil, assigneeName: String? = nil) -> String {
     let completed = itemCompleted(row)
     let status = completed ? ansi.green("[x]") : ansi.dim("[ ]")
 
@@ -239,6 +239,8 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
 
     let summary = recurrenceSummary(recurrenceFromRow(row, ts: { AppleEpoch.ts($0) }) ?? [])
     var recurStr = summary.isEmpty ? "" : " \(ansi.magenta("↻ \(summary)"))"
+    // " @Name" between recurrence and tags (upstream 683c362 assign_str).
+    var assignStr = (assigneeName?.isEmpty == false) ? " @\(safeDisplay(assigneeName!))" : ""
     var tagStr = tagStr0
     var subStr = subStr0
 
@@ -246,11 +248,12 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
         title = ansi.dim(ansi.strikethrough(title))
         dueStr = ansi.dim(dueStr)
         recurStr = ansi.dim(recurStr)
+        assignStr = ansi.dim(assignStr)
         tagStr = ansi.dim(tagStr)
         subStr = ansi.dim(subStr)
     }
 
-    var parts = ["\(indent)\(status) \(idStr)\(priStr)\(markerStr) \(title)\(dueStr)\(recurStr)\(tagStr)\(subStr)"]
+    var parts = ["\(indent)\(status) \(idStr)\(priStr)\(markerStr) \(title)\(dueStr)\(recurStr)\(assignStr)\(tagStr)\(subStr)"]
 
     if verbose {
         if let listName, !listName.isEmpty {
@@ -275,6 +278,9 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
                 return nil
             }.joined(separator: ", ")
             parts.append("\(indent)    Early: \(ansi.cyan(labels))")
+        }
+        if let assigneeName, !assigneeName.isEmpty {
+            parts.append("\(indent)    Assigned: \(ansi.cyan(safeDisplay(assigneeName)))")
         }
         if itemIsFlagged(row) {
             parts.append("\(indent)    Flagged: \(ansi.yellow("Yes"))")

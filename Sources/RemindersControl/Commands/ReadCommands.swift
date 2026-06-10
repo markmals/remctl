@@ -44,7 +44,7 @@ struct Today: ParsableCommand {
                 print(ansi.red("Overdue (\(overdue.count)):"))
                 for r in overdue {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  "))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
                 }
                 print("")
             }
@@ -52,7 +52,7 @@ struct Today: ParsableCommand {
                 print(ansi.bold("Due Today (\(due.count)):"))
                 for r in due {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  "))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
                 }
             }
             print("\n\(rows.count) total")
@@ -126,7 +126,7 @@ struct Upcoming: ParsableCommand {
                 print("\n  \(ansi.bold(grp.label)):")
                 for r in grp.items {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "    "))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "    ", assigneeName: store.assignmentAssignee(pk: pk)))
                 }
             }
             print("\n\(rows.count) upcoming")
@@ -161,7 +161,7 @@ struct Overdue: ParsableCommand {
             print(ansi.red(ansi.bold("Overdue (\(rows.count)):")))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
             }
             print("\n\(rows.count) overdue")
         }
@@ -197,7 +197,7 @@ struct Search: ParsableCommand {
             print("Search: \(ansi.bold(safeDisplay(query)))")
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk)))
             }
             let n = rows.count
             print("\n\(n) result\(n == 1 ? "" : "s")")
@@ -232,7 +232,7 @@ struct Flagged: ParsableCommand {
             print(ansi.bold("Flagged:"))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
             }
             let n = rows.count
             print("\n\(n) flagged")
@@ -267,7 +267,7 @@ struct Urgent: ParsableCommand {
             print(ansi.bold("Urgent:"))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  "))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
             }
             let n = rows.count
             print("\n\(n) urgent")
@@ -327,6 +327,9 @@ struct Subtasks: ParsableCommand {
                     hashtags: [id: store.hashtags(pk: id)],
                     richLink: { store.richLink(pk: id) }
                 )
+                if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
+                    d.append(("assignment", assignment))
+                }
                 let childObjs = serializeReminders(subs, store: store)
                 d.append(("subtasks", .array(childObjs.map { .object($0) })))
                 Dispatch.printJSON(.object(d), ensureAscii: true)
@@ -339,7 +342,7 @@ struct Subtasks: ParsableCommand {
                 let ansi = Ansi.resolve(noColorFlag: false)
                 for s in subs {
                     let pk = s.int("Z_PK") ?? 0
-                    print(fmt(s, tags: ht[pk] ?? [], subtaskCount: sc[pk] ?? 0, ansi: ansi, indent: "  "))
+                    print(fmt(s, tags: ht[pk] ?? [], subtaskCount: sc[pk] ?? 0, ansi: ansi, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
                 }
                 let n = subs.count
                 print("\n\(n) subtask\(n == 1 ? "" : "s")")
@@ -553,7 +556,7 @@ struct Show: ParsableCommand {
             let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })
             func line(_ r: Row, indent: String) -> String {
                 let p = r.int("Z_PK") ?? 0
-                return fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose, indent: indent)
+                return fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose, indent: indent, assigneeName: store.assignmentAssignee(pk: p))
             }
             var heading = colorListName(target.title, ansi: ansi)
             if isGroceries { heading += " \(Constants.groceryListMarker)" }
@@ -618,6 +621,9 @@ struct Info: ParsableCommand {
                 var d = serializeReminder(r, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
                                           section: sec, subtaskCounts: [id: store.subtaskCount(pk: id)],
                                           hashtags: [id: tags], richLink: { store.richLink(pk: id) })
+                if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
+                    d.append(("assignment", assignment))
+                }
                 let atts = attachmentRowsToJSON(store.attachments(pk: id))
                 if !atts.isEmpty { d.append(("attachments", .array(atts))) }
                 let alarms = alarmRowsToJSON(store.alarms(pk: id))
@@ -653,6 +659,12 @@ struct Info: ParsableCommand {
             print("  Priority:  \(priDisplay)")
             print("  Flagged:   \((r.int("ZFLAGGED") ?? 0) != 0 ? ansi.yellow("Yes") : "No")")
             print("  Urgent:    \((r.int("ZISURGENTSTATEENABLEDFORCURRENTUSER") ?? 0) != 0 ? ansi.red("Yes") : "No")")
+            if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
+                let assignee = assignmentPersonLabel(assignment, key: "assignee")
+                let originator = assignmentPersonLabel(assignment, key: "originator")
+                print("  Assigned:  \(ansi.cyan(safeDisplay(assignee ?? "Unknown")))")
+                if let originator { print("  By:        \(safeDisplay(originator))") }
+            }
             if let due = r.double("ZDUEDATE"), due != 0 {
                 let effective = rowEffectiveDue(r) ?? due
                 if itemIsAllDay(r) {
@@ -691,7 +703,7 @@ struct Info: ParsableCommand {
                 let (sc, ht) = store.preloadExtras(subs.compactMap { $0.int("Z_PK") })
                 for s in subs {
                     let spk = s.int("Z_PK") ?? 0
-                    print(fmt(s, tags: ht[spk] ?? [], subtaskCount: sc[spk] ?? 0, ansi: ansi, indent: "    "))
+                    print(fmt(s, tags: ht[spk] ?? [], subtaskCount: sc[spk] ?? 0, ansi: ansi, indent: "    ", assigneeName: store.assignmentAssignee(pk: spk)))
                 }
             }
             let atts = store.attachments(pk: id)

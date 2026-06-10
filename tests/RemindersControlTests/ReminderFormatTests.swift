@@ -25,6 +25,17 @@ import Foundation
         #expect(fmt(row, tags: ["work","home"], subtaskCount: 2, ansi: off) == "[ ] #1 t #work #home [2 subtasks]")
         #expect(fmt(row, tags: [], subtaskCount: 1, ansi: off) == "[ ] #1 t [1 subtask]")
     }
+    @Test func assigneeMarkerBetweenRecurrenceAndTags() {
+        // assign_str sits after recurrence, before tags (upstream 683c362 fmt).
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "t", "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0])
+        #expect(fmt(row, tags: ["work"], subtaskCount: 0, ansi: off, assigneeName: "Zelda")
+                == "[ ] #1 t @Zelda #work")
+    }
+    @Test func assigneeVerboseLine() {
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "t", "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0])
+        let out = fmt(row, tags: [], subtaskCount: 0, ansi: off, verbose: true, assigneeName: "Zelda")
+        #expect(out.contains("    Assigned: Zelda"))
+    }
     @Test func dueToday() {
         let cal = cal()
         let now = cal.date(from: DateComponents(year:2026,month:5,day:29,hour:14,minute:0))!

@@ -123,6 +123,32 @@ public func assignmentToDict(_ row: ReminderRow?) -> JSONValue? {
     return .object(payload)
 }
 
+extension RemindersStore {
+    /// The reminder's assignee display name (or nil) — the per-row lookup the human
+    /// formatters use for the " @Name" marker (mirrors fmt's q_assignment call).
+    public func assignmentAssignee(pk: Int) -> String? {
+        assignmentAssigneeName(assignmentToDict(assignment(reminderPk: pk)))
+    }
+}
+
+/// The "name or objectUUID" label of an assignment person (Python's
+/// `assignment.get(key, {}).get("name") or .get("objectUUID")`). nil when both are
+/// empty/missing.
+public func assignmentPersonLabel(_ assignment: JSONValue?, key: String) -> String? {
+    guard case let .object(pairs)? = assignment else { return nil }
+    for (k, v) in pairs where k == key {
+        guard case let .object(inner) = v else { return nil }
+        var name: String? = nil
+        var uuid: String? = nil
+        for (ik, iv) in inner {
+            if ik == "name", case let .string(s) = iv, !s.isEmpty { name = s }
+            if ik == "objectUUID", case let .string(s) = iv, !s.isEmpty { uuid = s }
+        }
+        return name ?? uuid
+    }
+    return nil
+}
+
 /// The assignee display name of a serialized JSON `assignment` (or nil). Convenience
 /// for fmt/info callers that only need the "@Name" string.
 public func assignmentAssigneeName(_ assignment: JSONValue?) -> String? {

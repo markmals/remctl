@@ -124,4 +124,70 @@ import GRDB
         #expect(r.exit == 1)
         #expect(r.stderr.contains("pass a list name or --list-id"))
     }
+
+    // ── assignment display (port 683c362 fmt/info/to_dict) ────────────────────
+
+    /// Shared list + reminder 42 assigned to Zelda by the owner.
+    private func assignedReminderFixture() throws -> URL {
+        try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZSHAREDOWNERIDENTIFIER)
+              VALUES (5,3,'Family',0,'CK-FAM',X'\(Self.uuidBlobHex(Self.ownerUUID))');
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZMARKEDFORDELETION,ZLIST,ZCKIDENTIFIER,ZDISPLAYNAME)
+              VALUES (100,36,0,5,'\(Self.ownerUUID.uuidString.lowercased())','Me Myself');
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZMARKEDFORDELETION,ZLIST,ZCKIDENTIFIER,ZFIRSTNAME,ZLASTNAME,ZADDRESS1)
+              VALUES (101,36,0,5,'SHAREE-Z','Zelda','Fitzgerald','mailto:zelda@example.com');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER)
+              VALUES (42,'Chores',5,1,0,0,'R1');
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZMARKEDFORDELETION,ZREMINDER1,ZASSIGNEE,ZORIGINATOR,ZSTATUS,ZASSIGNEDDATE,ZCKIDENTIFIER)
+              VALUES (200,21,0,42,101,100,1,769910400,'ASSIGN-1');
+            """)
+        }
+    }
+
+    @Test func assignmentQueryJoinsPeople() throws {
+        let dir = try assignedReminderFixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try RemindersStore.open(storeDir: dir)
+        let row = store.assignment(reminderPk: 42)
+        #expect(row != nil)
+        let dict = assignmentToDict(row)
+        #expect(assignmentAssigneeName(dict) == "Zelda Fitzgerald")
+        #expect(store.assignment(reminderPk: 999) == nil)
+    }
+
+    @Test func infoShowsAssignedAndBy() throws {
+        let dir = try assignedReminderFixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["info", "42", "--no-color"], storeDir: dir)
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("Assigned:  Zelda Fitzgerald"))
+        #expect(r.stdout.contains("By:        Me Myself"))
+    }
+
+    @Test func infoJSONIncludesAssignment() throws {
+        let dir = try assignedReminderFixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["info", "42", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let d = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any]
+        let assignment = d?["assignment"] as? [String: Any]
+        #expect(((assignment?["assignee"] as? [String: Any])?["name"] as? String) == "Zelda Fitzgerald")
+        #expect(((assignment?["originator"] as? [String: Any])?["name"] as? String) == "Me Myself")
+        #expect((assignment?["status"] as? Int) == 1)
+    }
+
+    @Test func showRendersAssigneeMarker() throws {
+        let dir = try assignedReminderFixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["show", "Family", "--no-color"], storeDir: dir)
+        #expect(r.exit == 0)
+        #expect(r.stdout.contains("Chores @Zelda Fitzgerald"))
+    }
+
+    @Test func showJSONIncludesAssignment() throws {
+        let dir = try assignedReminderFixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["show", "Family", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let arr = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [[String: Any]]
+        let assignment = arr?.first?["assignment"] as? [String: Any]
+        #expect(((assignment?["assignee"] as? [String: Any])?["name"] as? String) == "Zelda Fitzgerald")
+    }
 }

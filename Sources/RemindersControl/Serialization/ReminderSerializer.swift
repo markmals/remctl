@@ -160,8 +160,13 @@ public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
     return rows.map { row in
         let section = row.string("ZCKIDENTIFIER").flatMap { memberships[$0] }
         let pk = row.int("Z_PK") ?? 0
-        return serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
+        var o = serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
             section: section, subtaskCounts: subtaskCounts, hashtags: hashtags,
             richLink: { store.richLink(pk: pk) })
+        // to_dict appends "assignment" after the base payload (upstream 683c362).
+        if let assignment = assignmentToDict(store.assignment(reminderPk: pk)) {
+            o.append(("assignment", assignment))
+        }
+        return o
     }
 }
