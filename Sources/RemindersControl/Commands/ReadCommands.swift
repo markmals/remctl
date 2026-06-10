@@ -8,12 +8,23 @@ let readCommands: [ParsableCommand.Type] = [
     Tags.self, Subtasks.self, Sections.self, Sharees.self, Stats.self, Show.self, Info.self,
 ]
 
-struct Today: ParsableCommand {
+struct Today: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "today", abstract: "List reminders due today.")
     @OptionGroup var opts: ReadDisplayOptions
     @Flag(name: .long, help: "Exclude overdue items") var noOverdue = false
+    @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
 
-    func run() throws {
+    func run() async throws {
+        if viaEventkit {
+            let df = DateFormatter()
+            df.dateFormat = "yyyy-MM-dd"
+            let dateStr = df.string(from: Date())
+            await EventKitReadCLI.run(
+                mode: "today", includeOverdue: !noOverdue, opts: opts,
+                heading: "Due Today (\(dateStr)) (EventKit limited)",
+                emptyMessage: "Nothing due today (\(dateStr)) via EventKit")
+            return
+        }
         Dispatch.runRead { store in
             let now = Date()
             let rows = store.dueToday(includeOverdue: !noOverdue, now: now)
@@ -60,15 +71,24 @@ struct Today: ParsableCommand {
     }
 }
 
-struct Upcoming: ParsableCommand {
+struct Upcoming: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "upcoming", abstract: "List upcoming reminders.")
     @OptionGroup var opts: ReadDisplayOptions
     @Argument(help: "Number of days to look ahead") var days: Int = 7
+    @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
 
-    func run() throws {
+    func run() async throws {
         guard (1...3650).contains(days) else {
             FileHandle.standardError.write(Data("Error: upcoming days must be between 1 and 3650.\n".utf8))
             throw ExitCode(1)
+        }
+        if viaEventkit {
+            await EventKitReadCLI.run(
+                mode: "upcoming", days: days, opts: opts,
+                heading: "Upcoming (\(days) days) (EventKit limited)",
+                emptyMessage: "Nothing due in the next \(days) days via EventKit",
+                groupByDay: true)
+            return
         }
         Dispatch.runRead { store in
             let now = Date()
@@ -168,13 +188,21 @@ struct Overdue: ParsableCommand {
     }
 }
 
-struct Search: ParsableCommand {
+struct Search: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "search", abstract: "Search reminders by text.")
     @OptionGroup var opts: ReadDisplayOptions
     @Argument(help: "Search query") var query: String
     @Flag(name: .long, help: "Include completed reminders") var completed = false
+    @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
 
-    func run() throws {
+    func run() async throws {
+        if viaEventkit {
+            await EventKitReadCLI.run(
+                mode: "search", query: query, completed: completed, opts: opts,
+                heading: "Search: \(safeDisplay(query)) (EventKit limited)",
+                emptyMessage: "No reminders matching '\(safeDisplay(query))' via EventKit")
+            return
+        }
         Dispatch.runRead { store in
             let now = Date()
             let rows = store.search(query, completed: completed)
@@ -509,12 +537,13 @@ struct Stats: ParsableCommand {
     }
 }
 
-struct Show: ParsableCommand {
+struct Show: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "show", abstract: "Show reminders in a list.")
     @OptionGroup var opts: ReadDisplayOptions
     @Argument(help: "List name") var list: String?
     @Option(name: .long, help: "Show a list by stable numeric ID") var listId: Int?
     @Flag(name: .long, help: "Include completed reminders") var completed = false
+    @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
 
     /// Extract the "section" string value from a serialized reminder, if present.
     private func sectionValue(_ obj: [(String, JSONValue)]) -> String? {
@@ -522,7 +551,15 @@ struct Show: ParsableCommand {
         return nil
     }
 
-    func run() throws {
+    func run() async throws {
+        if viaEventkit {
+            await EventKitReadCLI.run(
+                mode: "show", listId: listId, listName: list, requiresListName: true,
+                completed: completed, opts: opts,
+                heading: "\(safeDisplay(list?.isEmpty == false ? list! : "Reminders")) (EventKit limited)",
+                emptyMessage: "No \(completed ? "" : "active ")reminders found via EventKit")
+            return
+        }
         Dispatch.runRead { store in
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             let pk = target.id

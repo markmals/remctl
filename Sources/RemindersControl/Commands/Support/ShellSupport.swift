@@ -71,6 +71,30 @@ _remctl() {
             _arguments \
                 '--list-id[Show list by stable numeric ID]:id:' \
                 '--completed[Include completed reminders]' \
+                '--via-eventkit[Limited read-only EventKit fallback; no numeric ids or private metadata]' \
+                '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
+                '--json[JSON output]'
+            return
+            ;;
+        search)
+            _arguments \
+                '--completed[Include completed reminders]' \
+                '--via-eventkit[Limited read-only EventKit fallback; no numeric ids or private metadata]' \
+                '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
+                '--json[JSON output]'
+            return
+            ;;
+        today)
+            _arguments \
+                '--no-overdue[Exclude overdue reminders]' \
+                '--via-eventkit[Limited read-only EventKit fallback; no numeric ids or private metadata]' \
+                '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
+                '--json[JSON output]'
+            return
+            ;;
+        upcoming)
+            _arguments \
+                '--via-eventkit[Limited read-only EventKit fallback; no numeric ids or private metadata]' \
                 '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
                 '--json[JSON output]'
             return
@@ -358,7 +382,16 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--for-agent --json" -- "$cur") )
         return
     elif [ "$cmd" = "show" ]; then
-        COMPREPLY=( $(compgen -W "--list-id --completed --verbose -v --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--list-id --completed --via-eventkit --verbose -v --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "search" ]; then
+        COMPREPLY=( $(compgen -W "--completed --via-eventkit --verbose -v --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "today" ]; then
+        COMPREPLY=( $(compgen -W "--no-overdue --via-eventkit --verbose -v --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "upcoming" ]; then
+        COMPREPLY=( $(compgen -W "--via-eventkit --verbose -v --json" -- "$cur") )
         return
     elif [ "$cmd" = "link" ]; then
         COMPREPLY=( $(compgen -W "--list -l --list-id --completed --json" -- "$cur") )
@@ -467,6 +500,10 @@ complete -c remctl -n "__fish_use_subcommand" -a completion -d "Generate shell c
 complete -c remctl -n "__fish_seen_subcommand_from doctor" -l for-agent -d "Print agent-focused context and TCC guidance"
 complete -c remctl -n "__fish_seen_subcommand_from show" -l list-id -d "Show list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from show" -l completed -d "Include completed reminders"
+complete -c remctl -n "__fish_seen_subcommand_from show" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
+complete -c remctl -n "__fish_seen_subcommand_from search" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
+complete -c remctl -n "__fish_seen_subcommand_from today" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
+complete -c remctl -n "__fish_seen_subcommand_from upcoming" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
 complete -c remctl -n "__fish_seen_subcommand_from show" -s v -l verbose -d "Verbose output"
 complete -c remctl -n "__fish_seen_subcommand_from link" -s l -l list -d "Get links for active reminders in list" -r
 complete -c remctl -n "__fish_seen_subcommand_from link" -l list-id -d "Get links for active reminders in list by stable numeric ID" -r
