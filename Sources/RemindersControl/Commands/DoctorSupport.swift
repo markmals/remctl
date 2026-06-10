@@ -419,29 +419,138 @@ func detectTerminalAppName(env: [String: String] = ProcessInfo.processInfo.envir
     return nil
 }
 
-/// Port of `doctor_execution_context` (remctl:3270). Keys: `python` (re-framed to the
-/// remctl binary/runtime path), `pid`, `parent_process`, `terminal_app`, `host_app`,
-/// `effective_context`. Best-effort: degrades to effective_context "unknown".
+/// Extract an existing `.app` bundle from a path-ish string. Port of
+/// `app_bundle_from_path_hint` (upstream aba7cf5): first `/…​.app` segment, tilde-
+/// expanded, must exist.
+func appBundleFromPathHint(_ value: String?) -> URL? {
+    guard let value, !value.isEmpty else { return nil }
+    guard let re = try? NSRegularExpression(pattern: #"(/.*?\.app)(?:/|\s|$)"#) else { return nil }
+    let range = NSRange(value.startIndex..<value.endIndex, in: value)
+    guard let m = re.firstMatch(in: value, options: [], range: range),
+          let r = Range(m.range(at: 1), in: value) else { return nil }
+    let path = (String(value[r]) as NSString).expandingTildeInPath
+    let url = URL(fileURLWithPath: path).standardizedFileURL
+    guard url.lastPathComponent.hasSuffix(".app"),
+          FileManager.default.fileExists(atPath: url.path) else { return nil }
+    return url
+}
+
+/// Resolve an app bundle path from a bundle identifier via Spotlight. Port of
+/// `find_app_bundle_by_identifier` (upstream aba7cf5): mdfind with a 5s timeout;
+/// nil on any failure. The id must look like a bundle id (defends the query string).
+func findAppBundleByIdentifier(_ bundleId: String?) -> URL? {
+    guard let bundleId, !bundleId.isEmpty,
+          bundleId.range(of: #"^[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+    p.arguments = ["kMDItemCFBundleIdentifier == '\(bundleId)'"]
+    let out = Pipe(); let err = Pipe()
+    p.standardOutput = out; p.standardError = err
+    do { try p.run() } catch { return nil }
+    let deadline = Date().addingTimeInterval(5)
+    while p.isRunning && Date() < deadline { usleep(10_000) }
+    if p.isRunning { p.terminate(); return nil }
+    guard p.terminationStatus == 0 else { return nil }
+    let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    for line in text.split(separator: "\n").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+        let url = URL(fileURLWithPath: (line as NSString).expandingTildeInPath)
+        if url.lastPathComponent.hasSuffix(".app"), FileManager.default.fileExists(atPath: url.path) {
+            return url.standardizedFileURL
+        }
+    }
+    return nil
+}
+
+/// The host-app bundle resolved from the ENVIRONMENT (not the process tree). Port of
+/// `bundle_context_from_environment` (upstream aba7cf5): `__CFBundleIdentifier` via
+/// Spotlight first, then Ghostty's resource-path variables — embedded terminals
+/// inherit `TERM_PROGRAM=ghostty`, so the env bundle is the real FDA target.
+struct BundleContext: Equatable {
+    let app: String
+    let path: String
+    let bundleId: String?
+    let source: String
+}
+
+func bundleContextFromEnvironment(
+    env: [String: String] = ProcessInfo.processInfo.environment,
+    bundleResolver: (String) -> URL? = { findAppBundleByIdentifier($0) }
+) -> BundleContext? {
+    let bundleId = env["__CFBundleIdentifier"]
+    if let bundleId, let bundle = bundleResolver(bundleId) {
+        return BundleContext(app: bundle.lastPathComponent, path: bundle.path,
+                             bundleId: bundleId, source: "__CFBundleIdentifier")
+    }
+    for envName in ["GHOSTTY_RESOURCES_DIR", "GHOSTTY_BIN_DIR"] {
+        if let bundle = appBundleFromPathHint(env[envName]) {
+            return BundleContext(app: bundle.lastPathComponent, path: bundle.path,
+                                 bundleId: bundleId, source: envName)
+        }
+    }
+    return nil
+}
+
+/// The host-app resolution over the process ancestry, seeded by the env bundle
+/// context. Pure (ancestry + lookups injected) so the Ghostty-skip logic is testable.
+func resolveHostContext(
+    ancestry: [ProcessNode],
+    terminalApp: String?,
+    bundleContext: BundleContext?,
+    findBundle: (String) -> URL? = { findAppBundle($0) }
+) -> (hostApp: String?, hostAppPath: String?, hostBundleId: String?, hostAppSource: String?, effectiveContext: String) {
+    var hostApp = bundleContext?.app ?? terminalApp
+    var hostAppPath = bundleContext?.path
+    let hostBundleId = bundleContext?.bundleId
+    var hostAppSource = bundleContext?.source ?? (terminalApp != nil ? "terminal" : nil)
+    var effectiveContext = terminalApp != nil ? "Terminal" : "unknown"
+
+    loop: for proc in ancestry {
+        if let appName = appNameFromProcessName(proc.name) {
+            // An embedded terminal's ghostty process must not shadow the real
+            // embedder app the environment identified (upstream aba7cf5).
+            if let bundleContext, appName == "Ghostty.app", bundleContext.app != "Ghostty.app" {
+                continue
+            }
+            hostApp = appName
+            if appName.hasSuffix(".app"), let resolved = findBundle(appName) {
+                hostAppPath = resolved.path
+            }
+            hostAppSource = "process"
+            if appName.lowercased().contains("codex") {
+                effectiveContext = "Codex"
+            } else if appName.hasSuffix(".app") {
+                effectiveContext = String(appName.dropLast(4))
+            }
+            break loop
+        }
+        if let bundle = appBundleFromPathHint(proc.command) {
+            hostApp = bundle.lastPathComponent
+            hostAppPath = bundle.path
+            hostAppSource = "process_command"
+            effectiveContext = String(bundle.lastPathComponent.dropLast(4))
+            break loop
+        }
+    }
+    if let bundleContext, hostApp == bundleContext.app {
+        effectiveContext = String(bundleContext.app.hasSuffix(".app")
+            ? String(bundleContext.app.dropLast(4)) : bundleContext.app)
+    }
+    return (hostApp, hostAppPath, hostBundleId, hostAppSource, effectiveContext)
+}
+
+/// Port of `doctor_execution_context` (remctl:3270 + aba7cf5). Keys: `python`
+/// (re-framed to the remctl binary/runtime path), `pid`, `parent_process`,
+/// `terminal_app`, `host_app`, `host_app_path`, `host_bundle_id`,
+/// `host_app_source`, `effective_context`. Best-effort: degrades to "unknown".
 public func doctorExecutionContext(
     env: [String: String] = ProcessInfo.processInfo.environment
 ) -> [String: JSONValue] {
     let ancestry = processAncestry()
     let parent = ancestry.first
     let terminalApp = detectTerminalAppName(env: env)
-    var hostApp = terminalApp
-    var effectiveContext = terminalApp != nil ? "Terminal" : "unknown"
-
-    for proc in ancestry {
-        if let appName = appNameFromProcessName(proc.name) {
-            hostApp = appName
-            if appName.lowercased().contains("codex") {
-                effectiveContext = "Codex"
-            } else if appName.hasSuffix(".app") {
-                effectiveContext = String(appName.dropLast(4))
-            }
-            break
-        }
-    }
+    let bundleContext = bundleContextFromEnvironment(env: env)
+    let host = resolveHostContext(ancestry: ancestry, terminalApp: terminalApp,
+                                  bundleContext: bundleContext)
 
     // `python` → the running remctl binary/runtime path (Bundle.main.executablePath).
     let runtimePath = Bundle.main.executablePath
@@ -465,8 +574,11 @@ public func doctorExecutionContext(
         "pid": .int(Int(ProcessInfo.processInfo.processIdentifier)),
         "parent_process": parentValue,
         "terminal_app": terminalApp.map { JSONValue.string($0) } ?? .null,
-        "host_app": hostApp.map { JSONValue.string($0) } ?? .null,
-        "effective_context": .string(effectiveContext),
+        "host_app": host.hostApp.map { JSONValue.string($0) } ?? .null,
+        "host_app_path": host.hostAppPath.map { JSONValue.string($0) } ?? .null,
+        "host_bundle_id": host.hostBundleId.map { JSONValue.string($0) } ?? .null,
+        "host_app_source": host.hostAppSource.map { JSONValue.string($0) } ?? .null,
+        "effective_context": .string(host.effectiveContext),
     ]
 }
 
@@ -548,7 +660,8 @@ public enum DoctorRuntime {
         let warnCount = checks.filter { $0.status == .warn }.count
 
         // Preserve the context key order from doctor_execution_context.
-        let contextOrder = ["python", "pid", "parent_process", "terminal_app", "host_app", "effective_context"]
+        let contextOrder = ["python", "pid", "parent_process", "terminal_app", "host_app",
+                            "host_app_path", "host_bundle_id", "host_app_source", "effective_context"]
         let contextPairs: [(String, JSONValue)] = contextOrder.compactMap { key in
             context[key].map { (key, $0) }
         }
@@ -631,13 +744,24 @@ func fullDiskAccessTargets(env: [String: String] = ProcessInfo.processInfo.envir
     }()
     var specs: [(title: String, path: String)] = [("Current remctl runtime", runtime)]
 
-    if case let .string(hostApp)? = context["host_app"], hostApp.hasSuffix(".app"),
-       let hostPath = findAppBundle(hostApp, env: env) {
-        specs.append((hostApp, hostPath.path))
+    var hostApp: String? = nil
+    if case let .string(h)? = context["host_app"] { hostApp = h }
+    var hostPath: String? = nil
+    if case let .string(p)? = context["host_app_path"] { hostPath = p }
+    if hostPath == nil, let hostApp, hostApp.hasSuffix(".app") {
+        hostPath = findAppBundle(hostApp, env: env)?.path
     }
-    if let terminalName = detectTerminalAppName(env: env),
-       let terminalPath = findAppBundle(terminalName, env: env) {
-        specs.append((terminalName, terminalPath.path))
+    if let hostApp, let hostPath {
+        specs.append((hostApp, hostPath))
+    }
+    if let terminalName = detectTerminalAppName(env: env) {
+        // An embedded Ghostty engine inherited via TERM_PROGRAM is not the real FDA
+        // target when the environment resolved a different host app (upstream aba7cf5).
+        let skipTerminal = terminalName == "Ghostty.app" && hostPath != nil
+            && hostApp != nil && hostApp != terminalName
+        if !skipTerminal, let terminalPath = findAppBundle(terminalName, env: env) {
+            specs.append((terminalName, terminalPath.path))
+        }
     }
 
     var targets = specs.map { "\($0.title): \($0.path)" }

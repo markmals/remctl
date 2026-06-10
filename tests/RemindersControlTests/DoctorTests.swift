@@ -616,3 +616,102 @@ private func check(_ checks: [DoctorCheck], _ name: String) -> DoctorCheck? {
         #expect(!zshCompletionLoadable(path, env: ["HOME": home.path]))
     }
 }
+
+// MARK: - Host-app bundle context (port upstream aba7cf5)
+
+@Suite struct BundleContextTests {
+    /// Make a real `<name>.app` directory under a temp root; returns (root, bundleURL).
+    private func makeAppBundle(_ name: String) throws -> (URL, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remctl-bundle-\(UUID().uuidString)")
+        let bundle = root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(
+            at: bundle.appendingPathComponent("Contents/Resources"),
+            withIntermediateDirectories: true)
+        return (root, bundle)
+    }
+
+    @Test func pathHintExtractsExistingBundle() throws {
+        let (root, bundle) = try makeAppBundle("Ghostty.app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hint = bundle.appendingPathComponent("Contents/Resources").path
+        #expect(appBundleFromPathHint(hint)?.lastPathComponent == "Ghostty.app")
+        #expect(appBundleFromPathHint("/nonexistent/Nope.app/Contents") == nil)
+        #expect(appBundleFromPathHint(nil) == nil)
+        #expect(appBundleFromPathHint("no app here") == nil)
+    }
+
+    @Test func bundleContextPrefersCFBundleIdentifier() throws {
+        let (root, bundle) = try makeAppBundle("Cursor.app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ctx = bundleContextFromEnvironment(
+            env: ["__CFBundleIdentifier": "com.todesktop.230313mzl4w4u92"],
+            bundleResolver: { _ in bundle })
+        #expect(ctx?.app == "Cursor.app")
+        #expect(ctx?.path == bundle.path)
+        #expect(ctx?.source == "__CFBundleIdentifier")
+        #expect(ctx?.bundleId == "com.todesktop.230313mzl4w4u92")
+    }
+
+    @Test func bundleContextFallsBackToGhosttyEnv() throws {
+        let (root, bundle) = try makeAppBundle("Ghostty.app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ctx = bundleContextFromEnvironment(
+            env: ["GHOSTTY_RESOURCES_DIR": bundle.appendingPathComponent("Contents/Resources").path],
+            bundleResolver: { _ in nil })
+        #expect(ctx?.app == "Ghostty.app")
+        #expect(ctx?.source == "GHOSTTY_RESOURCES_DIR")
+    }
+
+    @Test func bundleContextNilWithoutSignals() {
+        #expect(bundleContextFromEnvironment(env: [:], bundleResolver: { _ in nil }) == nil)
+    }
+
+    @Test func ancestryGhosttySkippedWhenEmbedderDiffers() throws {
+        // TERM_PROGRAM says ghostty, but __CFBundleIdentifier resolved the real embedder
+        // (Cursor.app) — the ancestry's Ghostty.app entry must NOT override it.
+        let (root, bundle) = try makeAppBundle("Cursor.app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ctx = BundleContext(app: "Cursor.app", path: bundle.path,
+                                bundleId: "com.todesktop", source: "__CFBundleIdentifier")
+        let ancestry = [ProcessNode(pid: 10, ppid: 1, name: "ghostty", command: "/Applications/Ghostty.app/Contents/MacOS/ghostty")]
+        let host = resolveHostContext(ancestry: ancestry, terminalApp: "Ghostty.app",
+                                      bundleContext: ctx, findBundle: { _ in nil })
+        #expect(host.hostApp == "Cursor.app")
+        #expect(host.hostAppSource == "__CFBundleIdentifier")
+        #expect(host.effectiveContext == "Cursor")
+    }
+
+    @Test func ancestryProcessStillWinsWhenMatchingBundle() {
+        let ancestry = [ProcessNode(pid: 10, ppid: 1, name: "ghostty", command: "ghostty")]
+        let host = resolveHostContext(ancestry: ancestry, terminalApp: "Ghostty.app",
+                                      bundleContext: nil, findBundle: { _ in nil })
+        #expect(host.hostApp == "Ghostty.app")
+        #expect(host.hostAppSource == "process")
+        #expect(host.effectiveContext == "Ghostty")
+    }
+
+    @Test func ancestryCommandPathHintResolves() throws {
+        let (root, bundle) = try makeAppBundle("Zed Preview.app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ancestry = [ProcessNode(pid: 10, ppid: 1, name: "unknown-helper",
+                                    command: "\(bundle.path)/Contents/MacOS/zed --flag")]
+        let host = resolveHostContext(ancestry: ancestry, terminalApp: nil,
+                                      bundleContext: nil, findBundle: { _ in nil })
+        #expect(host.hostApp == "Zed Preview.app")
+        #expect(host.hostAppPath == bundle.path)
+        #expect(host.hostAppSource == "process_command")
+        #expect(host.effectiveContext == "Zed Preview")
+    }
+
+    @Test func contextJSONIncludesNewKeys() {
+        let context = doctorExecutionContext(env: [:])
+        for key in ["host_app_path", "host_bundle_id", "host_app_source"] {
+            #expect(context.keys.contains(key), "missing \(key)")
+        }
+        let (result, _, _) = DoctorRuntime.buildResult(checks: [], context: context, forAgent: false)
+        let json = result.serialized(indent: nil, ensureAscii: true)
+        #expect(json.contains("\"host_app_path\""))
+        #expect(json.contains("\"host_app_source\""))
+    }
+}
