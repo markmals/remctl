@@ -25,7 +25,7 @@ EventKit (public) and ReminderKit (private metadata) both run in-process; there 
 | Create/edit ordinary reminder fields | `add`, `edit`, `done`, `undone`, `delete` | `info <id> --json` or `show <list> --json` |
 | Due date, priority, notes, recurrence, EventKit alarm | `add`/`edit` with `-d`, `-p`, `-n`, `--recurrence`, `--alarm` | `info <id> --json`; recurrence appears as `recurrence` |
 | Move a reminder to another list | `edit <id> -l LIST` or `edit <id> --list-id ID` | `info <id> --json` or `show <destination> --json` |
-| Synced rich URL, synced tags, section, subtask, image, real flag, urgent, Early Reminder, location alarm | `add`/`edit` with `--url`, `-t`, `--section`, `--subtask`, `--image`, `--flagged`, `--urgent`, `--early-reminder`, `--location-*` | `info <id> --json`; UI/device check when sync matters |
+| Synced rich URL, synced tags, section, shared-list assignment, subtask, image, real flag, urgent, Early Reminder, location alarm | `add`/`edit` with `--url`, `-t`, `--section`, `--assign`/`--unassign`, `--subtask`, `--image`, `--flagged`, `--urgent`, `--early-reminder`, `--location-*` | `info <id> --json`; UI/device check when sync matters |
 | List appearance, Groceries metadata, list/smart-list pin | `list-create`, `list-edit`, `list-pin`, `list-unpin` | `lists --json` (color/badge/Groceries/pin); `smart-lists --json` (smart-list appearance/pin) |
 | Custom smart list create/edit/delete | `smart-list-create`, `smart-list-edit`, `smart-list-delete` | `smart-lists --json` |
 | Saved Reminders templates | `templates`, `template-info`, `template-create`, `template-apply`, `template-delete` | `templates --json`, `template-info`, then `show <new list> --json` after apply |
@@ -63,6 +63,9 @@ remctl edit 23880 -d clear --json
 remctl edit 23880 -l Work --json
 remctl edit 23880 --recurrence monthly --json
 remctl done 23880 --json
+remctl done 23880 --date "2026-05-27 09:30" --json
+remctl sharees Family --json
+remctl edit 23880 --assign Alex --json
 remctl link --list-id 153 --json
 remctl export --list-id 153 --format json
 remctl list-rename --list-id 123 --new-name "Project Archive" --json
@@ -157,6 +160,10 @@ remctl smart-list-edit --smart-list-id 170 --filter-json @filter.json --color re
 Supported families: any tag (`--any-tag`), selected tags (`--tags` + optional `--tag-match all|any`), date (`--date any|today`, `--date-today-include-past-due`, `--date-on`, `--date-before`, `--date-after`, `--date-range START,END`), time (`morning|afternoon|evening|night`), priority (`high|medium|low`; comma-separated = Priority: Any), flag (`--flagged`), vehicle connected (`--vehicle connected`), specific location (`--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity enter|leave|arriving|leaving`), one included list (`--include-list`/`--include-list-id`), and top-level `--match all|any`. Appearance flags `--color`/`--symbol`/`--emoji` also apply.
 
 Rejected before saving (non-materializing): untagged, no-date, relative date, no-time, vehicle disconnected, list exclusions, and more than one included list. `--filter-json` is an advanced escape hatch for raw official filter JSON or `@path`; unsupported shapes are rejected. `smart-list-edit`/`-delete` target custom smart lists by exact name or `--smart-list-id` and never match built-ins.
+
+## Limited EventKit Fallback
+
+`--via-eventkit` (on `show`, `search`, `today`, `upcoming` only) is a read-only fallback for hosts without Full Disk Access. Never use it by default. Its JSON is a wrapper object (`source: "eventkit"`, `fidelity: "limited"`, per-item `eventKitId`) — `eventKitId` is NOT a RemCTL numeric id and must never be passed to `info`, `edit`, `done`, `delete`, `link`, `open`, or `subtasks`. If the task needs chainable IDs or private metadata, fix Full Disk Access and use the normal read path.
 
 ## Verification Rules
 

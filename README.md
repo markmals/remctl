@@ -47,7 +47,7 @@ There are no separate helper executables — the EventKit and ReminderKit logic 
 | Task | Commands |
 | --- | --- |
 | See what is due | `today`, `upcoming`, `overdue` |
-| Browse reminders | `lists`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `tags`, `stats` |
+| Browse reminders | `lists`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats` |
 | Create and edit | `add`, `edit`, `done`, `undone`, `delete`, `flag`, `unflag` |
 | Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete` |
 | Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
@@ -103,6 +103,8 @@ remctl add "Leave now" -l Work --urgent
 remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m
 remctl edit 23880 --early-reminder clear
 remctl edit 23880 --image ~/Desktop/mockup.png --flagged --urgent
+remctl sharees Family --json
+remctl edit 23880 --assign Alex
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200
 remctl list-edit Projects --color '#FF8D28' --symbol education3
 remctl list-create "Groceries" --groceries --grocery-locale en_US
@@ -183,7 +185,7 @@ remctl template-delete "Packing Template" --force
 RemCTL output is designed for both humans and agents:
 
 - reminder IDs are shown as `#ID`, colored with the reminder's list color when readable
-- flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`
+- flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`; shared-list assignments show `@Name` (JSON: `assignment`)
 - Groceries lists show `🥕` in headings and summaries
 - `info --json` reports the actual due date as `dueDate`; a separate display/alert date appears as `displayDate`; EventKit and location alarms appear as `alarms`; Early Reminders appear as labels such as `15 minutes before`
 - `edit -d` carries a single matching absolute alarm forward; `edit -d clear` removes a single matching absolute alarm/display time; `edit --alarm clear` removes normal alarms explicitly
@@ -227,6 +229,8 @@ remctl doctor --for-agent --json
 - For fast writes, call `remctl add ... --json`, use the returned `numericId` when present, then verify with `remctl info <numericId> --json`. `info --json` includes rich-link URLs, attachments, alarms, location alarms, Early Reminders, and recurrence — so agents do not need raw SQLite checks.
 - Pass deterministic due dates (ideally `YYYY-MM-DD HH:MM` resolved in the user's timezone). On an invalid date, RemCTL exits before writing with a structured `invalid_due_date` JSON error on stderr; retry with a corrected date rather than creating then patching.
 - List names resolve exact → case-insensitive → normalized (handles emoji prefixes). If more than one matches, RemCTL fails and asks for `--list-id`. `show`, `add`, `edit`, `link`, `export`, and the `list-*` commands accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
+- For shared-list assignments, call `remctl sharees LIST --json` first; `--assign` accepts a unique name, email/phone address, numeric sharee ID, object UUID, or `me` — prefer `address`, `id`, or `objectUUID` in automation because names can collide. Verify with `remctl info ID --json` under `assignment`.
+- Do not use `--via-eventkit` by default. It is a limited read-only fallback (`show`, `search`, `today`, `upcoming`) for hosts without Full Disk Access; its `eventKitId` values are not RemCTL numeric IDs and must never be passed to numeric-ID commands.
 - Never mutate the Reminders SQLite database — use RemCTL commands.
 - For setup troubleshooting, trust the `context` object in `doctor --for-agent --json`: a green Terminal does not imply a green agent runner; grant Full Disk Access to the app/interpreter reported there.
 

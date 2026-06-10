@@ -18,11 +18,12 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 ## Viewing and Inspecting
 
 ### `today`
-Reminders due today. Tabular: `--format json|table|plain`, `-v/--verbose`. `--no-overdue` excludes overdue items.
+Reminders due today. Tabular: `--format json|table|plain`, `-v/--verbose`. `--no-overdue` excludes overdue items. `--via-eventkit` is a limited no-FDA fallback (see below).
 ```bash
 remctl today
 remctl today --json
 remctl --format table today
+remctl today --via-eventkit --json
 ```
 
 ### `upcoming [DAYS]`
@@ -78,6 +79,13 @@ Show list sections. `--json`, `--no-color`.
 remctl sections
 ```
 
+### `sharees [LIST] [--list-id ID]`
+Show the people available for assignment in a shared list. `--json`, `--no-color`. The current user is marked `(me)` (JSON: `currentUser: true`); `currentUserSharee` carries the owner's sharee object UUID. Unshared lists report `No sharees`.
+```bash
+remctl sharees Family
+remctl sharees Family --json
+```
+
 ### `stats`
 Reminder statistics. `--json`, `--no-color`.
 ```bash
@@ -85,7 +93,7 @@ remctl stats
 ```
 
 ### `show [LIST] [--list-id ID] [--completed]`
-Reminders in a list (name positionally or `--list-id`). Tabular: `--format`, `-v`. `--completed` includes completed reminders. Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories.
+Reminders in a list (name positionally or `--list-id`). Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories.
 ```bash
 remctl show Shopping
 remctl show --list-id 153 --json
@@ -102,10 +110,42 @@ remctl info 23880 --json
 
 ---
 
+### Limited EventKit Read Fallback (`--via-eventkit`)
+
+`--via-eventkit` is a limited read-only fallback for hosts that cannot get Full Disk Access. It never opens the Reminders SQLite database — it reads through the in-process EventKit API instead, so only the macOS Reminders permission is needed. It is never the default and is supported only by `show`, `search`, `today`, and `upcoming`.
+
+It is not full RemCTL output: no RemCTL numeric IDs, table output, sections, synced tags, private rich links, urgent state, or template/smart-list internals. JSON output is a wrapper object, not the normal read-command array:
+
+```json
+{
+  "source": "eventkit",
+  "fidelity": "limited",
+  "mode": "show",
+  "idWarning": "eventKitId is not a RemCTL numeric id and cannot be passed to info, edit, done, delete, link, open, subtasks, or any other numeric-id command.",
+  "limitations": ["No RemCTL numeric ids", "..."],
+  "items": [
+    { "eventKitId": "EVENTKIT-CALENDAR-ITEM-ID", "title": "Review PR", "list": "Work", "completed": false, "priority": "none" }
+  ]
+}
+```
+
+Treat `eventKitId` as display/readback data only — never pass it to a numeric-ID command. Agents must not use `--via-eventkit` by default; it is only for when Full Disk Access blocks a basic read and the task needs neither chainable IDs nor private metadata. If an automation needs those, fix Full Disk Access and use the normal read path.
+
+```bash
+remctl show Work --via-eventkit
+remctl search "milk" --via-eventkit
+remctl today --via-eventkit --json
+remctl upcoming 14 --via-eventkit --json
+```
+
+---
+
 ## Creating and Editing
 
 ### `add <title>`
-Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--json`.
+Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+
+Date-only `-d` inputs (`today`, `tomorrow`, `2026-06-01`, `+3d`, `in 2 weeks`, `next friday`) create **all-day** reminders; inputs with explicit times create timed reminders.
 
 `add --json` returns `numericId` when the new reminder is resolvable in the local database — use it for `info <numericId> --json` (fall back to matching the title via `show <list> --json` if absent).
 
@@ -120,6 +160,7 @@ remctl add "Research" -l Projects --url "https://example.com" -t remctl --new-se
 remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
 remctl add "Leave now" -l Work --urgent
 remctl add "Milk" -l Groceries --grocery
+remctl add "Pick up groceries" -l Family --assign Alex
 ```
 
 How RemCTL picks the path from context on a bare `add`:
@@ -129,7 +170,9 @@ How RemCTL picks the path from context on a bare `add`:
 - `-f/--flag` alone is EventKit's lossy priority proxy; with private metadata present (or `edit --flagged`) it writes the real flag.
 
 ### `edit <id>`
-Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (ordinary EventKit move), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--json`.
+Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (ordinary EventKit move), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+
+Date-only `-d` values keep the reminder all-day through the edit (re-setting the same all-day date nudges by a day, not an hour, so the change still syncs).
 
 Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list. `--address` is accepted but not supported for location alarms.
 
@@ -145,12 +188,18 @@ remctl edit 23880 --image ~/Desktop/mockup.png --flagged --urgent
 remctl edit 23880 --early-reminder 1h
 remctl edit 23880 --early-reminder clear
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200
+remctl edit 23880 --assign alex@example.com
+remctl edit 23880 --assign me
+remctl edit 23880 --unassign
 ```
 
+`--assign USER` targets the reminder's shared list and resolves `USER` against its sharees by display name, first/last name, email or phone address, numeric sharee ID, object UUID, or `me`. Run `remctl sharees LIST --json` first when scripting and prefer the returned `address`, `id`, or `objectUUID` — names can collide (ambiguity fails with the candidate list). `--unassign` clears the current assignment; the two flags are mutually exclusive. Verify with `remctl info ID --json` under `assignment`.
+
 ### `done <id>` / `undone <id>`
-Mark a reminder complete or incomplete. `--json`.
+Mark a reminder complete or incomplete. `--json`. `done --date` sets an explicit completion date (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; strict — natural-language forms are rejected before any write). `--date` is not supported on recurring reminders: completing those advances the series, so run plain `done` instead.
 ```bash
 remctl done 23880
+remctl done 23880 --date "2026-05-27 09:30"
 remctl undone 23880
 ```
 
@@ -185,7 +234,7 @@ remctl unflag 23880
 | `+Nd` | `-d +3d` |
 | `eod` / `eow` | `-d eod`, `-d eow` |
 
-`edit -d clear` clears the due date.
+`edit -d clear` clears the due date. Date-only forms (first row, `today`/`tomorrow`, `+Nd`, `in N days/weeks/months`, bare weekdays, `eow`) create **all-day** reminders; forms with explicit times create timed reminders (`eod` is timed: 17:00).
 
 **Recurrence** (EventKit, on `add` and `edit`): `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `yearly` — validated before write. Recurring reminders show a `↻` badge (and a `Repeat` column in table output) and decode back to a `recurrence` object in JSON.
 

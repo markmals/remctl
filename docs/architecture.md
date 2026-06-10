@@ -67,12 +67,21 @@ Ordinary mutations go through Apple's EventKit, in-process. `EventKitWriter`
 `EKEventStore` and covers:
 
 - create, edit, complete/uncomplete, and delete reminders
-- title, target list, due date, priority, notes, and notes-appended URLs
+- title, target list, due date (timed or all-day: date-only inputs store
+  date-only `dueDateComponents`), priority, notes, and notes-appended URLs
+- explicit completion dates (`done --date`)
 - recurrence rules and normal (relative/absolute) alarms
 - moving a reminder between lists
 - list create, rename, and delete
 - structured-location alarms (written through EventKit's structured-location
   path because they materialize reliably there on current macOS)
+
+EventKit also backs the **limited read fallback** (`--via-eventkit` on `show`,
+`search`, `today`, `upcoming`): `EventKitReader`
+(`Sources/RemindersControl/Reads/EventKitReader.swift`) fetches through
+`EKEventStore` predicates without touching the SQLite store, so it works
+without Full Disk Access — at reduced fidelity (no RemCTL numeric IDs,
+sections, synced tags, urgent state, or private rich links).
 
 Using EventKit for these keeps Reminders and iCloud in charge of ordinary
 mutations: RemCTL hands the change to Apple's supported API and lets the
@@ -84,8 +93,11 @@ alarms, priorities, and location payloads fail before anything is written.
 
 ## The Private-Write Path — ReminderKit
 
-For the metadata Apple does not expose through EventKit, RemCTL calls Apple's
-**private, unsupported** ReminderKit framework directly, in-process. There is no
+For the metadata Apple does not expose through EventKit — sections, synced
+tags and rich links, shared-list assignments, subtasks, image attachments,
+real flag/urgent state, Early Reminders, list appearance, Groceries metadata,
+smart lists, and templates — RemCTL calls Apple's **private, unsupported**
+ReminderKit framework directly, in-process. There is no
 opt-in flag; the path is selected from which flags are present, not an explicit
 mode.
 

@@ -62,6 +62,10 @@ remctl edit 23880 --early-reminder clear
 - `--section-id ID` assigns to an exact section by its stable identifier.
 - `--new-section NAME` creates a section and assigns to it.
 
+### Assignments
+
+Shared lists support assigning a reminder to a participant. `--assign USER` resolves `USER` against the target shared list's sharees (display name, first/last name, email or phone address, numeric sharee ID, object UUID, or `me`); `--unassign` clears the assignment. The write goes through ReminderKit's assignment context (`assign_sharee` / `clear_assignment`), replacing any existing assignment, with the current user as originator. Discover participants with `remctl sharees LIST --json`; verify with `remctl info ID --json` under `assignment`. Unshared lists fail with "target list has no sharees".
+
 ### Subtasks
 
 `--subtask` accepts a plain child title **or** a JSON object. Supported subtask fields:

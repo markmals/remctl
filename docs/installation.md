@@ -74,6 +74,8 @@ Full Disk Access is scoped to the **process context** that runs RemCTL. The same
 
 That is normal macOS TCC scoping, not a broken RemCTL install. A green `remctl doctor` in Terminal.app does **not** grant access to a different app or agent runner. Always run `remctl doctor` from the same context that will run RemCTL, and grant Full Disk Access to that exact process. For agent runners, use `remctl doctor --for-agent` (see [For Agents and CI](#for-agents-and-ci) below).
 
+If your app embeds another terminal engine (for example an editor that sets `TERM_PROGRAM=ghostty`), trust the `host_app` and target path printed by `doctor --for-agent`: RemCTL resolves the real host bundle from the environment (`__CFBundleIdentifier`, Ghostty resource paths) rather than inherited variables, so the Full Disk Access target it prints is the actual embedder app.
+
 ## Verifying with `doctor`
 
 `remctl doctor` verifies the current execution context.
@@ -89,7 +91,7 @@ remctl doctor --json                # machine-readable; add --for-agent for agen
 - `platform`, `macos` — OS and platform sanity.
 - `store_dir`, `database` — the direct Reminders read path (Full Disk Access). These are the read checks that must pass.
 - `cli` — RemCTL itself.
-- `config_dir`, `completion` — configuration directory and shell completion.
+- `config_dir`, `completion` — configuration directory and shell completion. On zsh, `completion_fpath` additionally warns when the installed completion directory is not on zsh's `fpath` (with the `~/.zshrc` lines to add).
 - `eventkit` — EventKit authorization for writes. This is a **warning-level** check.
 - `reminderkit` — ReminderKit availability for private-metadata writes. Also **warning-level**.
 
@@ -101,7 +103,16 @@ The checks that gate functionality are `platform`, `store_dir`, `database`, and 
 remctl setup
 ```
 
-`remctl setup` installs shell completion. To load completion directly in the current shell:
+`remctl setup` installs shell completion. For zsh, setup installs `_remctl` and prints the `fpath` lines that may need to be added to `~/.zshrc`:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+`remctl doctor` reports `completion_fpath` when the installed zsh completion file does not appear in the exported `FPATH` or the usual zsh startup files.
+
+To load completion directly in the current shell:
 
 ```bash
 eval "$(remctl completion zsh)"
