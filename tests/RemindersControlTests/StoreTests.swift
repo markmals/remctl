@@ -236,6 +236,35 @@ import GRDB
         #expect(rows[0].int("alarm_id") == 5)
         #expect(rows[0].double("time_interval") == -600)
     }
+    /// Entity numbers shift between macOS versions (e.g. macOS 15.7 has REMCDAlarm = 16,
+    /// REMCDAssignment = 22, REMCDRecurrenceRule = 35, REMCDSharee = 37). Queries must read
+    /// them from Z_PRIMARYKEY instead of assuming 15/21/34/36.
+    @Test func entityNumbersComeFromPrimaryKeyTable() throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY, Z_NAME VARCHAR, Z_SUPER INTEGER, Z_MAX INTEGER);
+            INSERT INTO Z_PRIMARYKEY (Z_ENT,Z_NAME) VALUES (16,'REMCDAlarm'),(22,'REMCDAssignment'),(35,'REMCDRecurrenceRule'),(37,'REMCDSharee');
+            -- an entity-15 row that is NOT an alarm on this schema must be ignored
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZMARKEDFORDELETION) VALUES (4,15,42,0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (5,16,42,6,0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,ZTIMEINTERVAL,ZMARKEDFORDELETION) VALUES (6,-600,0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZLIST,ZDISPLAYNAME,ZMARKEDFORDELETION) VALUES (7,37,10,'Mark',0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER1,ZASSIGNEE,ZMARKEDFORDELETION) VALUES (8,22,42,7,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.alarms(pk: 42).map { $0.int("alarm_id") } == [5])
+        #expect(s.sharees(listPk: 10).map { $0.int("Z_PK") } == [7])
+        #expect(s.assignment(reminderPk: 42)?.int("Z_PK") == 8)
+        #expect(s.recurrenceCols.contains("rr.Z_ENT = 35"))
+        #expect(!s.recurrenceCols.contains("rr.Z_ENT = 34"))
+    }
+    @Test func entityNumbersFallBackWithoutPrimaryKeyTable() throws {
+        let (s, dir) = try store { _ in }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.entityID("REMCDAlarm", fallback: Zent.alarm) == 15)
+        #expect(s.recurrenceCols.contains("rr.Z_ENT = 34"))
+    }
 }
 
 @Suite struct StoreOpenTests {

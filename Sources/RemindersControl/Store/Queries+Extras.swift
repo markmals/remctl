@@ -50,13 +50,14 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk, pk]) }) ?? []
     }
 
-    /// q_alarms — alarm objects (Z_ENT=15) LEFT JOIN their trigger object, ORDER BY a.Z_PK.
+    /// q_alarms — alarm objects (REMCDAlarm) LEFT JOIN their trigger object, ORDER BY a.Z_PK.
     public func alarms(pk: Int) -> [Row] {
+        let ent = alarmEntity
         let sql = "SELECT a.Z_PK AS alarm_id, a.ZTRIGGER AS trigger_id, t.Z_ENT AS trigger_entity, t.ZTIMEINTERVAL AS time_interval, " +
             "t.ZDATECOMPONENTSDATA AS date_components, t.ZTITLE AS location_title, t.ZLATITUDE AS latitude, t.ZLONGITUDE AS longitude, " +
             "t.ZRADIUS AS radius, t.ZADDRESS AS address, t.ZPROXIMITY AS proximity " +
             "FROM ZREMCDOBJECT a LEFT JOIN ZREMCDOBJECT t ON a.ZTRIGGER = t.Z_PK " +
-            "WHERE a.ZREMINDER = ? AND a.Z_ENT = \(Zent.alarm) AND a.ZMARKEDFORDELETION = 0 AND (t.Z_PK IS NULL OR t.ZMARKEDFORDELETION = 0) " +
+            "WHERE a.ZREMINDER = ? AND a.Z_ENT = \(ent) AND a.ZMARKEDFORDELETION = 0 AND (t.Z_PK IS NULL OR t.ZMARKEDFORDELETION = 0) " +
             "ORDER BY a.Z_PK"
         return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk]) }) ?? []
     }
