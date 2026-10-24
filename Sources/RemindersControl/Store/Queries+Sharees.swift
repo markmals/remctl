@@ -8,13 +8,14 @@ import GRDB
 // ──────────────────────────────────────────────────────────────────────────────
 
 extension RemindersStore {
-    /// q_sharees (remctl:1545): a shared list's participant objects (Z_ENT=36),
+    /// q_sharees (remctl:1545): a shared list's participant objects (REMCDSharee),
     /// ORDER BY Z_PK. Empty for unshared lists.
     public func sharees(listPk: Int) -> [Row] {
-        (try? queue.read { try Row.fetchAll($0, sql:
+        let ent = shareeEntity
+        return (try? queue.read { try Row.fetchAll($0, sql:
             "SELECT Z_PK, ZCKIDENTIFIER, ZDISPLAYNAME, ZFIRSTNAME, ZLASTNAME, ZADDRESS1, "
             + "ZSTATUS, ZACCESSLEVEL FROM ZREMCDOBJECT "
-            + "WHERE Z_ENT = \(Zent.sharee) AND ZMARKEDFORDELETION = 0 AND ZLIST = ? "
+            + "WHERE Z_ENT = \(ent) AND ZMARKEDFORDELETION = 0 AND ZLIST = ? "
             + "ORDER BY Z_PK",
             arguments: [listPk]) }) ?? []
     }
@@ -32,11 +33,12 @@ extension RemindersStore {
         return uuidFromBlob(row.data("ZSHAREDOWNERIDENTIFIER"))
     }
 
-    /// q_assignment (remctl:1556): the newest live assignment object (Z_ENT=21) for a
+    /// q_assignment (remctl:1556): the newest live assignment object (REMCDAssignment) for a
     /// reminder, joined to its assignee/originator sharee rows. nil when the reminder
     /// has no assignment or the schema lacks the assignment columns (older macOS).
     public func assignment(reminderPk: Int) -> Row? {
-        (try? queue.read { try Row.fetchOne($0, sql:
+        let ent = assignmentEntity
+        return (try? queue.read { try Row.fetchOne($0, sql:
             "SELECT a.Z_PK, a.ZCKIDENTIFIER, a.ZSTATUS, a.ZASSIGNEDDATE, "
             + "a.ZCKASSIGNEEIDENTIFIER, a.ZCKORIGINATORIDENTIFIER, "
             + "assignee.Z_PK AS assignee_pk, assignee.ZCKIDENTIFIER AS assignee_ckid, "
@@ -48,7 +50,7 @@ extension RemindersStore {
             + "FROM ZREMCDOBJECT a "
             + "LEFT JOIN ZREMCDOBJECT assignee ON a.ZASSIGNEE = assignee.Z_PK "
             + "LEFT JOIN ZREMCDOBJECT originator ON a.ZORIGINATOR = originator.Z_PK "
-            + "WHERE a.Z_ENT = \(Zent.assignment) AND a.ZMARKEDFORDELETION = 0 AND a.ZREMINDER1 = ? "
+            + "WHERE a.Z_ENT = \(ent) AND a.ZMARKEDFORDELETION = 0 AND a.ZREMINDER1 = ? "
             + "ORDER BY a.ZASSIGNEDDATE DESC, a.Z_PK DESC LIMIT 1",
             arguments: [reminderPk]) }) ?? nil
     }

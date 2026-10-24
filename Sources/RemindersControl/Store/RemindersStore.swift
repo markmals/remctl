@@ -5,6 +5,7 @@ public final class RemindersStore {
     public let queue: DatabaseQueue
     public let path: URL
     private var columnCache: [String: Set<String>] = [:]
+    private var entityCache: [String: Int] = [:]
 
     private init(queue: DatabaseQueue, path: URL) { self.queue = queue; self.path = path }
 
@@ -34,4 +35,24 @@ public final class RemindersStore {
     public func reminderHasColumn(_ col: String) -> Bool {
         tableColumnNames("ZREMCDREMINDER").contains(col)
     }
+
+    /// Core Data entity number (`Z_ENT`) for `name`, read from `Z_PRIMARYKEY`.
+    ///
+    /// Entity numbers are assigned alphabetically per model version, so a new entity in
+    /// a macOS update shifts every number after it (e.g. REMCDAlarm is 15 on some systems
+    /// and 16 on others). Falls back to `fallback` when the table or row is missing.
+    public func entityID(_ name: String, fallback: Int) -> Int {
+        if let cached = entityCache[name] { return cached }
+        let found = (try? queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = ?", arguments: [name])
+        }) ?? nil
+        let ent = found ?? fallback
+        entityCache[name] = ent
+        return ent
+    }
+
+    var alarmEntity: Int { entityID("REMCDAlarm", fallback: Zent.alarm) }
+    var assignmentEntity: Int { entityID("REMCDAssignment", fallback: Zent.assignment) }
+    var recurrenceRuleEntity: Int { entityID("REMCDRecurrenceRule", fallback: Zent.recurrence) }
+    var shareeEntity: Int { entityID("REMCDSharee", fallback: Zent.sharee) }
 }

@@ -1,5 +1,8 @@
 import Foundation
 
+/// Fallback `Z_ENT` values for stores without a `Z_PRIMARYKEY` row for the entity. Live
+/// queries for alarms, assignments, recurrence rules, and sharees resolve the real number
+/// via `RemindersStore.entityID(_:fallback:)`, since it differs between macOS versions.
 public enum Zent {
     public static let list = 3, smartList = 4, alarm = 15, assignment = 21, recurrence = 34, sharee = 36
 }
@@ -30,8 +33,9 @@ extension RemindersStore {
         return "(CASE WHEN \(alias).ZALLDAY = 1 THEN COALESCE(\(alias).ZDISPLAYDATEDATE, \(due)) ELSE \(due) END)"
     }
 
-    /// 10 correlated subqueries on ZREMCDOBJECT (Z_ENT=34, FK ZREMINDER4). Aliases are read by the serializer.
+    /// 10 correlated subqueries on ZREMCDOBJECT (REMCDRecurrenceRule, FK ZREMINDER4). Aliases are read by the serializer.
     var recurrenceCols: String {
+        let ent = recurrenceRuleEntity
         let pairs: [(String, String)] = [
             ("ZFREQUENCY", "recurrence_frequency"), ("ZINTERVAL", "recurrence_interval"),
             ("ZOCCURRENCECOUNT", "recurrence_count"), ("ZENDDATE", "recurrence_end_date"),
@@ -40,7 +44,7 @@ extension RemindersStore {
             ("ZWEEKSOFTHEYEAR", "recurrence_weeks_of_year"), ("ZSETPOSITIONS", "recurrence_set_positions"),
         ]
         return pairs.map { col, alias in
-            "(SELECT rr.\(col) FROM ZREMCDOBJECT rr WHERE rr.ZREMINDER4 = r.Z_PK AND rr.ZMARKEDFORDELETION = 0 AND rr.Z_ENT = \(Zent.recurrence) ORDER BY rr.Z_PK LIMIT 1) AS \(alias)"
+            "(SELECT rr.\(col) FROM ZREMCDOBJECT rr WHERE rr.ZREMINDER4 = r.Z_PK AND rr.ZMARKEDFORDELETION = 0 AND rr.Z_ENT = \(ent) ORDER BY rr.Z_PK LIMIT 1) AS \(alias)"
         }.joined(separator: ", ")
     }
 
