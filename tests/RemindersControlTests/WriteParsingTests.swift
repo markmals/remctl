@@ -153,6 +153,14 @@ import Foundation
         #expect(WriteParsing.parseRecurrenceSpec("monthly 1 15") == nil)
     }
 
+    @Test func recurrenceRejectsOversizedDayTokens() {
+        // A digit run too long for Int used to trap on `Int($0)!`.
+        #expect(WriteParsing.parseRecurrenceSpec("monthly " + String(repeating: "9", count: 50)) == nil)
+        #expect(WriteParsing.parseRecurrenceSpec("monthly 1," + String(repeating: "9", count: 50)) == nil)
+        // Three digits can never be a day of month either.
+        #expect(WriteParsing.parseRecurrenceSpec("monthly 100") == nil)
+    }
+
     @Test func alarmDayAndMinAliases() {
         #expect(WriteParsing.parseAlarmSpec("1d") == .relativeOffset(-86400))
         #expect(WriteParsing.parseAlarmSpec("30min") == .relativeOffset(-1800))

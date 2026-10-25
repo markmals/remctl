@@ -45,8 +45,11 @@ public enum WriteParsing {
         } else if freq == "monthly" && parts.count > 1 {
             guard parts.count == 2 else { return nil }
             let tokens = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            guard !tokens.isEmpty, tokens.allSatisfy({ isAllDigits($0) }) else { return nil }
-            let days = tokens.map { Int($0)! }
+            // Bound the token length before Int(): a long digit run overflows Int and used to
+            // trap on the force-unwrap (upstream c84fbca hardens the same call with isdecimal
+            // + a bounded length). Two digits is all a 1-31 day-of-month needs.
+            guard !tokens.isEmpty, tokens.allSatisfy({ isAllDigits($0) && $0.count <= 2 }) else { return nil }
+            let days = tokens.compactMap { Int($0) }
             guard days.allSatisfy({ $0 >= 1 && $0 <= 31 }) else { return nil }
             return RecurrenceWrite(frequency: freq, interval: 1, daysOfMonth: days)
         } else if parts.count > 1 {
