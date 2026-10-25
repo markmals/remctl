@@ -89,10 +89,12 @@ Recurrence is a normal EventKit write.
 ```bash
 remctl add "Standup" --recurrence "weekly mon,wed,fri" --alarm 15m --json
 remctl add "Pay rent" --recurrence monthly --json
-remctl edit 23880 --recurrence "weekly mon,wed" --json
+remctl add "Team sync" --recurrence "monthly 4th-fri" --json
+remctl add "Deep clean" --recurrence "daily x2" --json
+remctl edit 23880 --recurrence "monthly x2 last-fri" --json
 ```
 
-Accepted forms: `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `yearly`. Invalid recurrence/alarm/priority fail before writing. Recurring reminders include a `recurrence` object in JSON and a repeat badge in human/table output. `--alarm 15m` is an EventKit alarm (verify in `info --json` under `alarms`); `edit ID --alarm clear` removes normal alarms. Early Reminders are separate: `--early-reminder`.
+Accepted forms: `daily`, `weekly`, `monthly`, `yearly`, `weekly mon,wed,fri`, `monthly 1,15`, each with an optional interval token directly after the frequency (`daily x2`, `weekly x2 thu`, `monthly x3 15`, `monthly x2 4th-fri`, `yearly x2`; N is 1–999), plus monthly Nth-weekday rules: `monthly 4th-fri`, `monthly 1st-mon,3rd-mon`, `monthly last-fri`, and `monthly -1-fri` through `-5-fri` (`last-fri` = `-1-fri`). Nth-weekday tokens are monthly-only, check their ordinal suffix (`4st-fri` fails), and can't be mixed with day-of-month numbers in one rule. For "the last Friday" use `last-fri`, not `5th-fri`: EventKit skips months without a fifth Friday. Invalid recurrence/alarm/priority fail before writing. Recurring reminders include a `recurrence` object in JSON (week pinning appears as `daysOfWeekDetailed[].weekNumber`) and a repeat badge in human/table output such as `↻ monthly 4th Fri`, `↻ every 2 months last Fri`, or `↻ daily, 5 times` (an occurrence count, not the `xN` interval). `--alarm 15m` is an EventKit alarm (verify in `info --json` under `alarms`); `edit ID --alarm clear` removes normal alarms. Early Reminders are separate: `--early-reminder`.
 
 ## Private Metadata
 

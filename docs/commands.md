@@ -261,7 +261,9 @@ remctl unflag 23880
 
 `edit -d clear` clears the due date. Date-only forms (first row, `today`/`tomorrow`, `+Nd`, `in N days/weeks/months`, bare weekdays, `eow`, natural-language dates such as `march 30`) create **all-day** reminders; forms with explicit times create timed reminders (`eod` is timed: 17:00).
 
-**Recurrence** (EventKit, on `add` and `edit`): `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `yearly` — validated before write. Recurring reminders show a `↻` badge (and a `Repeat` column in table output) and decode back to a `recurrence` object in JSON.
+**Recurrence** (EventKit, on `add` and `edit`): `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `monthly 4th-fri`, `yearly` — validated before write. Each frequency takes an optional interval token `xN` (1 to 999) directly after it: `daily x2`, `weekly x2 thu`, `monthly x3 15`, `monthly x2 4th-fri`, `yearly x2`. Recurring reminders show a `↻` badge (and a `Repeat` column in table output) such as `↻ monthly 4th Fri` or `↻ every 2 months 4th Tue`; an occurrence count renders as `↻ daily, 5 times`. JSON decodes the rule back to a `recurrence` object; week-pinned weekdays come back as `daysOfWeekDetailed` entries carrying `weekNumber`, and the limited `--via-eventkit` read returns a flat `weekNumbers` array instead (omitted when no day is pinned).
+
+`monthly` also accepts Nth-weekday tokens in place of day-of-month numbers: `monthly 4th-fri` is the 4th Friday, `monthly 1st-mon,3rd-mon` the 1st and 3rd Monday, and `monthly last-fri` an alias of `monthly -1-fri`, with negative forms down to `-5-fri`. The ordinal suffix must match the number (`4st-fri` is rejected); Nth-weekday tokens can't be mixed with day-of-month numbers in one rule and are monthly-only. EventKit skips months that lack the requested weekday, so `monthly 5th-fri` fires only in months with a fifth Friday; use `monthly last-fri` for the last Friday of every month.
 
 A recurrence **object** — exactly the shape `export` and `info --json` emit (`frequency`, `interval`, `daysOfWeek`/`daysOfWeekDetailed`/`weekNumbers`, `daysOfMonth`, `monthsOfYear`, `daysOfYear`, `weeksOfYear`, `setPositions`, `count`, `endDate`) — is also accepted anywhere a recurrence spec is, so exported rules round-trip back through `import`, `--subtask` JSON, and `--recurrence`. Every field is validated before the write; an unknown field, an out-of-range value, `{}`, or `endDate` together with `count` is rejected.
 
@@ -490,7 +492,7 @@ remctl open
 RemCTL output serves both humans and agents:
 
 - reminder IDs print as `#ID`, colored with the reminder's list color when readable
-- `⚑` flagged, `⏰` urgent, `↻` recurrence badge (e.g. `↻ weekly Mon, Wed`), `🥕` Groceries
+- `⚑` flagged, `⏰` urgent, `↻` recurrence badge (e.g. `↻ weekly Mon, Wed`, `↻ monthly last Fri`), `🥕` Groceries
 - priority markers: `!!!` high, `!!` medium, `!` low
 - table output keeps a dedicated `Repeat` column when any row recurs, and `show`/`search` with `--completed` replace the `Due` column with a `Completed` timestamp
 - human output strips terminal control characters from Reminders text; every read command supports `--json`

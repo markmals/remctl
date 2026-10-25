@@ -401,7 +401,7 @@ public enum PrivateChanges {
         if let recurrence = spec.recurrence, !recurrence.isEmpty {
             // parse_subtask_specs already validated the spec (string grammar or exported object).
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence, calendar: calendar) else {
-                throw CLIError("could not parse subtask recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', or an exported recurrence object.")
+                throw CLIError("could not parse subtask recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
             }
             write.recurrence = r; hasBridgeField = true
         }

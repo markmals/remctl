@@ -95,7 +95,7 @@ public final class EventKitReader {
         ])
     }
 
-    private func recurrenceJSON(_ rule: EKRecurrenceRule) -> [(String, JSONValue)] {
+    static func recurrenceJSON(_ rule: EKRecurrenceRule) -> [(String, JSONValue)] {
         let frequency: String
         switch rule.frequency {
         case .daily: frequency = "daily"
@@ -110,6 +110,11 @@ public final class EventKitReader {
         ]
         if let days = rule.daysOfTheWeek, !days.isEmpty {
             pairs.append(("daysOfWeek", .array(days.map { .int($0.dayOfTheWeek.rawValue) })))
+            // Only surfaced when at least one day is pinned to a week (bridge `recurrencePayload`).
+            let weekNumbers = days.map(\.weekNumber)
+            if weekNumbers.contains(where: { $0 != 0 }) {
+                pairs.append(("weekNumbers", .array(weekNumbers.map { .int($0) })))
+            }
         }
         if let days = rule.daysOfTheMonth, !days.isEmpty {
             pairs.append(("daysOfMonth", .array(days.map { .int($0.intValue) })))
@@ -133,7 +138,7 @@ public final class EventKitReader {
             createdDate: reminder.creationDate,
             completionDate: reminder.completionDate,
             alarms: (reminder.alarms ?? []).map { alarmJSON($0) },
-            recurrence: (reminder.recurrenceRules?.first).map { recurrenceJSON($0) })
+            recurrence: (reminder.recurrenceRules?.first).map { Self.recurrenceJSON($0) })
     }
 
     private func containsQuery(_ reminder: EKReminder, _ query: String) -> Bool {

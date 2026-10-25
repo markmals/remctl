@@ -174,7 +174,7 @@ public enum PrivateParsing {
             // absent key both mean "no recurrence" (upstream 467ac55).
             if let recAny = spec["recurrence"], !(recAny is NSNull) {
                 guard let canonical = recurrenceSpecText(recAny) else {
-                    throw CLIError("could not parse subtask recurrence \(recurrenceValueRepr(recAny)). Use daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', or an exported recurrence object.")
+                    throw CLIError("could not parse subtask recurrence \(recurrenceValueRepr(recAny)). \(WriteParsing.recurrenceGrammarHint)")
                 }
                 result.recurrence = canonical
             }

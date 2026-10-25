@@ -34,7 +34,7 @@ struct Add: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Notes / body") var notes: String?
     @Option(name: [.short, .long], help: "Due date; date-only forms (YYYY-MM-DD, today, +3d) create all-day reminders, explicit times (Friday at 15:00) create timed reminders") var due: String?
     @Option(name: [.short, .long], help: "Priority: high, medium, low, or none") var priority: String?
-    @Option(name: .long, help: "Recurrence: daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', yearly") var recurrence: String?
+    @Option(name: .long, help: "Recurrence: daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', 'monthly 4th-fri', 'monthly last-fri', 'monthly -1-fri', interval xN 1-999 like 'daily x2' / 'monthly x2 4th-fri'") var recurrence: String?
     @Option(name: .long, help: "Alarm: 15m, 1h, 1d, or an absolute date") var alarm: String?
     @Option(name: .long, help: "URL; appended to notes") var url: String?
 
@@ -114,7 +114,7 @@ struct Add: AsyncParsableCommand {
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
             }
             parsedRecurrence = r
         }
@@ -399,7 +399,7 @@ struct Edit: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Due date (YYYY-MM-DD, today, +3d, …) or 'clear'") var due: String?
     @Option(name: [.short, .long], help: "Priority: high, medium, low, or none") var priority: String?
     @Option(name: .long, help: "URL; appended to notes") var url: String?
-    @Option(name: .long, help: "Recurrence: daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', yearly") var recurrence: String?
+    @Option(name: .long, help: "Recurrence: daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', 'monthly 4th-fri', 'monthly last-fri', 'monthly -1-fri', interval xN 1-999 like 'daily x2' / 'monthly x2 4th-fri'") var recurrence: String?
     @Option(name: .long, help: "Alarm: 15m, 1h, 1d, an absolute date, or clear") var alarm: String?
 
     // Location alarm (EventKit-expressible). Radius/proximity defaults live here.
@@ -530,7 +530,7 @@ struct Edit: AsyncParsableCommand {
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, 'weekly mon,wed,fri', 'monthly 1,15', monthly, or yearly.")
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
             }
             parsedRecurrence = r
         }

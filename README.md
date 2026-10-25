@@ -89,7 +89,7 @@ remctl info 23880 --json
 
 The full command guide is in [docs/commands.md](docs/commands.md). Private-metadata behavior and guardrails are in [docs/private-metadata.md](docs/private-metadata.md). For smart lists, see [docs/commands.md#smart-lists](docs/commands.md#smart-lists); for templates, [docs/commands.md#templates](docs/commands.md#templates).
 
-Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`. Recurrence, alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, and `yearly`, plus an exported `recurrence` object as emitted by `export`/`info --json`; `upcoming DAYS` requires 1 to 3650. `import` validates every item in the file before creating the first reminder.
+Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`. Recurrence, alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `monthly`, `yearly`, `weekly mon,wed,fri`, and `monthly 1,15`, plus an exported `recurrence` object as emitted by `export`/`info --json`. An optional `xN` interval token (1–999) follows the frequency: `daily x2`, `weekly x2 thu`, `monthly x3 15`, `yearly x2`. Monthly rules can also pin a weekday to a week of the month: `monthly 4th-fri`, `monthly 1st-mon,3rd-mon`, `monthly last-fri` (alias of `-1-fri`), down to `-5-fri`. Ordinal suffixes are checked, so `4st-fri` is rejected; week-pinned days cannot be mixed with plain day-of-month numbers, and they are monthly-only. Use `last-fri` rather than `5th-fri` for "the last Friday": EventKit skips months that have no fifth Friday. `upcoming DAYS` requires 1 to 3650. `import` validates every item in the file before creating the first reminder.
 
 ## Private Metadata
 
@@ -186,7 +186,7 @@ remctl template-delete "Packing Template" --force
 RemCTL output is designed for both humans and agents:
 
 - reminder IDs are shown as `#ID`, colored with the reminder's list color when readable
-- flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`; shared-list assignments show `@Name` (JSON: `assignment`)
+- flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`, `↻ monthly 4th Fri`, or `↻ every 2 months 4th Tue` (an occurrence count reads `↻ daily, 5 times`); shared-list assignments show `@Name` (JSON: `assignment`)
 - Groceries lists show `🥕` in headings and summaries
 - `info --json` reports the actual due date as `dueDate`; a separate display/alert date appears as `displayDate`; EventKit and location alarms appear as `alarms`; Early Reminders appear as labels such as `15 minutes before`
 - `edit -d` carries matching absolute alarms forward (all acknowledged copies move together) and removes them when the new due date is all-day; `edit -d clear` removes matching absolute alarms/display times; `edit --alarm clear` removes normal alarms explicitly

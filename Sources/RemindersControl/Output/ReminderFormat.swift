@@ -78,7 +78,9 @@ private func recurrenceField(_ rec: [(String, JSONValue)], _ key: String) -> JSO
     rec.first(where: { $0.0 == key })?.1
 }
 
-/// Port of `recurrence_summary`. Operates on `recurrenceFromRow` output.
+/// Port of `recurrence_summary` (upstream c84fbca). Operates on `recurrenceFromRow` output and
+/// on writer-shaped rules (`--via-eventkit` reads), which carry `weekNumbers` instead of
+/// `daysOfWeekDetailed`.
 public func recurrenceSummary(_ rec: [(String, JSONValue)]) -> String {
     guard !rec.isEmpty else { return "" }
     guard case let .string(frequency)? = recurrenceField(rec, "frequency") else { return "" }
@@ -93,40 +95,69 @@ public func recurrenceSummary(_ rec: [(String, JSONValue)]) -> String {
 
     var label = interval == 1 ? frequency : "every \(interval) \(plural)"
 
-    // weekly + non-empty daysOfWeek → " Mon, Wed" (fallback to str(day) for unknown, matching source).
-    if frequency == "weekly", case let .array(days)? = recurrenceField(rec, "daysOfWeek"), !days.isEmpty {
-        let names: [String] = days.compactMap { day in
-            let n: Int
-            switch day {
-            case let .int(i): n = i
-            case let .double(d): n = Int(d)
-            default: return nil
-            }
-            return Constants.recurrenceDayNames[n] ?? String(n)
-        }
+    // " Mon, Wed" / " 4th Fri" / " last Fri"
+    if frequency != "daily" {
+        let names = recurrenceDayLabels(rec)
         if !names.isEmpty { label += " " + names.joined(separator: ", ") }
     }
 
     // monthly + non-empty daysOfMonth → " on 1, 15"
     if frequency == "monthly", case let .array(dom)? = recurrenceField(rec, "daysOfMonth"), !dom.isEmpty {
-        let nums: [String] = dom.compactMap { v in
-            switch v {
-            case let .int(i): return String(i)
-            case let .double(d): return String(Int(d))
-            default: return nil
-            }
-        }
+        let nums = dom.compactMap { recurrenceJSONInt($0).map(String.init) }
         if !nums.isEmpty { label += " on " + nums.joined(separator: ", ") }
     }
 
-    // count present → " x{count}"; else if endDate present → " until {endDate[:10]}"
+    // count → ", 5 times" (not " x5", which reads as the xN interval input token);
+    // else endDate → " until {endDate[:10]}"
     if case let .int(count)? = recurrenceField(rec, "count"), count != 0 {
-        label += " x\(count)"
+        label += ", \(count) time\(count == 1 ? "" : "s")"
     } else if case let .string(endDate)? = recurrenceField(rec, "endDate") {
         label += " until \(endDate.prefix(10))"
     }
 
     return label
+}
+
+/// Weekday labels honoring week pinning. Reminders' stored `daysOfWeekDetailed` wins when
+/// present (weekNumber 0 = any week); writer-shaped rules carry a parallel `weekNumbers` list,
+/// which may be missing or short (missing entries stay unpinned).
+private func recurrenceDayLabels(_ rec: [(String, JSONValue)]) -> [String] {
+    var pairs: [(day: Int, week: Int)] = []
+    if case let .array(detailed)? = recurrenceField(rec, "daysOfWeekDetailed"), !detailed.isEmpty {
+        for entry in detailed {
+            guard case let .object(fields) = entry,
+                  let day = fields.first(where: { $0.0 == "dayOfTheWeek" }).flatMap({ recurrenceJSONInt($0.1) })
+            else { continue }
+            let week = fields.first(where: { $0.0 == "weekNumber" }).flatMap({ recurrenceJSONInt($0.1) }) ?? 0
+            pairs.append((day, week))
+        }
+    } else if case let .array(days)? = recurrenceField(rec, "daysOfWeek") {
+        var weeks: [JSONValue] = []
+        if case let .array(w)? = recurrenceField(rec, "weekNumbers") { weeks = w }
+        for (index, value) in days.enumerated() {
+            guard let day = recurrenceJSONInt(value) else { continue }
+            let week = index < weeks.count ? recurrenceJSONInt(weeks[index]) ?? 0 : 0
+            pairs.append((day, week))
+        }
+    }
+    return pairs.map { recurrenceWeekLabel(week: $0.week, day: Constants.recurrenceDayNames[$0.day] ?? String($0.day)) }
+}
+
+/// "Fri", "4th Fri", "last Fri", "2nd-last Fri".
+private func recurrenceWeekLabel(week: Int, day: String) -> String {
+    if week == 0 { return day }
+    if week == -1 { return "last \(day)" }
+    let n = abs(week)
+    let ordinal = "\(n)\(Constants.recurrenceOrdinalSuffixes[n] ?? "th")"
+    return week > 0 ? "\(ordinal) \(day)" : "\(ordinal)-last \(day)"
+}
+
+private func recurrenceJSONInt(_ value: JSONValue) -> Int? {
+    switch value {
+    case let .int(i): return i
+    case let .double(d): return Int(d)
+    default: return nil
+    }
 }
 
 // ── item field helpers (mirror _item_* / *_from_item) ─────────────────────────

@@ -27,44 +27,16 @@ public enum WriteParsing {
 
     // MARK: - Recurrence
 
-    /// Port of `parse_recurrence` (remctl:3991, upstream 98efe89). Accepts the CLI string
-    /// grammar, or an exported recurrence object serialized as JSON text (what `export` /
-    /// `info --json` emit, which `import` and `--subtask` JSON may carry back in).
-    /// nil if unparseable.
+    /// Port of `parse_recurrence` (remctl:3991, upstream 98efe89, c84fbca). Accepts the CLI
+    /// string grammar (`RecurrenceGrammar.swift`), or an exported recurrence object serialized as
+    /// JSON text (what `export` / `info --json` emit, which `import` and `--subtask` JSON may
+    /// carry back in). nil if unparseable.
     public static func parseRecurrenceSpec(_ s: String, calendar: Calendar = .current) -> RecurrenceWrite? {
         if s.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
             guard case let .object(pairs)? = OrderedJSON.parse(Data(s.utf8)) else { return nil }
             return normalizeRecurrenceObject(pairs, calendar: calendar)
         }
-        // parts = spec.lower().split()  (whitespace split, drops empties)
-        let parts = s.lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).map(String.init)
-        guard let freq = parts.first else { return nil }
-        guard ["daily", "weekly", "monthly", "yearly"].contains(freq) else { return nil }
-
-        if freq == "weekly" && parts.count > 1 {
-            guard parts.count == 2 else { return nil }
-            // 1=Sun..7=Sat
-            let dayMap: [String: Int] = ["sun": 1, "mon": 2, "tue": 3, "wed": 4, "thu": 5, "fri": 6, "sat": 7]
-            let tokens = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            guard !tokens.isEmpty, tokens.allSatisfy({ dayMap[$0] != nil }) else { return nil }
-            let days = tokens.map { dayMap[$0]! }
-            return RecurrenceWrite(frequency: freq, interval: 1, daysOfWeek: days)
-        } else if freq == "monthly" && parts.count > 1 {
-            guard parts.count == 2 else { return nil }
-            let tokens = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            // Bound the token length before Int(): a long digit run overflows Int and used to
-            // trap on the force-unwrap (upstream c84fbca hardens the same call with isdecimal
-            // + a bounded length). Two digits is all a 1-31 day-of-month needs.
-            guard !tokens.isEmpty, tokens.allSatisfy({ isAllDigits($0) && $0.count <= 2 }) else { return nil }
-            let days = tokens.compactMap { Int($0) }
-            guard days.allSatisfy({ $0 >= 1 && $0 <= 31 }) else { return nil }
-            return RecurrenceWrite(frequency: freq, interval: 1, daysOfMonth: days)
-        } else if parts.count > 1 {
-            // daily/yearly take no args; weekly/monthly fall through here only when
-            // parts.count > 1 was already handled above, so this catches daily/yearly extras.
-            return nil
-        }
-        return RecurrenceWrite(frequency: freq, interval: 1)
+        return parseRecurrenceGrammar(s)
     }
 
     /// Port of `parse_recurrence` for an already-decoded value: a string spec or an exported
@@ -504,7 +476,7 @@ public enum WriteParsing {
 
     // MARK: - Helpers
 
-    private static func isAllDigits(_ s: String) -> Bool {
+    static func isAllDigits(_ s: String) -> Bool {
         return !s.isEmpty && s.allSatisfy { $0.isNumber && $0.isASCII }
     }
 

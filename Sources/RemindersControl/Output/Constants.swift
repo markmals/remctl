@@ -8,6 +8,8 @@ public enum Constants {
         [0: ("minute", "minutes"), 1: ("hour", "hours"), 2: ("day", "days"), 3: ("week", "weeks"), 4: ("month", "months")]
     public static let recurrenceDayNames: [Int: String] =
         [1: "Sun", 2: "Mon", 3: "Tue", 4: "Wed", 5: "Thu", 6: "Fri", 7: "Sat"]
+    /// Week-of-month ordinals for Nth-weekday recurrence (`4th-fri`, `2nd-last Fri`).
+    public static let recurrenceOrdinalSuffixes: [Int: String] = [1: "st", 2: "nd", 3: "rd", 4: "th", 5: "th"]
 
     public static let listColorMap: [String: (Int, Int, Int)] = [
         "red": (255, 41, 104),
