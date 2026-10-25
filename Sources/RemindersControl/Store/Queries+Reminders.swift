@@ -36,12 +36,18 @@ extension RemindersStore {
 
     /// Port of `early_reminder_identifiers_for_reminder` (remctl:2522).
     /// Looks up the reminder by ckid and returns the existing due-date delta-alert
-    /// `identifier`s (so a `set_early_reminder` write can replace them). A missing
-    /// reminder or absent/invalid blob yields `[]`.
+    /// `identifier`s (so a `set_early_reminder` write can replace them). Falls back to the
+    /// `ZREMCDDUEDATEDELTAALERT` table when the envelope blob holds none (upstream 088fab4).
+    /// A missing reminder, or an absent blob and table, yields `[]`.
     public func earlyReminderIdentifiers(reminderCkid: String) -> [String] {
         guard !reminderCkid.isEmpty, let row = reminder(identifier: reminderCkid) else { return [] }
         // ts is irrelevant for identifier extraction (creationDate is optional); pass a no-op.
-        return dueDateDeltaAlertsFromRow(row, ts: { _ in nil }).compactMap { alert in
+        let fromBlob = alertIdentifiers(dueDateDeltaAlertsFromRow(row, ts: { _ in nil }))
+        return fromBlob.isEmpty ? alertIdentifiers(earlyReminderAlerts(reminderCkid)) : fromBlob
+    }
+
+    private func alertIdentifiers(_ alerts: [[(String, JSONValue)]]) -> [String] {
+        alerts.compactMap { alert in
             for (k, v) in alert where k == "identifier" {
                 if case let .string(s) = v, !s.isEmpty { return s }
             }

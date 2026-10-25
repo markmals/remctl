@@ -47,7 +47,7 @@ struct Today: AsyncParsableCommand {
                 return
             }
             let sodTs = AppleEpoch.toTs(DateWindows.startOfDay(now))
-            let overdue = rows.filter { (rowEffectiveDue($0) ?? 0) < sodTs }
+            let overdue = rows.filter { (rowShownDate($0) ?? 0) < sodTs }
             let overduePKs = Set(overdue.compactMap { $0.int("Z_PK") })
             let due = rows.filter { !overduePKs.contains($0.int("Z_PK") ?? -1) }
 
@@ -120,7 +120,7 @@ struct Upcoming: AsyncParsableCommand {
             var groupMap: [String: (label: String, items: [ReminderRow])] = [:]
 
             for r in rows {
-                guard let dueVal = rowEffectiveDue(r), dueVal != 0 else { continue }
+                guard let dueVal = rowShownDate(r), dueVal != 0 else { continue }
                 let dt = Date(timeIntervalSince1970: dueVal + AppleEpoch.offset)
                 let dtDay = cal.startOfDay(for: dt)
                 let dayKey: String
@@ -181,7 +181,7 @@ struct Overdue: ParsableCommand {
             print(ansi.red(ansi.bold("Overdue (\(rows.count)):")))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
             }
             print("\n\(rows.count) overdue")
         }
@@ -225,7 +225,7 @@ struct Search: AsyncParsableCommand {
             print("Search: \(ansi.bold(safeDisplay(query)))")
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk)))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
             }
             let n = rows.count
             print("\n\(n) result\(n == 1 ? "" : "s")")
@@ -260,7 +260,7 @@ struct Flagged: ParsableCommand {
             print(ansi.bold("Flagged:"))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
             }
             let n = rows.count
             print("\n\(n) flagged")
@@ -295,7 +295,7 @@ struct Urgent: ParsableCommand {
             print(ansi.bold("Urgent:"))
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
             }
             let n = rows.count
             print("\n\(n) urgent")
@@ -657,7 +657,9 @@ struct Info: ParsableCommand {
             if json {
                 var d = serializeReminder(r, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
                                           section: sec, subtaskCounts: [id: store.subtaskCount(pk: id)],
-                                          hashtags: [id: tags], richLink: { store.richLink(pk: id) })
+                                          hashtags: [id: tags], richLink: { store.richLink(pk: id) },
+                                          hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: id) },
+                                          earlyFallback: store.earlyReminderAlerts)
                 if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
                     d.append(("assignment", assignment))
                 }
@@ -703,14 +705,22 @@ struct Info: ParsableCommand {
                 if let originator { print("  By:        \(safeDisplay(originator))") }
             }
             if let due = r.double("ZDUEDATE"), due != 0 {
-                let effective = rowEffectiveDue(r) ?? due
+                let effective = rowEffectiveDue(r, hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: id) }) ?? due
                 if itemIsAllDay(r) {
                     print("  Due:       \(infoDateString(effective, dateOnly: true)) (all-day)")
                 } else {
                     print("  Due:       \(infoDateString(effective))")
+                    // Reminders lists a timed reminder at its absolute alarm when that sits
+                    // at another time than the due date (upstream f9b6411).
+                    if let shown = rowShownDate(r), Int(shown) != Int(effective) {
+                        print("  Shown at:  \(infoDateString(shown)) \(ansi.dim("(Reminders lists it here)"))")
+                    }
                 }
             }
-            let early = dueDateDeltaAlertsFromRow(r, ts: { AppleEpoch.ts($0) })
+            var early = dueDateDeltaAlertsFromRow(r, ts: { AppleEpoch.ts($0) })
+            if early.isEmpty, let ck = r.string("ZCKIDENTIFIER"), !ck.isEmpty {
+                early = store.earlyReminderAlerts(ck)
+            }
             if !early.isEmpty {
                 let labels = early.compactMap { pairs -> String? in
                     for (k, v) in pairs where k == "label" { if case let .string(s) = v { return s } }; return nil

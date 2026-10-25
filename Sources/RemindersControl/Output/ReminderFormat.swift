@@ -173,27 +173,34 @@ private func itemCompleted(_ row: ReminderRow) -> Bool {
     return (row.int("completed") ?? 0) != 0
 }
 
-private func itemDueDate(_ row: ReminderRow) -> Double? {
-    if row.has("ZDUEDATE") { return row.double("ZDUEDATE") }
-    return row.double("dueDate")
-}
-
 /// Port of `_item_is_all_day`. True when ZALLDAY (or JSON `allDay`) is set.
 func itemIsAllDay(_ row: ReminderRow) -> Bool {
     if row.has("ZALLDAY") { return (row.int("ZALLDAY") ?? 0) != 0 }
     return (row.int("allDay") ?? 0) != 0
 }
 
-/// Port of `row_effective_due`. Raw due timestamp used for day-bucketing and all-day
-/// labels: for all-day items Reminders stores ZDUEDATE at UTC midnight (which can fall
-/// on the previous local day west of UTC), so use ZDISPLAYDATEDATE when present.
-func rowEffectiveDue(_ row: ReminderRow) -> Double? {
-    let due = itemDueDate(row)
+/// Port of `row_effective_due`. Raw due timestamp, with the local day for an all-day item:
+/// Reminders stores all-day ZDUEDATE at UTC midnight (which can fall on the previous local
+/// day west of UTC), so use ZDISPLAYDATEDATE when present.
+func rowEffectiveDue(_ row: ReminderRow, calendar: Calendar = .current,
+                     hasAbsoluteAlarm: (() -> Bool)? = nil) -> Double? {
+    let due = row.has("ZDUEDATE")
+        ? timedDueRaw(row, calendar: calendar, hasAbsoluteAlarm: hasAbsoluteAlarm)
+        : row.double("dueDate")
     if itemIsAllDay(row) {
         if row.has("ZDISPLAYDATEDATE"), let disp = row.double("ZDISPLAYDATEDATE") { return disp }
         if let disp = row.double("displayDate") { return disp }
     }
     return due
+}
+
+/// Port of `row_shown_date` (upstream f9b6411). Raw timestamp Reminders.app lists and
+/// labels the reminder at. Matches `dueFilterExpr`: the display date when Reminders stores
+/// one, otherwise the due date.
+func rowShownDate(_ row: ReminderRow, calendar: Calendar = .current) -> Double? {
+    if row.has("ZDISPLAYDATEDATE"), let disp = row.double("ZDISPLAYDATEDATE") { return disp }
+    if let disp = row.double("displayDate") { return disp }
+    return rowEffectiveDue(row, calendar: calendar)
 }
 
 private func itemId(_ row: ReminderRow) -> String {
@@ -216,9 +223,12 @@ private func stateMarkers(_ row: ReminderRow, ansi: Ansi) -> String {
 // ── fmt ───────────────────────────────────────────────────────────────────────
 
 /// Port of `fmt`. Human-readable single-reminder line (plus verbose detail lines).
+/// `earlyFallback` reads Early Reminders from `ZREMCDDUEDATEDELTAALERT` for a store whose
+/// envelope blob is absent or stale (upstream 088fab4); it takes the reminder's ckid.
 public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ansi,
                 now: Date = Date(), verbose: Bool = false, indent: String = "",
-                rgb: ListColorResolver? = nil, assigneeName: String? = nil) -> String {
+                rgb: ListColorResolver? = nil, assigneeName: String? = nil,
+                earlyFallback: ((String) -> [[(String, JSONValue)]])? = nil) -> String {
     let completed = itemCompleted(row)
     let status = completed ? ansi.green("[x]") : ansi.dim("[ ]")
 
@@ -235,7 +245,7 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
 
     var title = safeDisplay((itemTitle(row)?.isEmpty ?? true) ? "(untitled)" : itemTitle(row)!)
     let allDay = itemIsAllDay(row)
-    var dueStr = fmtDue(rowEffectiveDue(row), now: now, ansi: ansi, allDay: allDay)
+    var dueStr = fmtDue(rowShownDate(row), now: now, ansi: ansi, allDay: allDay)
 
     let summary = recurrenceSummary(recurrenceFromRow(row, ts: { AppleEpoch.ts($0) }) ?? [])
     var recurStr = summary.isEmpty ? "" : " \(ansi.magenta("↻ \(summary)"))"
@@ -271,7 +281,10 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
         if allDay {
             parts.append("\(indent)    All-day: \(ansi.cyan("Yes"))")
         }
-        let early = dueDateDeltaAlertsFromRow(row, ts: { AppleEpoch.ts($0) })
+        var early = dueDateDeltaAlertsFromRow(row, ts: { AppleEpoch.ts($0) })
+        if early.isEmpty, let earlyFallback, let ck = row.string("ZCKIDENTIFIER"), !ck.isEmpty {
+            early = earlyFallback(ck)
+        }
         if !early.isEmpty {
             let labels = early.compactMap { alert -> String? in
                 if case let .string(s)? = alert.first(where: { $0.0 == "label" })?.1 { return s }

@@ -18,6 +18,22 @@ public enum AppleEpoch {
     /// `to_ts(dt)` — Date -> Apple seconds.
     public static func toTs(_ d: Date) -> Double { d.timeIntervalSince1970 - offset }
 
+    /// Port of `all_day_due_iso` (upstream e1a2618). The day of an all-day due date, as
+    /// local midnight in ISO form. Reminders stores an all-day due date as midnight UTC of
+    /// that day; read as local time that instant is 02:00 in Rome and the evening before in
+    /// New York, so the day comes from UTC. A value that is not a UTC midnight keeps its
+    /// local day.
+    public static func allDayDueISO(_ raw: Double, calendar: Calendar = .current) -> String {
+        let date = Date(timeIntervalSince1970: raw + offset)
+        var dayCalendar = calendar
+        if raw.truncatingRemainder(dividingBy: 86_400) == 0 {
+            dayCalendar = Calendar(identifier: .gregorian)
+            dayCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        }
+        let c = dayCalendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02dT00:00:00", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
     /// Mirror Python datetime.isoformat() for a naive LOCAL datetime:
     /// "YYYY-MM-DDTHH:MM:SS" with ".ffffff" appended only when microseconds != 0.
     public static func isoLocalNoTZ(_ date: Date, calendar: Calendar = .current) -> String {

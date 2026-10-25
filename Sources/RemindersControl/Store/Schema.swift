@@ -22,15 +22,21 @@ extension RemindersStore {
     func displayDueExpr(_ alias: String = "r") -> String {
         reminderHasColumn("ZDISPLAYDATEDATE") ? "\(alias).ZDISPLAYDATEDATE" : "NULL"
     }
-    /// Port of `due_filter_expr`. Date used for due-window bucketing/ordering.
-    /// Reminders stores all-day items with a synthetic ZDUEDATE (UTC midnight), while
-    /// ZDISPLAYDATEDATE is the local day Reminders.app displays. West of UTC the synthetic
-    /// timestamp lands on the previous local day, so all-day items must bucket by the
-    /// display date. Falls back to plain ZDUEDATE when either column is absent.
+    /// Select `ZTIMEZONE` only when the store has it: a NULL would mark every timed
+    /// reminder as floating (`timedDueRaw`).
+    func timeZoneColumn(_ alias: String = "r") -> String {
+        reminderHasColumn("ZTIMEZONE") ? ", \(alias).ZTIMEZONE" : ""
+    }
+    /// Port of `due_filter_expr`. Date used for due-window bucketing: the one Reminders.app
+    /// shows. Reminders.app lists and labels a reminder at ZDISPLAYDATEDATE. For an all-day
+    /// item that is the local day, while ZDUEDATE is a synthetic midnight-UTC timestamp. For
+    /// a timed item it follows an absolute alarm at another time than the due date, such as
+    /// one an EventKit due edit left at the old time, so Today keeps showing the reminder
+    /// there. Falls back to plain ZDUEDATE when the display column is absent.
     func dueFilterExpr(_ alias: String = "r") -> String {
         let due = "\(alias).ZDUEDATE"
-        guard reminderHasColumn("ZALLDAY"), reminderHasColumn("ZDISPLAYDATEDATE") else { return due }
-        return "(CASE WHEN \(alias).ZALLDAY = 1 THEN COALESCE(\(alias).ZDISPLAYDATEDATE, \(due)) ELSE \(due) END)"
+        guard reminderHasColumn("ZDISPLAYDATEDATE") else { return due }
+        return "COALESCE(\(alias).ZDISPLAYDATEDATE, \(due))"
     }
 
     /// 10 correlated subqueries on ZREMCDOBJECT (REMCDRecurrenceRule, FK ZREMINDER4). Aliases are read by the serializer.
@@ -61,6 +67,6 @@ extension RemindersStore {
             "r.ZICSURL, r.ZCKIDENTIFIER, l.ZNAME as list_name",
             recurrenceCols,
         ]
-        return parts.joined(separator: ", ")
+        return parts.joined(separator: ", ") + timeZoneColumn()
     }
 }

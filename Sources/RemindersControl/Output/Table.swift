@@ -134,7 +134,7 @@ public func remindersToTableData(_ items: [ReminderRow], ansi: Ansi, now: Date =
         // ── due ──
         let allDay = itemIsAllDay(r)
         var dueStr = ""
-        if let dueVal = rowEffectiveDue(r), dueVal != 0 {
+        if let dueVal = rowShownDate(r, calendar: calendar), dueVal != 0 {
             let dt = Date(timeIntervalSince1970: dueVal + AppleEpoch.offset)
             let dtDay = calendar.startOfDay(for: dt)
             if dtDay == sod {

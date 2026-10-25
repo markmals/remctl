@@ -84,7 +84,7 @@ Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic fi
 
 ### Early Reminders
 
-`--early-reminder` writes a Reminders **Early Reminder** — a due-date delta alert, **not** an EventKit alarm. Accepted forms: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Every non-clear value requires a due date, because Reminders anchors the delta to the reminder's due date. Verify in `info --json` under `earlyReminder`/`earlyReminders`.
+`--early-reminder` writes a Reminders **Early Reminder** — a due-date delta alert, **not** an EventKit alarm. Accepted forms: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Every non-clear value requires a due date, because Reminders anchors the delta to the reminder's due date. Verify in `info --json` under `earlyReminder`/`earlyReminders`. Readback prefers the reminder's own delta-alert envelope and falls back to the `ZREMCDDUEDATEDELTAALERT` table on stores that keep the alerts there (macOS 27), so `clear` finds the alerts to remove either way.
 
 ## Location alarms
 
@@ -229,7 +229,7 @@ Verify templates with `templates --json` and `template-info`, and verify an appl
 
 Because these are private, unsupported APIs, verify the writes that matter — and when cross-device sync matters, ask the user to check another device.
 
-- **Reminder metadata** — `info <id> --json` reports the rich-link URL in `url`, parent and subtask image attachments in `attachments`, EventKit and location alarms in `alarms`, Early Reminders in `earlyReminder`/`earlyReminders`, recurrence in `recurrence`, plus sections, tags, and subtasks. It keeps the actual `dueDate` separate from Reminders' optional `displayDate`.
+- **Reminder metadata** — `info <id> --json` reports the rich-link URL in `url`, parent and subtask image attachments in `attachments`, EventKit and location alarms in `alarms`, Early Reminders in `earlyReminder`/`earlyReminders`, recurrence in `recurrence`, plus sections, tags, and subtasks. It keeps the actual `dueDate` separate from Reminders' optional `displayDate`; an all-day `dueDate` is local midnight of its day, and a timed due date saved without a time zone (GoodTask, older Reminders) reads as the wall-clock time Reminders shows.
 - **List metadata** — `lists --json` exposes `color`, `badge`, `badgeEmblem`, Groceries flags (`listType`, `isGroceries`, `grocery.locale`), and pin state.
 - **Smart lists** — `smart-lists --json` exposes the decoded filter, `filter.supported`, supported-version metadata, and pin state.
 - **Templates** — `templates --json` / `template-info`, then `show <new list> --json` after `template-apply`.

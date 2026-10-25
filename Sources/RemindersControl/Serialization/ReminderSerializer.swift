@@ -100,6 +100,9 @@ public func dueDateDeltaAlertsFromRow(_ row: ReminderRow, ts: (Double) -> String
 }
 
 /// Port of serialize_reminder. Builds ordered key/value pairs for one reminder.
+/// `calendar` + `hasAbsoluteAlarm` resolve floating wall-clock due dates (`timedDueRaw`);
+/// `earlyFallback` reads Early Reminders from `ZREMCDDUEDATEDELTAALERT` when the envelope
+/// blob holds none (upstream 088fab4).
 public func serializeReminder(
     _ row: ReminderRow,
     ts: (Double) -> String?,
@@ -107,7 +110,10 @@ public func serializeReminder(
     section: String? = nil,
     subtaskCounts: [Int: Int] = [:],
     hashtags: [Int: [String]] = [:],
-    richLink: (() -> String?)? = nil
+    richLink: (() -> String?)? = nil,
+    calendar: Calendar = .current,
+    hasAbsoluteAlarm: (() -> Bool)? = nil,
+    earlyFallback: ((String) -> [[(String, JSONValue)]])? = nil
 ) -> [(String, JSONValue)] {
     let pk = row.int("Z_PK") ?? 0
     let subtaskCount = subtaskCounts[pk] ?? 0
@@ -129,9 +135,16 @@ public func serializeReminder(
     var url = row.string("ZICSURL")
     if (url == nil || url!.isEmpty), let r = richLink?() { url = r }
     if let url, !url.isEmpty { o.append(("url", .string(url))) }
-    let due = row.double("ZDUEDATE")
-    if let due, due != 0, let iso = ts(due) { o.append(("dueDate", .string(iso))) }
-    if let disp = row.double("ZDISPLAYDATEDATE"), disp != 0, disp != due, let iso = ts(disp) {
+    let dueRaw = timedDueRaw(row, calendar: calendar, hasAbsoluteAlarm: hasAbsoluteAlarm)
+    var dueISO: String? = nil
+    if let due = row.double("ZDUEDATE"), due != 0 {
+        dueISO = itemIsAllDay(row)
+            ? AppleEpoch.allDayDueISO(due, calendar: calendar)
+            : dueRaw.flatMap { ts($0) }
+        if let dueISO { o.append(("dueDate", .string(dueISO))) }
+    }
+    if let disp = row.double("ZDISPLAYDATEDATE"), disp != 0, disp != dueRaw,
+       let iso = ts(disp), iso != dueISO {
         o.append(("displayDate", .string(iso)))
     }
     if row.has("ZALLDAY"), let ad = row.int("ZALLDAY") { o.append(("allDay", .bool(ad != 0))) }
@@ -140,7 +153,10 @@ public func serializeReminder(
     if let parent = row.int("ZPARENTREMINDER"), parent != 0 { o.append(("parentID", .int(parent))) }
     if !tags.isEmpty { o.append(("tags", .array(tags.map { .string($0) }))) }
     if let rec = recurrenceFromRow(row, ts: ts) { o.append(("recurrence", .object(rec))) }
-    let early = dueDateDeltaAlertsFromRow(row, ts: ts)
+    var early = dueDateDeltaAlertsFromRow(row, ts: ts)
+    if early.isEmpty, let earlyFallback, let ck = row.string("ZCKIDENTIFIER"), !ck.isEmpty {
+        early = earlyFallback(ck)
+    }
     if !early.isEmpty {
         o.append(("earlyReminder", .object(early[0])))
         o.append(("earlyReminders", .array(early.map { .object($0) })))
@@ -162,7 +178,9 @@ public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
         let pk = row.int("Z_PK") ?? 0
         var o = serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
             section: section, subtaskCounts: subtaskCounts, hashtags: hashtags,
-            richLink: { store.richLink(pk: pk) })
+            richLink: { store.richLink(pk: pk) },
+            hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: pk) },
+            earlyFallback: store.earlyReminderAlerts)
         // to_dict appends "assignment" after the base payload (upstream 683c362).
         if let assignment = assignmentToDict(store.assignment(reminderPk: pk)) {
             o.append(("assignment", assignment))
