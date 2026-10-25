@@ -70,6 +70,7 @@ import GRDB
             ("rich link", "ZREMCDOBJECT_ZREMINDER2_INDEX", { _ = s.richLink(pk: 1) }),
             ("hashtags", "ZREMCDOBJECT_ZREMINDER3_INDEX", { _ = s.hashtags(pk: 1) }),
             ("alarms", "ZREMCDOBJECT_ZREMINDER_INDEX", { _ = s.alarms(pk: 1) }),
+            ("absolute alarm", "ZREMCDOBJECT_ZREMINDER_INDEX", { _ = s.hasAbsoluteAlarm(pk: 1) }),
             ("assignment", "ZREMCDOBJECT_ZREMINDER1_INDEX", { _ = s.assignment(reminderPk: 1) }),
             ("sharees", "ZREMCDOBJECT_ZLIST_INDEX", { _ = s.sharees(listPk: 10) }),
             ("subtask count", "ZREMCDREMINDER_ZPARENTREMINDER_INDEX", { _ = s.subtaskCount(pk: 1) }),

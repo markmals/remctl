@@ -8,7 +8,7 @@ extension RemindersStore {
     public func hasAbsoluteAlarm(pk: Int) -> Bool {
         let ent = alarmEntity
         let sql = "SELECT 1 FROM ZREMCDOBJECT a JOIN ZREMCDOBJECT t ON a.ZTRIGGER = t.Z_PK " +
-            "WHERE a.ZREMINDER = ? AND a.Z_ENT = \(ent) AND a.ZMARKEDFORDELETION = 0 " +
+            "WHERE a.ZREMINDER = ? AND +a.Z_ENT = \(ent) AND +a.ZMARKEDFORDELETION = 0 " +
             "AND t.ZMARKEDFORDELETION = 0 AND t.ZDATECOMPONENTSDATA IS NOT NULL LIMIT 1"
         return ((try? queue.read { try Int.fetchOne($0, sql: sql, arguments: [pk]) }) ?? nil) != nil
     }
