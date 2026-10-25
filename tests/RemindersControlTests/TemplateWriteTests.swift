@@ -340,29 +340,59 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
         mock.result = PrivateResult(status: "deleted")
-        var prompted = ""
+        let prompted = Prompted()
 
         let out = try await TemplateDelete.perform(
             name: "Daily", templateId: nil, force: false, json: false,
-            store: s, private: mock, confirm: { prompt in prompted = prompt; return true })
+            store: s, private: mock, confirm: .recording { prompted.value = $0 })
 
-        #expect(prompted == "Delete template 'Daily'? [y/N] ")
+        #expect(prompted.value == "Delete template 'Daily'? [y/N] ")
         #expect(out.stdout == "Deleted template: Daily\n")
         #expect(mock.calls == [.deleteTemplate(templateId: "T40")])
     }
 
-    // MARK: - delete: aborted (exit 0, NO JSON even with --json)
+    // MARK: - delete: aborted (exit 0)
 
     @Test func deleteAborted() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
 
         let out = try await TemplateDelete.perform(
-            name: "Daily", templateId: nil, force: false, json: true,
-            store: s, private: mock, confirm: { _ in false })
+            name: "Daily", templateId: nil, force: false, json: false,
+            store: s, private: mock, confirm: .answering("n"))
 
         #expect(out.exitCode == 0)
         #expect(out.stdout == "Aborted.\n")
+        #expect(mock.calls.isEmpty)
+    }
+
+    // MARK: - delete: --json without --force refuses instead of prompting (upstream 374c24d)
+
+    @Test func deleteJSONWithoutForceRefuses() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mock = MockPrivateWriter()
+
+        let out = try await TemplateDelete.perform(
+            name: "Daily", templateId: nil, force: false, json: true,
+            store: s, private: mock, confirm: .unexpected)
+
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "confirmation_required""#))
+        #expect(out.stderr.contains(#""id": 40"#))
+        #expect(mock.calls.isEmpty)
+    }
+
+    @Test func deleteNonInteractiveWithoutForceRefuses() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mock = MockPrivateWriter()
+
+        let out = try await TemplateDelete.perform(
+            name: "Daily", templateId: nil, force: false, json: false,
+            store: s, private: mock, confirm: .nonInteractive)
+
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
         #expect(mock.calls.isEmpty)
     }
 
@@ -372,13 +402,11 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
         mock.result = PrivateResult(status: "deleted", fields: ["id": .string("T40")])
-        var confirmCalled = false
 
         let out = try await TemplateDelete.perform(
             name: "Daily", templateId: nil, force: true, json: true,
-            store: s, private: mock, confirm: { _ in confirmCalled = true; return true })
+            store: s, private: mock, confirm: .unexpected)
 
-        #expect(confirmCalled == false)
         // COMPACT JSON: single line, no 2-space indentation (diverges from create/apply).
         #expect(!out.stdout.contains("\n  "))
         #expect(out.stdout.hasSuffix("}\n"))
@@ -402,7 +430,7 @@ import GRDB
 
         let out = try await TemplateDelete.perform(
             name: nil, templateId: 40, force: true, json: false,
-            store: s, private: mock, confirm: { _ in true })
+            store: s, private: mock, confirm: .unexpected)
 
         #expect(out.stdout == "Deleted template: Daily\n")
         #expect(mock.calls == [.deleteTemplate(templateId: "T40")])
@@ -416,7 +444,7 @@ import GRDB
         let out = await WriteDispatch.perform {
             try await TemplateDelete.perform(
                 name: "Ghost", templateId: nil, force: true, json: false,
-                store: s, private: mock, confirm: { _ in true })
+                store: s, private: mock, confirm: .unexpected)
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: template not found: Ghost\n")
@@ -433,7 +461,7 @@ import GRDB
         let out = await WriteDispatch.perform {
             try await TemplateDelete.perform(
                 name: "Daily", templateId: nil, force: true, json: false,
-                store: s, private: mock, confirm: { _ in true })
+                store: s, private: mock, confirm: .unexpected)
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: Failed to delete template 'Daily': denied\n")

@@ -338,20 +338,16 @@ struct SmartListDelete: AsyncParsableCommand {
         WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
             try await Self.perform(
                 name: args.name, smartListId: args.smartListId, force: args.force, json: args.json,
-                store: store, private: priv, confirm: { prompt in
-                    FileHandle.standardOutput.write(Data(prompt.utf8))
-                    let line = readLine() ?? ""
-                    return ["y", "yes"].contains(line.trimmingCharacters(in: .whitespaces).lowercased())
-                })
+                store: store, private: priv, confirm: .standard)
         })
     }
 
-    /// Testable core (no print/exit). Mirrors `cmd_smart_list_delete` (remctl:4668). `confirm`
-    /// receives the full prompt string and returns the user's yes/no (only "y"/"yes" accept).
+    /// Testable core (no print/exit). Mirrors `cmd_smart_list_delete` (remctl:4668). `confirm` is
+    /// the stdin seam the confirmation prompt reads from.
     /// PHASE-3 DIVERGENCE: the `requires --private.` gate is DROPPED.
     static func perform(
         name: String?, smartListId: Int?, force: Bool, json: Bool,
-        store: RemindersStore, private priv: PrivateWriter, confirm: (_ prompt: String) -> Bool
+        store: RemindersStore, private priv: PrivateWriter, confirm: ConfirmationPrompt
     ) async throws -> WriteOutcome {
         // 1. Require a target selector.
         let hasName = name != nil && !(name!.isEmpty)
@@ -361,11 +357,12 @@ struct SmartListDelete: AsyncParsableCommand {
         // 2. Resolve (custom-only, EXACT-name or Z_PK). Not-found/ambiguous propagate as WriteError.
         let target = try resolveCustomSmartList(store: store, name: name, smartListId: smartListId)
 
-        // 3. Confirmation unless --force. A non-yes answer prints "Aborted." and returns exit 0
-        //    with NO JSON, even in --json mode.
-        if !force {
-            let prompt = "Delete custom smart list '\(safeDisplay(target.name))'? [y/N] "
-            guard confirm(prompt) else { return .ok("Aborted.\n") }
+        // 3. Confirmation unless --force.
+        if let stop = confirmDestructiveAction(
+            force: force, json: json,
+            prompt: "Delete custom smart list '\(safeDisplay(target.name))'? [y/N] ",
+            identifier: .int(target.pk), cancelMessage: "Aborted.", using: confirm) {
+            return stop
         }
 
         // 4. Require a stable CloudKit identifier.

@@ -334,21 +334,17 @@ struct TemplateDelete: AsyncParsableCommand {
         WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
             try await Self.perform(
                 name: args.name, templateId: args.templateId, force: args.force, json: args.json,
-                store: store, private: priv, confirm: { prompt in
-                    FileHandle.standardOutput.write(Data(prompt.utf8))
-                    let line = readLine() ?? ""
-                    return ["y", "yes"].contains(line.trimmingCharacters(in: .whitespaces).lowercased())
-                })
+                store: store, private: priv, confirm: .standard)
         })
     }
 
     /// Testable core (no print/exit). Mirrors `cmd_template_delete` (remctl:4377).
     /// PHASE-3 DIVERGENCE: the `template-delete requires --private.` gate is DROPPED.
-    /// `confirm` receives the full prompt and returns yes/no (only "y"/"yes" accept).
+    /// `confirm` is the stdin seam the confirmation prompt reads from.
     /// NOTE: the JSON output is COMPACT (no indent) — diverges from create/apply.
     static func perform(
         name: String?, templateId: Int?, force: Bool, json: Bool,
-        store: RemindersStore, private priv: PrivateWriter, confirm: (_ prompt: String) -> Bool
+        store: RemindersStore, private priv: PrivateWriter, confirm: ConfirmationPrompt
     ) async throws -> WriteOutcome {
         // Resolve template (exact-name or Z_PK). Not-found/ambiguous/mutex propagate as CLIError.
         if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.") }
@@ -365,11 +361,12 @@ struct TemplateDelete: AsyncParsableCommand {
             throw CLIError("template not found: \(requested)")
         }
 
-        // Confirmation unless --force. A non-yes answer prints "Aborted." and returns exit 0
-        // with NO JSON, even in --json mode.
-        if !force {
-            let prompt = "Delete template '\(safeDisplay(tplName))'? [y/N] "
-            guard confirm(prompt) else { return .ok("Aborted.\n") }
+        // Confirmation unless --force.
+        if let stop = confirmDestructiveAction(
+            force: force, json: json,
+            prompt: "Delete template '\(safeDisplay(tplName))'? [y/N] ",
+            identifier: .int(tplId), cancelMessage: "Aborted.", using: confirm) {
+            return stop
         }
 
         guard let templateUUID = tplUUID, !templateUUID.isEmpty else {

@@ -13,6 +13,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
 - **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching. `import` validates the whole file the same way (structured `invalid_import`) before its first write.
 - **Refusals Reminders would reject:** a relative alarm (`15m`, `1h`, `1d`) needs a due date to count back from, so `add`/`edit` refuse one when the reminder would have none (`relative_alarm_requires_due_date`), and `edit -d clear` on a repeating reminder is refused before any write (`repeating_reminder_requires_due_date`). Both exit `1` and emit the structured code on stderr under `--json`.
+- **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
 
 ---
 
@@ -211,7 +212,7 @@ remctl undone 23880
 ```
 
 ### `delete <id> [--force]`
-Delete a reminder; `--force` skips the confirmation prompt. `--json`.
+Delete a reminder; `--force` skips the confirmation prompt (and is required with `--json` or a non-interactive stdin). `--json`.
 ```bash
 remctl delete 23880
 remctl delete 23880 --force
@@ -308,7 +309,7 @@ remctl list-rename --list-id 123 --new-name "Project Archive"
 ```
 
 ### `list-delete [NAME] [--force]`
-Delete a list (by name or `--list-id`); `--force` skips confirmation.
+Delete a list (by name or `--list-id`); `--force` skips confirmation (and is required with `--json` or a non-interactive stdin).
 ```bash
 remctl list-delete "Project Y" --force
 remctl list-delete --list-id 144 --force
@@ -376,7 +377,7 @@ remctl smart-list-edit --smart-list-id 170 --filter-json @filter.json --color re
 **Rejected before saving** (these do not materialize reliably): untagged, no-date, relative date, no-time, vehicle disconnected, list exclusions, and **more than one included list** — Reminders.app materializes only one included list per smart list. Unknown filter shapes and known zero-filter shapes are also rejected.
 
 ### `smart-list-delete [NAME] [--smart-list-id ID] [--force]`
-Delete a custom smart list by exact name or `--smart-list-id` (never a built-in); `--force` skips confirmation.
+Delete a custom smart list by exact name or `--smart-list-id` (never a built-in); `--force` skips confirmation (and is required with `--json` or a non-interactive stdin).
 ```bash
 remctl smart-list-delete "Flagged Review" --force
 remctl smart-list-delete --smart-list-id 170 --force
@@ -417,7 +418,7 @@ remctl template-apply --template-id 2
 ```
 
 ### `template-delete [NAME] [--template-id ID] [--force]`
-Delete only the saved template (not lists previously created from it); `--force` skips confirmation.
+Delete only the saved template (not lists previously created from it); `--force` skips confirmation (and is required with `--json` or a non-interactive stdin).
 ```bash
 remctl template-delete "Packing Template" --force
 remctl template-delete --template-id 2 --force --json

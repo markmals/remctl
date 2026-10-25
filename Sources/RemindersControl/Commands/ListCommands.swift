@@ -516,31 +516,28 @@ struct ListDelete: AsyncParsableCommand {
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
             try await Self.perform(
                 name: args.name, listId: args.listId, force: args.force, json: args.json,
-                store: store, writer: writer, confirm: { prompt in
-                    FileHandle.standardOutput.write(Data(prompt.utf8))
-                    let line = readLine() ?? ""
-                    return line.lowercased().hasPrefix("y")
-                })
+                store: store, writer: writer, confirm: .standard)
         })
     }
 
-    /// Testable core (no print/exit). Mirrors `cmd_list_delete` (remctl:6264). `confirm` receives the
-    /// full prompt string and returns the user's yes/no (default No: anything not starting with y/Y).
+    /// Testable core (no print/exit). Mirrors `cmd_list_delete` (remctl:6264). `confirm` is the
+    /// stdin seam the confirmation prompt reads from.
     /// PHASE-2 DIVERGENCE: the `if not bridge_available(): Error: remctl-bridge required for list
     /// management` guard is MOOT (writer always present) and is NOT emitted.
     static func perform(
         name: String?, listId: Int?, force: Bool, json: Bool,
-        store: RemindersStore, writer: RemindersWriter, confirm: (_ prompt: String) -> Bool
+        store: RemindersStore, writer: RemindersWriter, confirm: ConfirmationPrompt
     ) async throws -> WriteOutcome {
         // 1. Resolve the target list (CLIErrors pass through). RESOLVED title goes to the writer.
         let target = try resolveRequiredListTarget(store: store, name: name, listId: listId)
         let targetName = target.title
 
-        // 2. Confirmation unless --force (remctl:6275-6279). The prompt fires even in --json mode;
-        //    a non-"y" answer prints `Cancelled.` and returns exit 0 with NO JSON (plain text).
-        if !force {
-            let prompt = "Delete list '\(safeDisplay(targetName))'? This cannot be undone. [y/N] "
-            guard confirm(prompt) else { return .ok("Cancelled.\n") }
+        // 2. Confirmation unless --force (remctl:6275-6279).
+        if let stop = confirmDestructiveAction(
+            force: force, json: json,
+            prompt: "Delete list '\(safeDisplay(targetName))'? This cannot be undone. [y/N] ",
+            identifier: .int(target.id), using: confirm) {
+            return stop
         }
 
         // 3. Delete. On a caught WriteError, re-wrap to match cmd_list_delete:6291.

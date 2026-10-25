@@ -421,29 +421,59 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
         mock.result = PrivateResult(status: "deleted")
-        var prompted = ""
+        let prompted = Prompted()
 
         let out = try await SmartListDelete.perform(
             name: "High Priority", smartListId: nil, force: false, json: false,
-            store: s, private: mock, confirm: { prompt in prompted = prompt; return true })
+            store: s, private: mock, confirm: .recording { prompted.value = $0 })
 
-        #expect(prompted == "Delete custom smart list 'High Priority'? [y/N] ")
+        #expect(prompted.value == "Delete custom smart list 'High Priority'? [y/N] ")
         #expect(out.stdout == "Deleted smart list: High Priority\n")
         #expect(mock.calls == [.deleteSmartList(smartListId: "SL30")])
     }
 
-    // MARK: - delete: confirm declined → Aborted (exit 0, no JSON even with --json)
+    // MARK: - delete: confirm declined → Aborted (exit 0)
 
     @Test func deleteAborted() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
 
         let out = try await SmartListDelete.perform(
-            name: "High Priority", smartListId: nil, force: false, json: true,
-            store: s, private: mock, confirm: { _ in false })
+            name: "High Priority", smartListId: nil, force: false, json: false,
+            store: s, private: mock, confirm: .answering("no"))
 
         #expect(out.exitCode == 0)
         #expect(out.stdout == "Aborted.\n")
+        #expect(mock.calls.isEmpty)
+    }
+
+    // MARK: - delete: --json without --force refuses instead of prompting (upstream 374c24d)
+
+    @Test func deleteJSONWithoutForceRefuses() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mock = MockPrivateWriter()
+
+        let out = try await SmartListDelete.perform(
+            name: "High Priority", smartListId: nil, force: false, json: true,
+            store: s, private: mock, confirm: .unexpected)
+
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "confirmation_required""#))
+        #expect(out.stderr.contains(#""id": 30"#))
+        #expect(mock.calls.isEmpty)
+    }
+
+    @Test func deleteNonInteractiveWithoutForceRefuses() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mock = MockPrivateWriter()
+
+        let out = try await SmartListDelete.perform(
+            name: "High Priority", smartListId: nil, force: false, json: false,
+            store: s, private: mock, confirm: .nonInteractive)
+
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
         #expect(mock.calls.isEmpty)
     }
 
@@ -453,13 +483,11 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let mock = MockPrivateWriter()
         mock.result = PrivateResult(status: "deleted")
-        var confirmCalled = false
 
         let out = try await SmartListDelete.perform(
             name: "High Priority", smartListId: nil, force: true, json: true,
-            store: s, private: mock, confirm: { _ in confirmCalled = true; return true })
+            store: s, private: mock, confirm: .unexpected)
 
-        #expect(confirmCalled == false)
         let obj = try #require(try? JSONSerialization.jsonObject(with: Data(out.stdout.utf8)) as? [String: Any])
         #expect(obj["status"] as? String == "deleted")
         #expect(obj["id"] as? Int == 30)
@@ -479,7 +507,7 @@ import GRDB
 
         let out = try await SmartListDelete.perform(
             name: nil, smartListId: 30, force: true, json: false,
-            store: s, private: mock, confirm: { _ in true })
+            store: s, private: mock, confirm: .unexpected)
 
         #expect(out.stdout == "Deleted smart list: High Priority\n")
         #expect(mock.calls == [.deleteSmartList(smartListId: "SL30")])
@@ -494,7 +522,7 @@ import GRDB
         let out = await WriteDispatch.perform {
             try await SmartListDelete.perform(
                 name: "Ghost", smartListId: nil, force: true, json: false,
-                store: s, private: mock, confirm: { _ in true })
+                store: s, private: mock, confirm: .unexpected)
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: custom smart list not found: Ghost\n")
@@ -510,7 +538,7 @@ import GRDB
         let out = await WriteDispatch.perform {
             try await SmartListDelete.perform(
                 name: "Dup", smartListId: nil, force: true, json: false,
-                store: s, private: mock, confirm: { _ in true })
+                store: s, private: mock, confirm: .unexpected)
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: multiple custom smart lists match. Use --smart-list-id.\n  40: Dup\n  41: Dup\n")
@@ -527,7 +555,7 @@ import GRDB
         let out = await WriteDispatch.perform {
             try await SmartListDelete.perform(
                 name: "High Priority", smartListId: nil, force: true, json: false,
-                store: s, private: mock, confirm: { _ in true })
+                store: s, private: mock, confirm: .unexpected)
         }
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: Failed to delete smart list 'High Priority': denied\n")

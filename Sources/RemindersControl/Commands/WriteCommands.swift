@@ -982,22 +982,19 @@ struct Delete: AsyncParsableCommand {
     func run() async throws {
         let id = self.id, force = self.force, json = self.json
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
-            try await Self.perform(id: id, force: force, json: json, store: store, writer: writer, confirm: { prompt in
-                FileHandle.standardOutput.write(Data(prompt.utf8))
-                let line = readLine() ?? ""
-                return line.lowercased().hasPrefix("y")
-            })
+            try await Self.perform(id: id, force: force, json: json, store: store, writer: writer, confirm: .standard)
         })
     }
 
-    /// Testable core. `confirm` receives the full prompt string and returns the user's yes/no.
+    /// Testable core. `confirm` is the stdin seam the confirmation prompt reads from.
     static func perform(id: Int, force: Bool, json: Bool, store: RemindersStore, writer: RemindersWriter,
-                        confirm: (_ prompt: String) -> Bool) async throws -> WriteOutcome {
+                        confirm: ConfirmationPrompt) async throws -> WriteOutcome {
         let (title, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "delete it")
-        if !force {
-            let list = store.reminder(pk: id)?.string("list_name") ?? ""
-            let prompt = "Delete '\(safeDisplay(title))' from \(safeDisplay(list))? [y/N] "
-            guard confirm(prompt) else { return .ok("Cancelled.\n") }   // exit 0, no JSON
+        if let stop = confirmDestructiveAction(
+            force: force, json: json,
+            prompt: "Delete '\(safeDisplay(title))' from \(safeDisplay(store.reminder(pk: id)?.string("list_name") ?? ""))? [y/N] ",
+            identifier: .int(id), using: confirm) {
+            return stop
         }
         _ = try await writer.delete(id: ckid)
         if json {

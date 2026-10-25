@@ -238,20 +238,21 @@ import GRDB
     @Test func deleteForce() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        let human = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false, store: s, writer: m, confirm: { _ in Issue.record("should not prompt with --force"); return false })
+        let human = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false, store: s, writer: m, confirm: .unexpected)
         #expect(m.calls == [.deleteList(title: "Work")])
         #expect(human == WriteOutcome.ok("Deleted list: Work\n"))
 
         let m2 = MockWriter()
-        let js = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: true, store: s, writer: m2, confirm: { _ in false })
+        let js = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: true, store: s, writer: m2, confirm: .unexpected)
         #expect(js.stdout == #"{"status": "deleted", "id": 10, "name": "Work"}"# + "\n")
     }
 
     @Test func deleteConfirmYes() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter(); var seenPrompt = ""
-        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: false, store: s, writer: m, confirm: { p in seenPrompt = p; return true })
-        #expect(seenPrompt == "Delete list 'Work'? This cannot be undone. [y/N] ")
+        let m = MockWriter()
+        let seen = Prompted()
+        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: false, store: s, writer: m, confirm: .recording { seen.value = $0 })
+        #expect(seen.value == "Delete list 'Work'? This cannot be undone. [y/N] ")
         #expect(m.calls == [.deleteList(title: "Work")])
         #expect(out.stdout == "Deleted list: Work\n")
     }
@@ -259,9 +260,29 @@ import GRDB
     @Test func deleteConfirmNo() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        // --json mode: the prompt still fires and Cancelled. is plain text (no JSON), exit 0.
-        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: true, store: s, writer: m, confirm: { _ in false })
+        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: false, store: s, writer: m, confirm: .answering("n"))
         #expect(out == WriteOutcome.ok("Cancelled.\n"))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func deleteJSONWithoutForceRefuses() async throws {
+        // --json never prompts: it refuses and deletes nothing (upstream 374c24d).
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: true, store: s, writer: m, confirm: .unexpected)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "confirmation_required""#))
+        #expect(out.stderr.contains(#""id": 10"#))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func deleteNonInteractiveWithoutForceRefuses() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: false, store: s, writer: m, confirm: .nonInteractive)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
         #expect(m.calls.isEmpty)
     }
 
@@ -269,7 +290,7 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         m.throwError = WriteError("kaboom")
-        let out = await WriteDispatch.perform { try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false, store: s, writer: m, confirm: { _ in true }) }
+        let out = await WriteDispatch.perform { try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false, store: s, writer: m, confirm: .unexpected) }
         #expect(out.stderr == "Error: Failed to delete list 'Work': kaboom\n")
         #expect(out.exitCode == 1)
     }
