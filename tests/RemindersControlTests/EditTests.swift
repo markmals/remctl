@@ -558,6 +558,17 @@ import GRDB
         #expect(mp.calls == [.setTags(id: "ABC", tags: ["Work", "Home", "Archive"])])
     }
 
+    @Test func blockedRichLinkRefusedBeforeAnyEdit() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, title: "New", url: "https://printer.local/status", tags: "a",
+                                         json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --private --url must resolve to a public http or https host.\n")
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
     @Test func sectionRoutesPrivateOnly() async throws {
         // --section is private-only and resolves against the reminder's current list (ZLIST=10).
         let (s, dir) = try store { db in

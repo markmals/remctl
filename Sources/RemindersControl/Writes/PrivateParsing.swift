@@ -205,12 +205,12 @@ public enum PrivateParsing {
                 result.earlyReminder = earlyStr
             }
 
-            // urls / url — validate http/https scheme (SSRF guard is in ObjC P1)
+            // urls / url — the rich-link rule, checked before the parent or any subtask exists.
             let urlsRaw = spec["urls"] ?? spec["url"]
             let urls = normalizeStringList(urlsRaw, field: "urls")
             for url in urls {
-                guard isWebURL(url) else {
-                    throw CLIError("--private --subtask url requires an http or https URL.")
+                if let problem = RichLinkURL.problem(url, flag: "--private --subtask url") {
+                    throw CLIError(problem)
                 }
             }
             result.urls = urls
@@ -340,15 +340,6 @@ public enum PrivateParsing {
     private static func recurrenceValueRepr(_ value: Any) -> String {
         if let text = value as? String { return WriteFormatting.pyRepr(text) }
         return recurrenceJSON(value)?.serialized(indent: nil, ensureAscii: true) ?? "\(value)"
-    }
-
-    /// Port of `is_web_url`: http or https scheme with a non-empty host.
-    private static func isWebURL(_ value: String) -> Bool {
-        guard let url = URL(string: value),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              let host = url.host, !host.isEmpty else { return false }
-        return true
     }
 
     private static func toDouble(_ value: Any) -> Double? {

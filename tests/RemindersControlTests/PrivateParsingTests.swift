@@ -397,15 +397,28 @@ import GRDB
     }
 
     @Test func parseSubtaskSpecs_urlKey_snakeCase_url() throws {
-        let json = #"{"title":"Task","url":"https://example.com"}"#
+        let json = #"{"title":"Task","url":"https://1.1.1.1"}"#
         let result = try PrivateParsing.parseSubtaskSpecs([json])
-        #expect(result[0].urls == ["https://example.com"])
+        #expect(result[0].urls == ["https://1.1.1.1"])
     }
 
     @Test func parseSubtaskSpecs_invalidURL_throws() {
         let json = #"{"title":"Task","url":"ftp://example.com"}"#
         #expect(throws: CLIError.self) {
             try PrivateParsing.parseSubtaskSpecs([json])
+        }
+    }
+
+    @Test(arguments: ["https://localhost/x", "http://127.0.0.1/", "https://printer.local/", "http://10.0.0.5/",
+                      "https://[::ffff:192.168.1.1]/", "http://198.18.0.1/"])
+    func parseSubtaskSpecs_blockedHostThrows(_ url: String) {
+        do {
+            _ = try PrivateParsing.parseSubtaskSpecs([#"{"title":"Task","url":"\#(url)"}"#])
+            Issue.record("expected a refusal for \(url)")
+        } catch let error as CLIError {
+            #expect(error.message == "--private --subtask url must resolve to a public http or https host.")
+        } catch {
+            Issue.record("unexpected \(error)")
         }
     }
 

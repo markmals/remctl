@@ -175,7 +175,7 @@ remctl add "Pick up groceries" -l Family --assign Alex
 
 How RemCTL picks the path from context on a bare `add`:
 
-- `--url` requires a public `http`/`https` host — loopback, private, `.local`, fake-IP (`198.18.0.0/15`) and IPv4-mapped IPv6 spellings of those are rejected before writing. With no other private metadata it appends to notes; alongside private metadata it becomes a synced web rich link.
+- `--url` alongside private metadata becomes a synced web rich link and requires a public `http`/`https` host — loopback, private, `.local`, fake-IP (`198.18.0.0/15`) and IPv4-mapped IPv6 spellings of those are rejected before anything is written (`--json`: `{"status":"error","code":"invalid_rich_link_url",…,"url":…}` on stderr). With no other private metadata it only appends to notes.
 - `-t/--tags` writes inline `#hashtag` title tokens on a bare add, but synced tags when private metadata is present (`edit --tags` is always a synced-tag write).
 - `-f/--flag` always writes the real Reminders flag through ReminderKit, so it implies the private path (as `edit --flagged` does). EventKit has no flagged API, so a failed flag write is reported as an error — RemCTL never substitutes a priority change.
 - Private targets that can be checked up front (`--section`, `--section-id`, `--assign`) are resolved **before** the reminder is created. If a private step fails after the create, `add` exits 1 reporting the created reminder, the steps that completed, and the failed one, and tells you to finish with `edit` rather than re-running `add` (`--json`: `{"status":"error","code":"private_add_partial",…}` on stderr).

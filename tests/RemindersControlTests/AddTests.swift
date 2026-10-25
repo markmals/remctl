@@ -260,7 +260,7 @@ import GRDB
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
         let mp = MockPrivateWriter()
-        let out = try await Add.perform(title: "T", url: "https://x", flag: true, tags: "work,home",
+        let out = try await Add.perform(title: "T", url: "https://1.1.1.1", flag: true, tags: "work,home",
                                         urgent: true, json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 0)
         // Public proxies are NOT used when wantsPrivate: title keeps no #hashtags and write.url nil.
@@ -269,7 +269,7 @@ import GRDB
         #expect(w?.url == nil)
         // Private fan-out emission order: addPrivateMetadata, setFlagged, setUrgent.
         #expect(mp.calls == [
-            .addPrivateMetadata(id: "EK-NEW", urls: ["https://x"], tags: ["work", "home"]),
+            .addPrivateMetadata(id: "EK-NEW", urls: ["https://1.1.1.1"], tags: ["work", "home"]),
             .setFlagged(id: "EK-NEW", flagged: true),
             .setUrgent(id: "EK-NEW", urgent: true),
         ])
@@ -441,15 +441,48 @@ import GRDB
         // gets NO #hashtags and write.url stays nil.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"; let mp = MockPrivateWriter()
-        let out = try await Add.perform(title: "Buy milk", url: "https://x", tags: "work",
+        let out = try await Add.perform(title: "Buy milk", url: "https://1.1.1.1", tags: "work",
                                         urgent: true, json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 0)
         #expect(createdWrite(m)?.title == "Buy milk")   // no #hashtag append
         #expect(createdWrite(m)?.url == nil)
         #expect(mp.calls == [
-            .addPrivateMetadata(id: "EK-NEW", urls: ["https://x"], tags: ["work"]),
+            .addPrivateMetadata(id: "EK-NEW", urls: ["https://1.1.1.1"], tags: ["work"]),
             .setUrgent(id: "EK-NEW", urgent: true),
         ])
+    }
+
+    @Test func blockedRichLinkRefusedBeforeTheReminderExists() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", url: "http://127.0.0.1:8080/admin", urgent: true,
+                                        json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "invalid_rich_link_url""#))
+        #expect(out.stderr.contains(#""url": "http://127.0.0.1:8080/admin""#))
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func nonWebRichLinkRefusedBeforeTheReminderExists() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Add.perform(title: "T", url: "ftp://1.1.1.1/file", flag: true,
+                                        json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --private --url requires an http or https URL.\n")
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func notesUrlIsNotHeldToTheRichLinkRule() async throws {
+        // Without private metadata the URL is only appended to the notes.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Add.perform(title: "T", url: "http://localhost/x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.url == "http://localhost/x")
     }
 
     @Test func earlyReminderNoDueExitsOne() async throws {

@@ -99,6 +99,12 @@ struct Add: AsyncParsableCommand {
             || assign != nil || unassign
             || !subtask.isEmpty || !image.isEmpty
 
+        // validate_private_args: a refused rich link fails before the reminder exists, rather
+        // than after it as a private_add_partial.
+        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--private --url") {
+            return failInvalidRichLink(problem, url: url, json: json)
+        }
+
         // 1. Validate inputs BEFORE any write or list resolution (mirrors cmd_add order).
         var dueDate: Date? = nil
         if let due, !due.isEmpty {
@@ -360,6 +366,20 @@ struct Add: AsyncParsableCommand {
         return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
     }
 
+    /// A `--url` that can't become a synced rich link. Exit 1, nothing written.
+    static func failInvalidRichLink(_ problem: String, url: String, json: Bool) -> WriteOutcome {
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("invalid_rich_link_url")),
+                ("message", .string(problem)),
+                ("url", .string(url)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        return WriteOutcome(stderr: "Error: \(problem)\n", exitCode: 1)
+    }
+
     /// Port of `due_date_examples` (remctl:3850).
     private static func dueDateExamples(now: Date, calendar: Calendar) -> [String] {
         let df = DateFormatter()
@@ -505,6 +525,9 @@ struct Edit: AsyncParsableCommand {
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
             || assign != nil || unassign || replacementTags != nil
             || !subtask.isEmpty || !image.isEmpty
+        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--private --url") {
+            return Add.failInvalidRichLink(problem, url: url, json: json)
+        }
 
         // Parse the early-reminder spec up front (validates format; bad → CLIError).
         var parsedEarly: EarlyReminderWrite? = nil

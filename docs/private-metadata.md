@@ -243,7 +243,7 @@ Verify templates with `templates --json` and `template-info`, and verify an appl
 
 A private write that ReminderKit refuses stops the command with the helper's message and exit 1; no later private step runs.
 
-`add` is the dangerous case, because the reminder already exists by the time the private fan-out runs. RemCTL therefore resolves the targets it can check up front — `--section`/`--section-id` and `--assign` are resolved **before** the reminder is created, so a typo fails with nothing written. If a private step still fails afterwards, RemCTL reports the created reminder instead of a bare error, and tells you to finish it with `edit`:
+`add` is the dangerous case, because the reminder already exists by the time the private fan-out runs. RemCTL therefore checks what it can up front — `--section`/`--section-id` and `--assign` are resolved, and a rich-link `--url` or subtask URL is held to the public-host rule, **before** the reminder is created, so a typo or a blocked host fails with nothing written. If a private step still fails afterwards, RemCTL reports the created reminder instead of a bare error, and tells you to finish it with `edit`:
 
 ```
 Created reminder #23880 ('Buy milk') but failed to apply set_urgent; re-run edit to finish. Do NOT re-run add (would duplicate).
