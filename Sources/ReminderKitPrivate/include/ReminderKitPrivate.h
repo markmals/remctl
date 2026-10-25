@@ -19,4 +19,10 @@ const char *RKPProbe(void);
 /// selector, save failure, etc.) is caught and returned as an error dict.
 NSDictionary *RKPDispatch(NSDictionary *request);
 
+/// The rich-link host policy enforced before a URL attachment is saved: YES only for
+/// http/https URLs whose host is neither a private/loopback/fake-IP literal (including
+/// IPv4-mapped IPv6 spellings) nor a name that resolves to such an address. Exposed so
+/// the policy is testable without a Reminders store; performs no writes.
+BOOL RKPLooksLikeWebURL(NSString *value);
+
 NS_ASSUME_NONNULL_END

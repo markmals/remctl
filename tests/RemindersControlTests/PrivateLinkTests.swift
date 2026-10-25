@@ -25,3 +25,32 @@ func privateDispatchMissingAction() {
     let response = RKPDispatch([:])
     #expect(response["status"] as? String == "error")
 }
+
+// RKPLooksLikeWebURL is the host policy the helper applies before saving a rich link.
+// These cases are all numeric literals, so they never touch DNS.
+
+@Test("Rich links reject IPv4-mapped IPv6 loopback literals")
+func privateURLRejectsMappedLoopback() {
+    // getaddrinfo returns ::ffff:127.0.0.1 as an AF_INET6 v4-mapped address, which the
+    // plain IPv6 predicates (loopback/link-local/ULA) all miss.
+    #expect(RKPLooksLikeWebURL("http://[::ffff:127.0.0.1]/") == false)
+    #expect(RKPLooksLikeWebURL("http://[::ffff:192.168.1.1]/") == false)
+}
+
+@Test("Rich links reject literal fake-IP targets, including DNS-dot spellings")
+func privateURLRejectsFakeIPLiterals() {
+    // 198.18.0.0/15 is the fake-IP range DNS proxies hand out; a literal target is never real.
+    #expect(RKPLooksLikeWebURL("https://198.18.0.1/") == false)
+    #expect(RKPLooksLikeWebURL("https://198.19.255.254/") == false)
+    #expect(RKPLooksLikeWebURL("https://198.18.0.1./") == false)
+    #expect(RKPLooksLikeWebURL("http://[::ffff:198.18.0.1]/") == false)
+}
+
+@Test("Rich links still reject plain loopback and non-web schemes")
+func privateURLRejectsLoopbackAndSchemes() {
+    #expect(RKPLooksLikeWebURL("http://127.0.0.1/") == false)
+    #expect(RKPLooksLikeWebURL("http://[::1]/") == false)
+    #expect(RKPLooksLikeWebURL("http://localhost/") == false)
+    #expect(RKPLooksLikeWebURL("ftp://198.51.100.9/") == false)
+    #expect(RKPLooksLikeWebURL("not a url") == false)
+}

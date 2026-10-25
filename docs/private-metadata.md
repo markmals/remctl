@@ -54,7 +54,7 @@ remctl edit 23880 --early-reminder clear
 
 ### Rich links and tags
 
-`--url` writes a web rich link attachment when it routes private (see [routing](#public-vs-private-routing-no-flag)). Rich-link URLs — and any URL inside a rich subtask — must resolve to a public `http` or `https` host. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected **before** writing. `-t/--tags` writes real synced Reminders tags when it routes private.
+`--url` writes a web rich link attachment when it routes private (see [routing](#public-vs-private-routing-no-flag)). Rich-link URLs — and any URL inside a rich subtask — must resolve to a public `http` or `https` host. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected **before** writing, as are IPv4-mapped IPv6 spellings of those addresses (`::ffff:127.0.0.1`) and literal fake-IP targets in `198.18.0.0/15`, including trailing-dot DNS spellings (`198.18.0.1.`). Host *names* that resolve into the fake-IP range stay allowed, because DNS proxies hand out those placeholders for real public names. `-t/--tags` writes real synced Reminders tags when it routes private.
 
 ### Sections
 

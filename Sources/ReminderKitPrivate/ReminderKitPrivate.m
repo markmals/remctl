@@ -465,6 +465,10 @@ static BOOL ipv4AddressIsPrivateOrLocal(uint32_t address) {
         ((ip & 0xf0000000) == 0xe0000000);        // multicast/reserved
 }
 
+static BOOL ipv4AddressIsFakeIP(uint32_t address) {
+    return (ntohl(address) & 0xfffe0000) == 0xc6120000;   // 198.18.0.0/15
+}
+
 static BOOL sockaddrIsPrivateOrLocal(const struct sockaddr *addr) {
     if (!addr) return YES;
     if (addr->sa_family == AF_INET) {
@@ -474,6 +478,11 @@ static BOOL sockaddrIsPrivateOrLocal(const struct sockaddr *addr) {
     if (addr->sa_family == AF_INET6) {
         const struct sockaddr_in6 *ipv6 = (const struct sockaddr_in6 *)addr;
         const struct in6_addr *address = &ipv6->sin6_addr;
+        if (IN6_IS_ADDR_V4MAPPED(address)) {
+            uint32_t mapped;
+            memcpy(&mapped, &address->s6_addr[12], sizeof(mapped));
+            return ipv4AddressIsPrivateOrLocal(mapped) || ipv4AddressIsFakeIP(mapped);
+        }
         return IN6_IS_ADDR_UNSPECIFIED(address) ||
             IN6_IS_ADDR_LOOPBACK(address) ||
             IN6_IS_ADDR_LINKLOCAL(address) ||
@@ -490,8 +499,24 @@ static BOOL hostResolvesOnlyToPublicAddresses(NSString *host) {
         return NO;
     }
     NSString *lower = [host lowercaseString];
+    while ([lower hasSuffix:@"."]) { lower = [lower substringToIndex:lower.length - 1]; }
     if ([lower isEqualToString:@"localhost"] || [lower hasSuffix:@".local"]) {
         return NO;
+    }
+    // Fake-IP DNS placeholders are accepted for names, never literal targets.
+    struct in_addr literal;
+    if (inet_aton(lower.UTF8String, &literal) != 0 && ipv4AddressIsFakeIP(literal.s_addr)) {
+        return NO;
+    }
+    NSString *ipv6Host = lower;
+    if ([ipv6Host hasPrefix:@"["] && [ipv6Host hasSuffix:@"]"]) {
+        ipv6Host = [ipv6Host substringWithRange:NSMakeRange(1, ipv6Host.length - 2)];
+    }
+    struct in6_addr literal6;
+    if (inet_pton(AF_INET6, ipv6Host.UTF8String, &literal6) == 1 && IN6_IS_ADDR_V4MAPPED(&literal6)) {
+        uint32_t mapped;
+        memcpy(&mapped, &literal6.s6_addr[12], sizeof(mapped));
+        if (ipv4AddressIsPrivateOrLocal(mapped) || ipv4AddressIsFakeIP(mapped)) return NO;
     }
 
     struct addrinfo hints;
@@ -517,7 +542,7 @@ static BOOL hostResolvesOnlyToPublicAddresses(NSString *host) {
     return safe;
 }
 
-static BOOL looksLikeWebURL(NSString *value) {
+BOOL RKPLooksLikeWebURL(NSString *value) {
     NSURL *url = [NSURL URLWithString:value];
     if (!url || url.host.length == 0) {
         return NO;
@@ -1551,7 +1576,7 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     RKP_FAIL(@"ReminderKit attachment context unavailable");
                 }
                 for (NSString *urlString in urls) {
-                    if (!looksLikeWebURL(urlString)) {
+                    if (!RKPLooksLikeWebURL(urlString)) {
                         RKP_FAIL([NSString stringWithFormat:@"Invalid web URL: %@", urlString]);
                     }
                     NSURL *url = [NSURL URLWithString:urlString];
