@@ -56,4 +56,5 @@ let allSubcommands: [ParsableCommand.Type] =
     + groupCommands
     + smartListCommands
     + templateCommands
+    + locationCommands
     + opsCommands

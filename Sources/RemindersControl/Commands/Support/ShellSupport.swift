@@ -51,6 +51,7 @@ _remctl() {
         'section-delete:Delete a section in a list'
         'sharees:Show people available for assignment in a shared list'
         'list-info:Show one list with its section ids and sharees'
+        'location-lookup:Resolve an address to coordinates for a location alarm'
         'stats:Statistics'
         'link:Get deep links'
         'open:Open in Reminders.app'
@@ -137,6 +138,12 @@ _remctl() {
                 '--urgent[Set private urgent state]' \
                 '--no-urgent[Clear private urgent state]' \
                 '--early-reminder[Set Early Reminder delta, e.g. 15m, 1h, clear]:delta:' \
+                '--location-title[Location alarm title]:title:' \
+                '--latitude[Location alarm latitude]:latitude:' \
+                '--longitude[Location alarm longitude]:longitude:' \
+                '--radius[Location alarm radius meters]:radius:' \
+                '--proximity[Location alarm trigger]:proximity:(arriving leaving)' \
+                '--location-address[Street address resolved to coordinates before any write]:address:' \
                 '--url[URL, web rich link with --private]:url:' \
                 '(-t --tags)'{-t,--tags}'[Tags, synced with --private]:tags:' \
                 '(-l --list)'{-l,--list}'[Target list]:list:' \
@@ -170,6 +177,7 @@ _remctl() {
                 '--longitude[Location alarm longitude]:longitude:' \
                 '--radius[Location alarm radius meters]:radius:' \
                 '--proximity[Location alarm trigger]:proximity:(arriving leaving)' \
+                '--location-address[Street address resolved to coordinates before any write]:address:' \
                 '--title[New title]:title:' \
                 '(-l --list)'{-l,--list}'[Move to list]:list:' \
                 '--list-id[Move to list by stable numeric ID]:id:' \
@@ -218,6 +226,12 @@ _remctl() {
         list-info)
             _arguments \
                 '--list-id[List by stable numeric ID]:id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        location-lookup)
+            _arguments \
+                '--timeout[Seconds to wait for the geocoder]:seconds:' \
                 '--json[JSON output]'
             return
             ;;
@@ -475,14 +489,14 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info location-lookup stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --batch --json" -- "$cur") )
@@ -498,6 +512,9 @@ _remctl() {
         return
     elif [ "$cmd" = "list-info" ]; then
         COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "location-lookup" ]; then
+        COMPREPLY=( $(compgen -W "--timeout --json" -- "$cur") )
         return
     elif [ "$cmd" = "doctor" ]; then
         COMPREPLY=( $(compgen -W "--for-agent --json" -- "$cur") )
@@ -631,6 +648,7 @@ complete -c remctl -n "__fish_use_subcommand" -a section-rename -d "Rename a sec
 complete -c remctl -n "__fish_use_subcommand" -a section-delete -d "Delete a section in a list"
 complete -c remctl -n "__fish_use_subcommand" -a sharees -d "Show people available for assignment in a shared list"
 complete -c remctl -n "__fish_use_subcommand" -a list-info -d "Show one list with its section ids and sharees"
+complete -c remctl -n "__fish_use_subcommand" -a location-lookup -d "Resolve an address to coordinates for a location alarm"
 complete -c remctl -n "__fish_use_subcommand" -a stats -d "Statistics"
 complete -c remctl -n "__fish_use_subcommand" -a link -d "Get deep links"
 complete -c remctl -n "__fish_use_subcommand" -a open -d "Open in Reminders.app"
@@ -803,6 +821,14 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l early-reminder -d "Se
 complete -c remctl -n "__fish_seen_subcommand_from add" -l url -d "URL, web rich link with --private" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags, synced with --private" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l list-id -d "Target list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l location-title -d "Location alarm title" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l latitude -d "Location alarm latitude" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l longitude -d "Location alarm longitude" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l radius -d "Location alarm radius" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l proximity -d "Location trigger" -a "arriving leaving"
+complete -c remctl -n "__fish_seen_subcommand_from add" -l location-address -d "Street address resolved before any write" -r
+complete -c remctl -n "__fish_seen_subcommand_from location-lookup" -l timeout -d "Seconds to wait for the geocoder" -r
+complete -c remctl -n "__fish_seen_subcommand_from location-lookup" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from done" -l date -d "Set completion date" -r
 complete -c remctl -n "__fish_seen_subcommand_from done" -l batch -d "Report the batch result shape even for one id"
 complete -c remctl -n "__fish_seen_subcommand_from done" -l json -d "JSON output"
@@ -834,6 +860,7 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -l latitude -d "Locatio
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l longitude -d "Location alarm longitude" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l radius -d "Location alarm radius" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l proximity -d "Location trigger" -a "arriving leaving"
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l location-address -d "Street address resolved before any write" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -s l -l list -d "Move to list" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l list-id -d "Move to list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced tags with --private" -r

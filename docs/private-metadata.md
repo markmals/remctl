@@ -100,13 +100,17 @@ Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic fi
 
 ## Location alarms
 
-Location-based alarms use `--location-title`, `--latitude`, `--longitude`, `--radius`, and `--proximity` (`arriving|leaving`).
+Location-based alarms use `--location-title`, `--latitude`, `--longitude`, `--radius`, and `--proximity` (`arriving|leaving`), on both `add` and `edit`.
 
 ```bash
+remctl add "Pick up prints" --location-title "Apple Park" --latitude 37.3349 --longitude=-122.0090 --radius 200
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200 --proximity arriving
+remctl edit 23880 --location-address "1 Apple Park Way, Cupertino, CA 95014" --proximity leaving
 ```
 
-Although a location alarm is conceptually Reminders metadata, RemCTL writes it through **EventKit's structured-location path**, because that materializes reliably on current macOS. RemCTL validates latitude, longitude, radius, and proximity before saving (note: `address` is not supported), and replaces any existing location alarm instead of stacking a second one — time alarms are untouched. Verify the result in `info --json` under `alarms`.
+Although a location alarm is conceptually Reminders metadata, RemCTL writes it through **EventKit's structured-location path**, because that materializes reliably on current macOS. It is therefore a public write: no ReminderKit call is involved. RemCTL validates latitude, longitude, radius, and proximity before saving, and replaces any existing location alarm instead of stacking a second one — time alarms are untouched. Verify the result in `info --json` under `alarms`.
+
+`--location-address ADDRESS` resolves a street address with Apple's geocoder before the first write and refuses anything but a single street-sized match that names the street typed in a town or postal code the address gives; see [commands.md](commands.md#due-dates-recurrence-alarms-early-reminders-locations) for the statuses and error codes, and `remctl location-lookup` to inspect an address without writing. The resolved coordinates, not the address text, are what gets saved: EventKit's structured location carries only a title, coordinates and a radius.
 
 ## List metadata
 

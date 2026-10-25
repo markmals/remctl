@@ -109,6 +109,16 @@ Reminder statistics. `--json`, `--no-color`.
 remctl stats
 ```
 
+### `location-lookup <query>`
+Resolve an address to coordinates for a location alarm, without writing anything. `--timeout SECONDS` (1–30, default 10), `--json`. This is the same lookup `add`/`edit --location-address` run, so it is the way to check an address before a write.
+
+`status` is `resolved` (safe to use), `ambiguous` (several matches), `imprecise` (one match covering a whole city or region), `unconfirmed` (a different street, or no town or postal code — see `reason`), or `not_found`. Only `resolved` sets `usable: true` and a `location`; the others list what the geocoder returned under `candidates` with `name`, `address`, coordinates, `precision` (`street`/`place`/`area`) and `regionRadius`, and exit 0 so a caller can inspect them. Personal labels such as `Home` or `Work` are refused (`location_label_not_address`): pass the real address and label it with `--location-title`. The lookup needs network access, but no Reminders access, no Full Disk Access and no Location Services permission.
+
+```bash
+remctl location-lookup "Piazza Navona, Rome"
+remctl location-lookup "1 Apple Park Way, Cupertino, CA 95014" --json
+```
+
 ### `show [LIST] [--list-id ID] [--completed]`
 Reminders in a list (name positionally or `--list-id`), in Reminders' stored manual display order when the list has one; reminders not yet in that record follow, in id order. Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories. Naming a list group shows the reminders of its child lists instead, grouped by child list and each in that list's own manual order; `--format table` prints one table per child list (and per section), and `show <group> --json` names the owning `list` and `group` on every reminder. A group with no child lists reports `No child lists in group '<name>'`.
 ```bash
@@ -161,7 +171,7 @@ remctl upcoming 14 --via-eventkit --json
 ## Creating and Editing
 
 ### `add <title>`
-Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `--json`.
 
 Date-only `-d` inputs (`today`, `tomorrow`, `2026-06-01`, `+3d`, `in 2 weeks`, `next friday`, and natural-language dates such as `march 30`) create **all-day** reminders; inputs with explicit times create timed reminders.
 
@@ -179,6 +189,8 @@ remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":
 remctl add "Leave now" -l Work --urgent
 remctl add "Milk" -l Groceries --grocery
 remctl add "Pick up groceries" -l Family --assign Alex
+remctl add "Pick up prints" --location-title "Apple Park" --latitude 37.3349 --longitude=-122.0090 --radius 200
+remctl add "Pick up prints" --location-address "1 Apple Park Way, Cupertino, CA 95014"
 ```
 
 How RemCTL picks the path from context on a bare `add`:
@@ -189,11 +201,11 @@ How RemCTL picks the path from context on a bare `add`:
 - Private targets that can be checked up front (`--section`, `--section-id`, `--assign`) are resolved **before** the reminder is created. If a private step fails after the create, `add` exits 1 reporting the created reminder, the steps that completed, and the failed one, and tells you to finish with `edit` rather than re-running `add` (`--json`: `{"status":"error","code":"private_add_partial",…}` on stderr).
 
 ### `edit <id>`
-Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--set-tags`, `--clear-tags`, `--remove-tag` (repeatable), `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `-t/--tags`, `--set-tags`, `--clear-tags`, `--remove-tag` (repeatable), `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
 
 Date-only `-d` values keep the reminder all-day through the edit (re-setting the same all-day date nudges by a day, not an hour, so the change still syncs).
 
-Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list. `--address` is accepted but not supported for location alarms.
+Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list.
 
 `--url` on a public edit appends to the existing notes instead of replacing them; pass `-n/--notes` to replace the body first (`-n ""` clears it). A URL already present in the notes as its own word is not appended a second time, so repeating the same edit is safe.
 
@@ -202,6 +214,8 @@ Rich-link and image edits are **additive** — RemCTL adds, never removes or rep
 An edit that changes nothing prints `Nothing to update.` and exits 0; under `--json` that is `{"status":"unchanged","code":"nothing_to_update","id":…,"title":…,"message":"Nothing to update."}`. Every `edit --json` result echoes `title`.
 
 Location alarms are range-checked before the first write: `--latitude` -90 to 90, `--longitude` -180 to 180, `--radius` 1 to 100000 meters (`invalid_location_radius` under `--json`).
+
+`--location-address ADDRESS` (`--address` is a hidden alias; passing both is an error) resolves the address to coordinates before anything is written — see [Location alarms](#due-dates-recurrence-alarms-early-reminders-locations). It cannot be combined with `--latitude`/`--longitude` (`location_address_conflict`).
 
 **List moves.** An ordinary move goes through EventKit and keeps the reminder's id. A reminder
 that owns subtasks cannot be moved that way, so RemCTL clones the parent and its subtasks into
@@ -305,7 +319,9 @@ A recurrence **object** — exactly the shape `export` and `info --json` emit (`
 
 **Early Reminders** (`--early-reminder`) are a *separate* Reminders Early Reminder (a private due-date delta alert, not an EventKit alarm). Accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; a non-clear value requires a due date. JSON readback includes `earlyReminder`/`earlyReminders`.
 
-**Location alarms** (`--location-title` with `--latitude`/`--longitude`, plus `--radius` and `--proximity arriving|leaving`) are written through EventKit structured-location alarms. A reminder keeps at most one location alarm — editing the location replaces the existing one instead of stacking another — while time alarms are left alone. Verify in `info --json` under `alarms` with `type: "location"` and a `location` object (title, coordinates, radius, proximity). Available on `edit`.
+**Location alarms** (`--location-title` with `--latitude`/`--longitude`, plus `--radius` and `--proximity arriving|leaving`) are written through EventKit structured-location alarms, on both `add` and `edit`. They are a public write — no private metadata is involved. A reminder keeps at most one location alarm — editing the location replaces the existing one instead of stacking another — while time alarms are left alone. Verify in `info --json` under `alarms` with `type: "location"` and a `location` object (title, coordinates, radius, proximity).
+
+**`--location-address ADDRESS`** replaces the coordinates with a street address. RemCTL looks it up with Apple's geocoder (10-second deadline) after every other check and **before the first write**, and uses the match only when it is the only one, is street-sized, names the street or place typed, and the address gives a town or postal code. Apple's geocoder returns a best guess even for a street it did not find, so anything else stops the command and nothing is created or changed: `location_not_found`, `location_ambiguous`, `location_imprecise`, or `location_unconfirmed` (with `reason` `street_mismatch` or `no_town`), each carrying `query` and `candidates`. Lookup problems report `location_address_required`, `location_address_too_long` (512 characters), `location_label_not_address` (a personal label such as `Home` — pass the real address and use `--location-title` for the label), `location_lookup_timeout`, `location_lookup_denied`, or `location_lookup_failed`. On success `--location-title` defaults to the match's name, `add`/`edit` print a `Location:` line, and `--json` gains `resolvedLocation` (`query`, `title`, `address`, `latitude`, `longitude`, `precision`, `radius`, `proximity`, `source: "geocoded"`). Use [`location-lookup`](#location-lookup-query) to inspect an address first. The geocoder needs network access but no Location Services permission; the resolved street address itself is not stored, because EventKit's structured location carries only a title, coordinates and a radius.
 
 ### Subtasks
 

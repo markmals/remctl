@@ -18,6 +18,8 @@ remctl  (one Swift binary)
            └─ sections, subtasks, synced tags, image attachments, real flag,
               urgent, Early Reminders, list/smart-list appearance, Groceries,
               custom smart lists, templates
+  lookup:  CoreLocation         (in-process, network)
+           └─ address -> coordinates for location alarms; no permission needed
 ```
 
 Reads go directly to the local Reminders SQLite store for speed and detail.
@@ -127,6 +129,19 @@ these operations.
 The writer validates user input — malformed due dates, recurrence rules,
 alarms, priorities, and location payloads fail before anything is written.
 
+## The Address-Lookup Path — CoreLocation
+
+`--location-address` on `add`/`edit` and the read-only `location-lookup` command turn a street
+address into coordinates before any write. `CoreLocationGeocoder`
+(`Sources/RemindersControl/Location/AddressGeocoder.swift`) wraps one `CLGeocoder` request with a
+hard deadline and cancels it on timeout; the judgement that follows —
+precision, mismatch detection against the words the user typed, and the resolved/ambiguous/
+imprecise/unconfirmed/not_found verdict — is pure code in `Location/LocationLookup.swift`, driven
+through the `AddressGeocoder` protocol so tests exercise it without the network. The lookup needs
+network access but no TCC grant: it reads no Reminders data and writes nothing. Only a `resolved`
+match becomes a `LocationAlarmWrite` on the EventKit path; every other verdict stops the command
+before its first write.
+
 ## The Private-Write Path — ReminderKit
 
 For the metadata Apple does not expose through EventKit — sections, synced
@@ -213,7 +228,7 @@ ReminderKit write paths), `SmartLists/` (filter encode/decode),
 
 ## Testability Seams
 
-Write logic is testable without touching live Reminders data, through two
+Write logic is testable without touching live Reminders data, through three
 parallel protocol seams:
 
 - **EventKit seam:** the `RemindersWriter` protocol
@@ -227,6 +242,10 @@ parallel protocol seams:
   `RKPDispatch` request dict and unmarshals the response) and by a
   `MockPrivateWriter` in tests. `PrivateWriterFactory.make` returns the real
   writer in production.
+- **Geocoder seam:** the `AddressGeocoder` protocol
+  (`Sources/RemindersControl/Location/AddressGeocoder.swift`) is implemented by
+  the production `CoreLocationGeocoder` and by a `FakeGeocoder` in tests, which
+  is passed to `add`/`edit`/`location-lookup` as an argument.
 
 Command cores return a `WriteOutcome` (stdout/stderr/exit code) instead of
 printing or exiting directly, and accept an injected writer, so a test can drive

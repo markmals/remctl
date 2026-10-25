@@ -1255,29 +1255,4 @@ import GRDB
         #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR1"])])
         #expect(m.calls.isEmpty)
     }
-
-    @Test func editAddressRejected() async throws {
-        // --address WITH location flags → exit 1 (validate_private_args:2483-2491). The street-address
-        // form is not supported for location alarms; the rejection only fires alongside --lat/--long.
-        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
-        let out = await WriteDispatch.perform {
-            try await Edit.perform(id: 42, latitude: 1, longitude: 2, address: "X", json: false, store: s, writer: m, private: MockPrivateWriter())
-        }
-        #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: --address is not currently supported for location alarms.\n")
-        #expect(m.calls.isEmpty)
-    }
-
-    @Test func editAddressAloneIsIgnored() async throws {
-        // --address WITHOUT location flags is silently ignored (no private flag, no editable change)
-        // → "Nothing to update." Mirrors validate_private_args, where the address rejection is gated
-        // entirely behind the presence of --latitude/--longitude.
-        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
-        let m = MockWriter()
-        let out = try await Edit.perform(id: 42, address: "1 Main St", json: false, store: s, writer: m, private: MockPrivateWriter())
-        #expect(out.exitCode == 0)
-        #expect(out.stdout == "Nothing to update.\n")
-        #expect(m.calls.isEmpty)
-    }
 }

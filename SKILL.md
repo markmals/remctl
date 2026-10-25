@@ -32,11 +32,13 @@ EventKit (public) and ReminderKit (private metadata) both run in-process; there 
 | List groups: inspect, create, rename, add/remove/reorder child lists, delete, create a list inside one | `groups`, `group-info`, `group-create NAME --add-list LIST`, `group-edit NAME --new-name/--add-list/--remove-list/--move-list LIST --before-list/--after-list/--first/--last`, `group-delete NAME --force`, `list-create NAME --group GROUP` | `groups --json` / `group-info --json`; writes report `verified: true`. Lists keep their reminders when they move. |
 | Custom smart list create/edit/delete | `smart-list-create`, `smart-list-edit`, `smart-list-delete` | `smart-lists --json` |
 | Saved Reminders templates | `templates`, `template-info`, `template-create`, `template-apply`, `template-delete` | `templates --json`, `template-info`, then `show <new list> --json` after apply |
+| Check an address before setting a location alarm | `location-lookup "ADDRESS" --json` | nothing to verify — the command writes nothing |
 
 High-value guardrails:
 
 - Recurrence and normal `--alarm` are EventKit features. `--early-reminder` is a separate Reminders Early Reminder (a private due-date delta alert), not an EventKit alarm.
-- Location alarms (`--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`) are written through EventKit structured-location alarms; verify in `info --json` under `alarms`.
+- Location alarms (`--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`) work on both `add` and `edit`, are written through EventKit structured-location alarms, and are a public write; verify in `info --json` under `alarms`.
+- `--location-address "1 Apple Park Way, Cupertino, CA"` geocodes before the first write and only accepts a single street-sized match that names the street typed in a town or postal code the address gives; anything else (`location_ambiguous`, `location_imprecise`, `location_unconfirmed`, `location_not_found`) stops the command with the candidates, and nothing is created or changed. Personal labels such as `Home`, `Work` or `my office` are refused (`location_label_not_address`) — pass the real address and label it with `--location-title`. The lookup needs network access but no Location Services permission; run `location-lookup` first when an address looks uncertain. It cannot be combined with `--latitude`/`--longitude`.
 - Synced rich URLs require public `http`/`https` hosts; loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts fail before writing. With no other private metadata present, `--url` is just a notes append and `add --tags` writes inline title hashtags.
 - Human output strips terminal control characters; use JSON when exact raw values matter.
 - Reminder JSON carries `attachments` only when the reminder has some. Read `attachments[].path` when `resolved` is `true` — it is the SHA-512-verified file and is safe to open; `resolved: false` means the file is not on this Mac, which is not an error.
@@ -131,6 +133,8 @@ remctl edit 23880 --flagged --urgent --json
 remctl edit 23880 --early-reminder 1h --json
 remctl edit 23880 --early-reminder clear --json
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200 --json
+remctl add "Pick up prints" --location-address "1 Apple Park Way, Cupertino, CA 95014" --json
+remctl location-lookup "1 Apple Park Way, Cupertino, CA 95014" --json
 remctl list-create "Research" --color orange --symbol education3 --json
 remctl list-create "Cold Ideas" --color cyan --emoji 🥶 --json
 remctl list-create "Groceries" --groceries --grocery-locale en_US --json
@@ -155,7 +159,7 @@ Private metadata rules:
 - `edit -l/--list` and `edit --list-id` move a reminder. A reminder with subtasks (or a move EventKit refuses across accounts) is moved by clone-delete and gets a **new id**: read `id` (new) and `oldId` from `--json` (`method: "clone-delete"`, `subtasksMoved`, `originalDeleted`) and chain the new id afterwards. Such a move cannot be combined with other edit flags — move first, then edit.
 - `--section` resolves by name (single non-empty match wins on duplicates); use `--section-id` for exact assignment, reading the ids from `remctl list-info LIST --json`. Both are resolved before `add` creates anything. `--new-section` appends to the list's existing section order.
 - `--early-reminder` writes Reminders' Early Reminder due-date delta alert: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; non-clear values require a due date. Verify in `info --json`.
-- `--location-title` + `--latitude`/`--longitude` persist through EventKit structured-location alarms; verify in `info --json` under `alarms`.
+- `--location-title` + `--latitude`/`--longitude` persist through EventKit structured-location alarms on `add` and `edit`; verify in `info --json` under `alarms`. `--location-address` resolves the coordinates first (see the guardrails above) and adds `resolvedLocation` to the `--json` result; the street address itself is not stored, because EventKit's structured location carries only a title, coordinates and a radius.
 - `--subtask` accepts a plain child title or a JSON object: `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields. A date-only `due` makes the child all-day; `recurrence` takes a string spec or an exported recurrence object. Rich subtask URLs follow the public-host rule. Repeated `--subtask` values land in the given order after existing subtasks (`subtaskPlacement` reports where).
 - Rich-link and image edits are additive (RemCTL adds, never removes/replaces). Generic file/PDF attachments are rejected; only images attach.
 - `add -f/--flag`, `flag`, and `unflag` write the real flag through ReminderKit (there is no EventKit flag API); a failed flag write exits 1 with `code: flag_failed` under `--json` instead of changing the priority.

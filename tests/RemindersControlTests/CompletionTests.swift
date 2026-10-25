@@ -35,7 +35,7 @@ import Foundation
         #expect(s.hasSuffix("compdef _remctl remctl\n"))
     }
 
-    @Test("zsh script: contains 55 command entries in the commands array")
+    @Test("zsh script: contains 56 command entries in the commands array")
     func zshCommandCount() {
         // Each entry in the commands=(...) array looks like:
         //     'name:description'
@@ -50,7 +50,7 @@ import Foundation
         }
         let block = String(s[start.upperBound..<end.lowerBound])
         let entries = block.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        #expect(entries.count == 55, "expected 55 command entries, got \(entries.count)")
+        #expect(entries.count == 56, "expected 56 command entries, got \(entries.count)")
     }
 
     @Test("zsh script: does NOT contain --date-today-include-past-due (cross-shell inconsistency preserved)")
@@ -82,7 +82,7 @@ import Foundation
         #expect(CompletionScripts.bash.contains("--date-today-include-past-due"))
     }
 
-    @Test("bash script: commands string contains 55 subcommand names")
+    @Test("bash script: commands string contains 56 subcommand names")
     func bashCommandCount() {
         // Extract the commands= line
         guard let range = CompletionScripts.bash.range(of: "commands=\""),
@@ -93,7 +93,7 @@ import Foundation
         }
         let commandsList = String(CompletionScripts.bash[range.upperBound..<endRange.lowerBound])
         let names = commandsList.components(separatedBy: " ").filter { !$0.isEmpty }
-        #expect(names.count == 55, "expected 55 bash command names, got \(names.count): \(names)")
+        #expect(names.count == 56, "expected 56 bash command names, got \(names.count): \(names)")
     }
 
     // MARK: - fish script golden invariants

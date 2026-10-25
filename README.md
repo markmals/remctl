@@ -47,7 +47,7 @@ There are no separate helper executables — the EventKit and ReminderKit logic 
 | Task | Commands |
 | --- | --- |
 | See what is due | `today`, `upcoming`, `overdue` |
-| Browse reminders | `lists`, `list-info`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats` |
+| Browse reminders | `lists`, `list-info`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats`, `location-lookup` |
 | Create and edit | `add`, `edit`, `done`, `undone`, `delete`, `flag`, `unflag` |
 | Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `section-create`, `section-rename`, `section-delete`, `groups`, `group-info`, `group-create`, `group-edit`, `group-delete` |
 | Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
@@ -91,6 +91,7 @@ remctl list-edit Projects --color orange --symbol education3
 remctl list-pin "Project X"
 remctl list-rename --list-id 123 --new-name "Project X Archive"
 remctl info 23880 --json
+remctl location-lookup "1 Apple Park Way, Cupertino, CA 95014" --json
 ```
 
 The full command guide is in [docs/commands.md](docs/commands.md). Private-metadata behavior and guardrails are in [docs/private-metadata.md](docs/private-metadata.md). For smart lists, see [docs/commands.md#smart-lists](docs/commands.md#smart-lists); for templates, [docs/commands.md#templates](docs/commands.md#templates).
@@ -112,6 +113,7 @@ remctl edit 23880 --image ~/Desktop/mockup.png --flagged --urgent
 remctl sharees Family --json
 remctl edit 23880 --assign Alex
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200
+remctl add "Pick up prints" --location-address "1 Apple Park Way, Cupertino, CA 95014"
 remctl list-edit Projects --color '#FF8D28' --symbol education3
 remctl list-create "Groceries" --groceries --grocery-locale en_US
 remctl add "Milk" -l Groceries --grocery
@@ -132,7 +134,7 @@ A few rules keep this safe and predictable:
 - Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` always writes the real flag (like `edit --flagged`), so it takes the private path on its own.
 - `-t/--tags` only adds tags. `edit --set-tags a,b` replaces the synced tag set, `edit --clear-tags` empties it, and repeatable `edit --remove-tag x` drops named tags; the three are mutually exclusive with each other and with `-t/--tags`.
 - `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
-- Location alarms are written through EventKit's structured-location path (they persist reliably there); verify in `info --json` under `alarms`.
+- Location alarms are written through EventKit's structured-location path (they persist reliably there) on both `add` and `edit`; verify in `info --json` under `alarms`. `--location-address` resolves a street address with Apple's geocoder before the first write and refuses anything but a single street-sized match that names the street typed in a town the address gives — `remctl location-lookup` shows what an address resolves to without writing. Personal labels such as `Home` are refused; the lookup needs network access but no Location Services permission.
 - `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts are rejected before writing.
 - If a private step fails after `add` created the reminder, RemCTL reports the created reminder, what completed, and what failed (`code: "private_add_partial"`, exit 1) — finish it with `edit`, never a second `add`.
 - Rich-link and image edits are additive — RemCTL adds, it does not remove or replace existing links/images.

@@ -38,6 +38,15 @@ struct Add: AsyncParsableCommand {
     @Option(name: .long, help: "Alarm: 15m, 1h, 1d, or an absolute date") var alarm: String?
     @Option(name: .long, help: "URL; appended to notes") var url: String?
 
+    // Location alarm (EventKit-expressible). Radius/proximity defaults live here.
+    @Option(name: .long, help: "Location alarm title") var locationTitle: String?
+    @Option(name: .long, help: "Location alarm latitude") var latitude: Double?
+    @Option(name: .long, help: "Location alarm longitude") var longitude: Double?
+    @Option(name: .long, help: "Location alarm radius in meters") var radius: Double = 100.0
+    @Option(name: .long, help: "Location alarm trigger direction: arriving or leaving") var proximity: Proximity = .arriving
+    @Option(name: .long, help: "Street address for the location alarm; resolved to coordinates before anything is written") var locationAddress: String?
+    @Option(name: .long, help: .hidden) var address: String?
+
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Flag(name: [.short, .long], help: "Flag the reminder") var flag = false
     @Option(name: [.short, .long], help: "Comma-separated tags") var tags: String?
@@ -61,6 +70,9 @@ struct Add: AsyncParsableCommand {
                 title: args.title, list: args.list, listId: args.listId, notes: args.notes,
                 due: args.due, priority: args.priority, recurrence: args.recurrence, alarm: args.alarm,
                 url: args.url, flag: args.flag, tags: args.tags, grocery: args.grocery,
+                locationTitle: args.locationTitle, latitude: args.latitude, longitude: args.longitude,
+                radius: args.radius, proximity: args.proximity,
+                locationAddress: try LocationAlarmInput.address(args.locationAddress, alias: args.address),
                 section: args.section, sectionId: args.sectionId, newSection: args.newSection,
                 subtask: args.subtask, image: args.image, urgent: args.urgent, earlyReminder: args.earlyReminder,
                 assign: args.assign, unassign: args.unassign,
@@ -74,12 +86,15 @@ struct Add: AsyncParsableCommand {
         title: String, list: String? = nil, listId: Int? = nil, notes: String? = nil,
         due: String? = nil, priority: String? = nil, recurrence: String? = nil, alarm: String? = nil,
         url: String? = nil, flag: Bool = false, tags: String? = nil, grocery: Bool = false,
+        locationTitle: String? = nil, latitude: Double? = nil, longitude: Double? = nil,
+        radius: Double = 100.0, proximity: Proximity = .arriving, locationAddress: String? = nil,
         section: String? = nil, sectionId: String? = nil, newSection: String? = nil,
         subtask: [String] = [], image: [String] = [], urgent: Bool? = nil, earlyReminder: String? = nil,
         assign: String? = nil, unassign: Bool = false,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
-        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25,
+        geocoder: AddressGeocoder = CoreLocationGeocoder()
     ) async throws -> WriteOutcome {
 
         // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
@@ -161,6 +176,13 @@ struct Add: AsyncParsableCommand {
             return failRelativeAlarmWithoutDue(json: json)
         }
 
+        // 2a''. Location-alarm pairing, coordinate ranges and radius, shared with `edit`. Checked
+        //       before the first write: an out-of-range region only fails inside EventKit.
+        if let failure = try LocationAlarmInput.validate(
+            latitude: latitude, longitude: longitude, radius: radius, address: locationAddress, json: json) {
+            return failure
+        }
+
         // 2b. Parse --subtask specs + normalize --image paths up front (validates format; a bad spec
         //     — e.g. subtask location address — throws a CLIError exit 1 before any write). Mirrors
         //     parse_subtask_specs / normalize_image_paths being invoked in apply_private_changes.
@@ -233,6 +255,28 @@ struct Add: AsyncParsableCommand {
             }
         }
 
+        // 5c. Location alarm. A `--location-address` is geocoded last, after every other check and
+        //     the private preflight, so a lookup that cannot be trusted creates no reminder.
+        var resolvedLocation: ResolvedLocation? = nil
+        var alarmLatitude = latitude, alarmLongitude = longitude, alarmTitle = locationTitle
+        switch await LocationAlarmInput.resolve(
+            address: locationAddress, title: locationTitle, radius: radius, proximity: proximity,
+            geocoder: geocoder, json: json
+        ) {
+        case .notRequested: break
+        case .failure(let outcome): return outcome
+        case .resolved(let match):
+            resolvedLocation = match
+            alarmLatitude = match.latitude
+            alarmLongitude = match.longitude
+            alarmTitle = match.title
+        }
+        if let alarmLatitude, let alarmLongitude {
+            write.location = LocationAlarmWrite(
+                title: alarmTitle, latitude: alarmLatitude, longitude: alarmLongitude,
+                radius: radius, proximity: proximity.rawValue)
+        }
+
         // 6. Create.
         let result = try await writer.create(write)
 
@@ -282,6 +326,7 @@ struct Add: AsyncParsableCommand {
             if let numericId { pairs.append(("numericId", .int(numericId))) }
             // "private" attaches AFTER numericId (cmd_add:5238-5239).
             if !privateResults.isEmpty { pairs.append(("private", privateResultsJSON(privateResults))) }
+            if let resolvedLocation { pairs.append(("resolvedLocation", resolvedLocation.json)) }
             return .ok(JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
         }
         var out = "Created: \(safeDisplay(finalTitle))\n"
@@ -290,6 +335,7 @@ struct Add: AsyncParsableCommand {
         }
         if let numericId { out += "ID: #\(numericId)\n" }
         if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
+        if let resolvedLocation { out += resolvedLocation.humanLine }
         return .ok(out)
     }
 
@@ -428,6 +474,8 @@ struct Edit: AsyncParsableCommand {
     @Option(name: .long, help: "Location alarm longitude") var longitude: Double?
     @Option(name: .long, help: "Location alarm radius in meters") var radius: Double = 100.0
     @Option(name: .long, help: "Location alarm trigger direction: arriving or leaving") var proximity: Proximity = .arriving
+    @Option(name: .long, help: "Street address for the location alarm; resolved to coordinates before anything is written") var locationAddress: String?
+    @Option(name: .long, help: .hidden) var address: String?
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Option(name: [.short, .long], help: "Comma-separated synced tags") var tags: String?
@@ -445,7 +493,6 @@ struct Edit: AsyncParsableCommand {
     @Option(name: .long, help: "Early Reminder before due date") var earlyReminder: String?
     @Option(name: .long, help: "Assign to a shared-list user (name, email, phone, sharee ID, or 'me')") var assign: String?
     @Flag(name: .long, help: "Clear the existing assignment") var unassign = false
-    @Option(name: .long, help: "Location address (not supported for location alarms)") var address: String?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
@@ -462,7 +509,8 @@ struct Edit: AsyncParsableCommand {
                 grocery: args.grocery, section: args.section, sectionId: args.sectionId,
                 newSection: args.newSection, subtask: args.subtask, image: args.image,
                 flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder,
-                assign: args.assign, unassign: args.unassign, address: args.address,
+                assign: args.assign, unassign: args.unassign,
+                locationAddress: try LocationAlarmInput.address(args.locationAddress, alias: args.address),
                 json: args.json, store: store, writer: writer, private: priv)
         })
     }
@@ -479,11 +527,12 @@ struct Edit: AsyncParsableCommand {
         grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil,
-        assign: String? = nil, unassign: Bool = false, address: String? = nil,
+        assign: String? = nil, unassign: Bool = false, locationAddress: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
         groceryAttempts: Int = 24, groceryDelay: Double = 0.25,
-        cloneAttempts: Int = 24, cloneDelay: Double = 0.25
+        cloneAttempts: Int = 24, cloneDelay: Double = 0.25,
+        geocoder: AddressGeocoder = CoreLocationGeocoder()
     ) async throws -> WriteOutcome {
 
         // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
@@ -621,28 +670,12 @@ struct Edit: AsyncParsableCommand {
             return Add.failRelativeAlarmWithoutDue(json: json)
         }
 
-        // Location alarm pairing: lat+long must come as a pair.
-        if (latitude != nil) != (longitude != nil) {
-            throw WriteError("Location alarms require latitude and longitude")
-        }
-
-        // Coordinate and radius ranges (validate_private_args, remctl:9068). Checked before the
-        // first write: an out-of-range region only fails inside EventKit, after other fields landed.
-        if let latitude, !(latitude.isFinite && (-90.0...90.0).contains(latitude)) {
-            throw WriteError("--latitude must be between -90 and 90.")
-        }
-        if let longitude, !(longitude.isFinite && (-180.0...180.0).contains(longitude)) {
-            throw WriteError("--longitude must be between -180 and 180.")
-        }
-        if latitude != nil, !(radius.isFinite && (1.0...locationMaxRadius).contains(radius)) {
-            return failInvalidLocationRadius(json: json)
-        }
-
-        // --address is only meaningful alongside a location alarm, and the location-alarm path is
-        // EventKit-expressible (no private street-address support yet). Mirrors validate_private_args
-        // (remctl:2483-2491): when --latitude/--longitude are present, an --address is rejected (exit 1).
-        if (latitude != nil || longitude != nil), address != nil {
-            throw WriteError("--address is not currently supported for location alarms.")
+        // Location-alarm pairing, coordinate ranges and radius, shared with `add`. Checked before
+        // the first write: an out-of-range region only fails inside EventKit, after other fields
+        // landed.
+        if let failure = try LocationAlarmInput.validate(
+            latitude: latitude, longitude: longitude, radius: radius, address: locationAddress, json: json) {
+            return failure
         }
 
         // 4b. Parent-with-subtasks list move (upstream ed5e982): EventKit cannot carry a subtask
@@ -654,7 +687,7 @@ struct Edit: AsyncParsableCommand {
         let hasOtherChangesForMove = (title?.isEmpty == false) || notes != nil
             || (priority?.isEmpty == false) || (due?.isEmpty == false) || (url?.isEmpty == false)
             || parsedRecurrence != nil || clearRecurrence || clearAlarm || parsedAlarm != nil || wantsPrivate
-            || latitude != nil
+            || latitude != nil || locationAddress != nil
         var childRowsForMove: [Row] = []
         if movingToDifferentList {
             childRowsForMove = store.subtasksForMove(parentPk: id)
@@ -671,6 +704,23 @@ struct Edit: AsyncParsableCommand {
                     resolution: resolution, writer: writer, private: priv, json: json,
                     attempts: cloneAttempts, delay: cloneDelay)
             }
+        }
+
+        // 4c. Location alarm. A `--location-address` is geocoded after every other check and
+        //     before the first write, so a lookup that cannot be trusted changes nothing.
+        var resolvedLocation: ResolvedLocation? = nil
+        var alarmLatitude = latitude, alarmLongitude = longitude, alarmTitle = locationTitle
+        switch await LocationAlarmInput.resolve(
+            address: locationAddress, title: locationTitle, radius: radius, proximity: proximity,
+            geocoder: geocoder, json: json
+        ) {
+        case .notRequested: break
+        case .failure(let outcome): return outcome
+        case .resolved(let match):
+            resolvedLocation = match
+            alarmLatitude = match.latitude
+            alarmLongitude = match.longitude
+            alarmTitle = match.title
         }
 
         // 5. Build the ReminderWrite from validated fields.
@@ -742,11 +792,11 @@ struct Edit: AsyncParsableCommand {
             write.alarm = parsedAlarm; hasChanges = true
         }
 
-        // Location alarm (lat+long both present, validated above). The writer expects the
-        // lowercase proximity string ("arriving"/"leaving"); EventKitWriter maps leaving->.leave,
-        // arriving->.enter (remctl Swift EventKitWriter ~199).
-        if let latitude, let longitude {
-            write.location = LocationAlarmWrite(title: locationTitle, latitude: latitude, longitude: longitude, radius: radius, proximity: proximity.rawValue)
+        // Location alarm (lat+long both present, validated above; a `--location-address` supplied
+        // them). The writer expects the lowercase proximity string ("arriving"/"leaving");
+        // EventKitWriter maps leaving->.leave, arriving->.enter (remctl Swift EventKitWriter ~199).
+        if let alarmLatitude, let alarmLongitude {
+            write.location = LocationAlarmWrite(title: alarmTitle, latitude: alarmLatitude, longitude: alarmLongitude, radius: radius, proximity: proximity.rawValue)
             hasChanges = true
         }
 
@@ -866,11 +916,13 @@ struct Edit: AsyncParsableCommand {
             }
             // "private" attaches AFTER list/resolvedList (cmd_edit:5566-5567).
             if !privateResults.isEmpty { pairs.append(("private", privateResultsJSON(privateResults))) }
+            if let resolvedLocation { pairs.append(("resolvedLocation", resolvedLocation.json)) }
             return .ok(JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
         }
         var out = "Updated #\(id)\n"
         if let resolution { out += "List: \(safeDisplay(resolution.title))\n" }
         if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
+        if let resolvedLocation { out += resolvedLocation.humanLine }
         return .ok(out)
     }
 
@@ -884,23 +936,6 @@ struct Edit: AsyncParsableCommand {
                 ("code", .string("repeating_reminder_requires_due_date")),
                 ("message", .string(message)),
                 ("id", .int(id)),
-            ])
-            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
-        }
-        return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
-    }
-
-    /// Largest region radius EventKit stores (`LOCATION_MAX_RADIUS`, remctl:4844).
-    private static let locationMaxRadius = 100_000.0
-
-    /// Port of `fail_location(a, "invalid_location_radius", …)` (remctl:4860). Exit 1, no write.
-    private static func failInvalidLocationRadius(json: Bool) -> WriteOutcome {
-        let message = "--radius must be between 1 and \(Int(locationMaxRadius)) meters."
-        if json {
-            let payload: JSONValue = .object([
-                ("status", .string("error")),
-                ("code", .string("invalid_location_radius")),
-                ("message", .string(message)),
             ])
             return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
         }
