@@ -31,18 +31,25 @@ public final class EventKitReader {
         }
     }
 
-    /// Exact-title list match; ambiguity is a hard error (no SQLite tiers here).
-    private func calendars(listName: String?) throws -> [EKCalendar]? {
-        guard let listName, !listName.isEmpty else { return nil }
-        let matches = store.calendars(for: .reminder).filter { $0.title == listName }
-        if matches.isEmpty {
-            throw EventKitReadError("List not found: \(listName)", code: "eventkit_read_failed", exitCode: 1)
+    /// Scope the read to iCloud reminder lists: an unnamed list used to query every source,
+    /// and a title match alone cannot disambiguate duplicates (upstream c0db904, e6d2a7e).
+    private func calendars(listName: String?) throws -> [EKCalendar] {
+        let all = store.calendars(for: .reminder)
+        let descriptors = all.map {
+            ReminderCalendarDescriptor(
+                identifier: $0.calendarIdentifier, title: $0.title,
+                source: ReminderSourceDescriptor(
+                    identifier: $0.source?.sourceIdentifier ?? "", title: $0.source?.title ?? "",
+                    isCalDAV: $0.source?.sourceType == .calDAV))
         }
-        if matches.count > 1 {
-            throw EventKitReadError("Multiple reminder lists named \(listName); EventKit fallback cannot disambiguate them",
-                                    code: "eventkit_read_failed", exitCode: 1)
+        do {
+            let wanted = try ListTargeting.readCalendars(
+                in: descriptors, listName: listName, providers: AccountProviders.shared)
+            let wantedIdentifiers = Set(wanted.map(\.identifier))
+            return all.filter { wantedIdentifiers.contains($0.calendarIdentifier) }
+        } catch let e as ListTargetingError {
+            throw EventKitReadError(e.message, code: "eventkit_read_failed", exitCode: 1)
         }
-        return matches
     }
 
     /// Bridge `fetchReminders`: synchronous fetch with a 30s timeout + cancel.
@@ -130,10 +137,24 @@ public final class EventKitReader {
     }
 
     private func containsQuery(_ reminder: EKReminder, _ query: String) -> Bool {
+        EventKitReader.matchesQuery(title: reminder.title, notes: reminder.notes,
+                                    url: reminder.url?.absoluteString, query: query)
+    }
+
+    /// Search covers the saved rich link too, so a URL a user pasted is findable (upstream b8b601c).
+    static func matchesQuery(title: String?, notes: String?, url: String?, query: String) -> Bool {
         let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-        if (reminder.title ?? "").range(of: query, options: options) != nil { return true }
-        if (reminder.notes ?? "").range(of: query, options: options) != nil { return true }
-        return false
+        return [title, notes, url].contains { ($0 ?? "").range(of: query, options: options) != nil }
+    }
+
+    /// Due date ascending, undated last, then title. Comparator over precomputed keys.
+    static func sortsBefore(_ left: (due: Date?, title: String), _ right: (due: Date?, title: String)) -> Bool {
+        switch (left.due, right.due) {
+        case let (l?, r?) where l != r: return l < r
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return left.title < right.title
+        }
     }
 
     /// Port of `runLimitedEventKitRead`: modes show/search/today/upcoming.
@@ -146,7 +167,9 @@ public final class EventKitReader {
         let cappedLimit = max(1, min(limit, 1000))
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: Date())
-        let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
+        guard let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday) else {
+            throw EventKitReadError("Invalid date range", code: "eventkit_read_failed", exitCode: 1)
+        }
         var reminders: [EKReminder]
 
         switch mode {
@@ -175,17 +198,12 @@ public final class EventKitReader {
             throw EventKitReadError("Unsupported EventKit read mode: \(mode)", code: "eventkit_read_failed", exitCode: 1)
         }
 
-        // Sort by due date, nil-due last, then title.
-        func dueForSort(_ r: EKReminder) -> Date? { dateAndAllDay(r.dueDateComponents).0 }
-        reminders.sort { a, b in
-            switch (dueForSort(a), dueForSort(b)) {
-            case let (l?, r?) where l != r: return l < r
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default: return (a.title ?? "") < (b.title ?? "")
-            }
+        // Convert date components once per reminder, rather than on each comparison (upstream b749bbf).
+        var sortable = reminders.map {
+            (reminder: $0, key: (due: dateAndAllDay($0.dueDateComponents).0, title: $0.title ?? ""))
         }
-        return reminders.prefix(cappedLimit).map { snapshot($0) }
+        sortable.sort { EventKitReader.sortsBefore($0.key, $1.key) }
+        return sortable.prefix(cappedLimit).map { snapshot($0.reminder) }
     }
 }
 

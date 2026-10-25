@@ -114,7 +114,7 @@ remctl info 23880 --json
 
 ### Limited EventKit Read Fallback (`--via-eventkit`)
 
-`--via-eventkit` is a limited read-only fallback for hosts that cannot get Full Disk Access. It never opens the Reminders SQLite database — it reads through the in-process EventKit API instead, so only the macOS Reminders permission is needed. It is never the default and is supported only by `show`, `search`, `today`, and `upcoming`.
+`--via-eventkit` is a limited read-only fallback for hosts that cannot get Full Disk Access. It never opens the Reminders SQLite database — it reads through the in-process EventKit API instead, so only the macOS Reminders permission is needed. It is never the default and is supported only by `show`, `search`, `today`, and `upcoming`. It reads iCloud Reminders lists only: an unnamed scope covers every iCloud list, and a named list in a local or third-party account is refused rather than mixed in. `search` matches titles, notes, and the saved rich-link URL.
 
 It is not full RemCTL output: no RemCTL numeric IDs, table output, sections, synced tags, private rich links, urgent state, or template/smart-list internals. JSON output is a wrapper object, not the normal read-command array:
 

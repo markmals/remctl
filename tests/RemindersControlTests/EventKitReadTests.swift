@@ -154,4 +154,26 @@ import Foundation
         #expect(r.exit == 2)
         #expect(r.stderr.contains("does not support table output"))
     }
+
+    // ── search matching + sort keys (upstream b749bbf, b8b601c) ──────────────
+
+    @Test func searchMatchesTheReminderURL() {
+        #expect(EventKitReader.matchesQuery(
+            title: "Read later", notes: nil, url: "https://example.com/widget", query: "widget"))
+    }
+
+    @Test func searchStillMatchesTitleAndNotesCaseAndAccentInsensitively() {
+        #expect(EventKitReader.matchesQuery(title: "Café run", notes: nil, url: nil, query: "cafe"))
+        #expect(EventKitReader.matchesQuery(title: nil, notes: "Buy MILK", url: nil, query: "milk"))
+        #expect(!EventKitReader.matchesQuery(title: "Read later", notes: nil, url: nil, query: "widget"))
+    }
+
+    @Test func sortPutsDatedBeforeUndatedThenTitle() {
+        let early = Date(timeIntervalSince1970: 1_000)
+        let late = Date(timeIntervalSince1970: 2_000)
+        #expect(EventKitReader.sortsBefore((due: early, title: "b"), (due: late, title: "a")))
+        #expect(EventKitReader.sortsBefore((due: late, title: "z"), (due: nil, title: "a")))
+        #expect(!EventKitReader.sortsBefore((due: nil, title: "a"), (due: late, title: "z")))
+        #expect(EventKitReader.sortsBefore((due: nil, title: "a"), (due: nil, title: "b")))
+    }
 }
