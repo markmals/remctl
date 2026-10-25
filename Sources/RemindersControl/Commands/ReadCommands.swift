@@ -215,7 +215,8 @@ struct Search: AsyncParsableCommand {
                 return
             }
             if opts.useTable {
-                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi))
+                print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi,
+                               dateColumn: completed ? .completed : .due))
                 return
             }
             if rows.isEmpty {
@@ -581,12 +582,13 @@ struct Show: AsyncParsableCommand {
                 Dispatch.printJSON(.array(objs.map { .object($0) }), ensureAscii: false)
                 return
             }
-            if opts.useTable {
-                print(fmtTable(remindersToTableData(items, ansi: ansi), ansi: ansi))
-                return
-            }
             if items.isEmpty {
                 print("No \(completed ? "" : "active ")reminders in '\(safeDisplay(target.title))'")
+                return
+            }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(items, ansi: ansi), ansi: ansi,
+                               dateColumn: completed ? .completed : .due))
                 return
             }
             let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })

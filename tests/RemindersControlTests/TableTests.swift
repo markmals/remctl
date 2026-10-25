@@ -235,4 +235,49 @@ import Foundation
         """
         #expect(fmtTable(data, maxWidth: 80) == expected)
     }
+
+    // ── wide characters and the Completed column (upstream e013fb9) ────────
+
+    @Test func wideCharactersCountTwoCells() {
+        #expect(vlen("日本語") == 6)
+        #expect(vlen("📅") == 2)
+        #expect(vlen("🥕 Carrots") == 10)     // emoji 2 + space + 7 letters
+        #expect(vlen("👨‍👩‍👧") == 6)            // ZWJ itself is zero width
+        #expect(vlen("⚑") == 1)               // not an emoji-presentation scalar
+        #expect(vlen("Ａ") == 2)              // fullwidth Latin
+        #expect(vlen("e\u{0301}") == 1)       // combining acute adds nothing
+    }
+
+    @Test func wideTitlesTruncateOnCellWidth() {
+        let row = TableRow(id: "#1", title: String(repeating: "本", count: 20), list: "L",
+                           due: "", repeatText: "", pri: "")
+        let out = fmtTable([row], maxWidth: 30)
+        // Title column caps at 10 cells, so 4 wide chars (8 cells) + "…" fit; a 5th would be 11.
+        #expect(out.contains("本本本本…"))
+        let lines = out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(Set(lines.map { vlen($0) }).count == 1)
+    }
+
+    @Test func emojiTitleKeepsTableRectangular() {
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "🥕 Carrots", "list_name": "Groceries",
+                           "ZCOMPLETED": 0, "ZFLAGGED": 0, "ZPRIORITY": 0])
+        let out = fmtTable(remindersToTableData([row], ansi: plain, now: pinnedNow), maxWidth: 80)
+        let lines = out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(Set(lines.map { vlen($0) }).count == 1)
+    }
+
+    @Test func completedColumnReplacesDue() {
+        let row = DictRow(["Z_PK": 1, "ZTITLE": "Done", "list_name": "L",
+                           "ZCOMPLETED": 1, "ZFLAGGED": 0, "ZPRIORITY": 0,
+                           "ZCOMPLETIONDATE": appleSeconds(year: 2026, month: 5, day: 28, hour: 9, minute: 7)])
+        let data = remindersToTableData([row], ansi: plain, now: pinnedNow)
+        #expect(data[0].completed == "2026-05-28 09:07")
+        let due = fmtTable(data, maxWidth: 80)
+        #expect(due.contains("Due"))
+        #expect(!due.contains("Completed"))
+        let completed = fmtTable(data, maxWidth: 80, dateColumn: .completed)
+        #expect(completed.contains("Completed"))
+        #expect(!completed.contains("│ Due"))
+        #expect(completed.contains("2026-05-28 09:07"))
+    }
 }

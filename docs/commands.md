@@ -489,7 +489,7 @@ RemCTL output serves both humans and agents:
 - reminder IDs print as `#ID`, colored with the reminder's list color when readable
 - `⚑` flagged, `⏰` urgent, `↻` recurrence badge (e.g. `↻ weekly Mon, Wed`), `🥕` Groceries
 - priority markers: `!!!` high, `!!` medium, `!` low
-- table output keeps a dedicated `Repeat` column when any row recurs
+- table output keeps a dedicated `Repeat` column when any row recurs, and `show`/`search` with `--completed` replace the `Due` column with a `Completed` timestamp
 - human output strips terminal control characters from Reminders text; every read command supports `--json`
 - `NO_COLOR=1` (or `--no-color`) disables color
 
