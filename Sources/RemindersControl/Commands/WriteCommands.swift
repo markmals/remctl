@@ -113,11 +113,14 @@ struct Add: AsyncParsableCommand {
         // flag lives in ZFLAGGED, which only ReminderKit can write (upstream c84fbca). When
         // wantsPrivate, --tags/--url route through the private writer too; otherwise they keep
         // their Phase-2 public behavior (title #hashtags / notes-append).
-        let wantsPrivate = flag || section != nil || sectionId != nil || newSection != nil
+        // Split into typed parts: Swift 6.1-6.3 (CI's Xcode) times out type-checking one long
+        // chain of optional comparisons.
+        let wantsSections: Bool = section != nil || sectionId != nil || newSection != nil
             || smartList != nil || smartListId != nil
-            || urgent != nil || earlyReminder != nil || grocery
-            || assign != nil || unassign
-            || !subtask.isEmpty || !image.isEmpty
+        let wantsState: Bool = flag || urgent != nil || earlyReminder != nil || grocery
+        let wantsAssignment: Bool = assign != nil || unassign
+        let wantsAttachments: Bool = !subtask.isEmpty || !image.isEmpty
+        let wantsPrivate = wantsSections || wantsState || wantsAssignment || wantsAttachments
 
         // validate_private_args: a refused rich link fails before the reminder exists, rather
         // than after it as a private_add_partial.
@@ -588,11 +591,14 @@ struct Edit: AsyncParsableCommand {
         // the source's gating set; it implies private because private_changes_from_args includes
         // it. So when --tags is the only private flag, we still want it private. Fold that in,
         // along with the tag-replacement flags (private_changes_from_args:5803-5805).
-        let wantsPrivate = section != nil || sectionId != nil || newSection != nil
+        // Split into typed parts for the same Swift 6.1-6.3 type-checker limit as `add`.
+        let wantsSections: Bool = section != nil || sectionId != nil || newSection != nil
             || smartList != nil || smartListId != nil
-            || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
-            || assign != nil || unassign || replacementTags != nil
-            || !subtask.isEmpty || !image.isEmpty
+        let wantsState: Bool = flagged != nil || urgent != nil || earlyReminder != nil || grocery
+        let wantsTags: Bool = tags != nil || replacementTags != nil
+        let wantsAssignment: Bool = assign != nil || unassign
+        let wantsAttachments: Bool = !subtask.isEmpty || !image.isEmpty
+        let wantsPrivate = wantsSections || wantsState || wantsTags || wantsAssignment || wantsAttachments
         if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--url") {
             return Add.failInvalidRichLink(problem, url: url, json: json)
         }
@@ -717,10 +723,12 @@ struct Edit: AsyncParsableCommand {
         let movingToDifferentList = listTarget != nil && listTarget!.id != row.int("ZLIST")
         // Upstream omits the location flags here, which silently drops a location alarm edit
         // that rides along with a clone-delete move; count them as edits so the move refuses.
-        let hasOtherChangesForMove = (title?.isEmpty == false) || notes != nil
-            || (priority?.isEmpty == false) || (due?.isEmpty == false) || (url?.isEmpty == false)
-            || parsedRecurrence != nil || clearRecurrence || clearAlarm || parsedAlarm != nil || wantsPrivate
-            || latitude != nil || locationAddress != nil
+        let editsFields: Bool = (title?.isEmpty == false) || notes != nil
+            || (priority?.isEmpty == false) || (url?.isEmpty == false)
+        let editsSchedule: Bool = (due?.isEmpty == false) || parsedRecurrence != nil || clearRecurrence
+            || clearAlarm || parsedAlarm != nil
+        let editsLocation: Bool = latitude != nil || locationAddress != nil
+        let hasOtherChangesForMove = editsFields || editsSchedule || editsLocation || wantsPrivate
         var childRowsForMove: [Row] = []
         if movingToDifferentList {
             childRowsForMove = store.subtasksForMove(parentPk: id)
