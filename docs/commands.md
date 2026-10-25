@@ -254,6 +254,15 @@ remctl edit 23880 --unassign
 
 `--assign USER` targets the reminder's shared list and resolves `USER` against its sharees by display name, first/last name, email or phone address, numeric sharee ID, object UUID, or `me`. Run `remctl sharees LIST --json` first when scripting and prefer the returned `address`, `id`, or `objectUUID` — names can collide (ambiguity fails with the candidate list). `--unassign` clears the current assignment; the two flags are mutually exclusive. Verify with `remctl info ID --json` under `assignment`.
 
+### `reminder-move <id>`
+Reorder a reminder through ReminderKit: exactly one of `--before ID`, `--after ID`, `--first`, or `--last`. Without `--smart-list`, both reminders must share a list and the move rewrites that list's order (Reminders' `ZREMINDERIDSMERGEABLEORDERING`); `show` reads the same order back. With `--smart-list NAME` or `--smart-list-id ID`, the move rewrites an **unsectioned custom smart list's** manual order instead, so reminders from different lists can be ordered against each other. RemCTL refuses before writing when the smart list is built in or sectioned, when Reminders has not recorded a manual order for it yet (reorder one reminder in Reminders.app once), or when the reminder or anchor has no recorded position. Subtasks are not reordered as list reminders. Every move is read back from the store and reported with `verified: true` (`verifiedAfterHelperError: true` when ReminderKit reported an error but the order landed anyway); an order the store never shows fails with `order_unverified`. `--json`.
+```bash
+remctl reminder-move 23880 --before 23881
+remctl reminder-move 23880 --last --json
+remctl reminder-move 23880 --after 23881 --smart-list "Focus"
+remctl reminder-move 23880 --first --smart-list-id 170 --json
+```
+
 ### `done <id> [<id>…]` / `undone <id> [<id>…]`
 Mark reminders complete or incomplete. `--json`. `done --date` sets an explicit completion date (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; strict — natural-language forms are rejected before any write). `--date` is not supported on recurring reminders: completing those advances the series, so run plain `done` instead.
 ```bash

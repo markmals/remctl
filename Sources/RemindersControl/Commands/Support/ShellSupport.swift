@@ -33,6 +33,7 @@ _remctl() {
         'done:Complete a reminder'
         'undone:Uncomplete a reminder'
         'edit:Edit a reminder'
+        'reminder-move:Reorder a reminder in a list or custom smart list'
         'delete:Delete a reminder'
         'search:Search reminders'
         'today:Due today + overdue'
@@ -207,6 +208,17 @@ _remctl() {
                 '--batch[Report the batch result shape even for one id]' \
                 '--json[JSON output]' \
                 '*:reminder id:'
+            return
+            ;;
+        reminder-move)
+            _arguments \
+                '--before[Place before reminder ID]:id:' \
+                '--after[Place after reminder ID]:id:' \
+                '--first[Place first in the current ordering]' \
+                '--last[Place last in the current ordering]' \
+                '--smart-list[Target custom smart list]:smart-list:' \
+                '--smart-list-id[Target custom smart list by numeric ID]:id:' \
+                '--json[JSON output]'
             return
             ;;
         delete)
@@ -489,7 +501,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info location-lookup stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit reminder-move delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info location-lookup stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -497,6 +509,9 @@ _remctl() {
         return
     elif [ "$cmd" = "edit" ]; then
         COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "reminder-move" ]; then
+        COMPREPLY=( $(compgen -W "--before --after --first --last --smart-list --smart-list-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --batch --json" -- "$cur") )
@@ -630,6 +645,7 @@ complete -c remctl -n "__fish_use_subcommand" -a add -d "Add a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a done -d "Complete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a undone -d "Uncomplete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a edit -d "Edit a reminder"
+complete -c remctl -n "__fish_use_subcommand" -a reminder-move -d "Reorder a reminder in a list or custom smart list"
 complete -c remctl -n "__fish_use_subcommand" -a delete -d "Delete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a search -d "Search reminders"
 complete -c remctl -n "__fish_use_subcommand" -a today -d "Due today + overdue"
@@ -867,6 +883,13 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l set-tags -d "Replace all synced tags" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l clear-tags -d "Remove all synced tags"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l remove-tag -d "Remove one synced tag" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l before -d "Place before reminder ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l after -d "Place after reminder ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l first -d "Place first in the current ordering"
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l last -d "Place last in the current ordering"
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l smart-list -d "Target custom smart list" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l smart-list-id -d "Target custom smart list by numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l json -d "JSON output"
 
 """#
 }

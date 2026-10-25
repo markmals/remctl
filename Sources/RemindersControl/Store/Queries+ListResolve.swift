@@ -117,3 +117,32 @@ extension RemindersStore {
         return rows.map { (pk: $0.int("Z_PK") ?? 0, name: $0.string("ZNAME") ?? "", ckid: $0.string("ZCKIDENTIFIER")) }
     }
 }
+
+/// A smart list named by `--smart-list`/`--smart-list-id`.
+public struct SmartListTarget {
+    public let id: Int
+    public let title: String
+    public let objectUUID: String?
+    public let isCustom: Bool
+}
+
+/// Port of `resolve_smart_list_or_die`: a smart list by name (exact → case-insensitive →
+/// normalized) or numeric id, built-in or custom. Failures carry the codes commands report under
+/// `--json`; callers decide what a built-in smart list means for them.
+public func resolveSmartListTarget(store: RemindersStore, name: String?, smartListId: Int?) throws -> SmartListTarget {
+    if name != nil && smartListId != nil {
+        throw CLIError("pass either --smart-list or --smart-list-id, not both.", code: "invalid_smart_list_target")
+    }
+    let requested = smartListId.map { "id \($0)" } ?? name ?? ""
+    switch store.resolveSmartListRef(name: name, smartListId: smartListId) {
+    case .found(let id, let title, let uuid), .group(let id, let title, let uuid, _):
+        return SmartListTarget(id: id, title: title, objectUUID: uuid.flatMap { $0.isEmpty ? nil : $0 },
+                               isCustom: store.smartListIsCustom(pk: id))
+    case .ambiguous(let candidates):
+        let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
+        throw CLIError("multiple smart lists match \(WriteFormatting.pyRepr(requested)). "
+                       + "Use the exact smart-list name or --smart-list-id with one of: \(options)", code: "smart_list_ambiguous")
+    case .notFound:
+        throw CLIError("smart list not found: \(requested)", code: "smart_list_not_found")
+    }
+}

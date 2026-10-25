@@ -51,6 +51,7 @@ public struct RemindersControl: AsyncParsableCommand {
 let allSubcommands: [ParsableCommand.Type] =
     readCommands
     + writeCommands
+    + reminderMoveCommands
     + listCommands
     + sectionCommands
     + groupCommands

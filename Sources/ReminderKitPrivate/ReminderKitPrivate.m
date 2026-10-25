@@ -76,6 +76,7 @@
 - (void)setName:(NSString *)name;
 - (void)setParentOwnerID:(id)objectID;
 - (void)setSmartListType:(NSString *)smartListType;
+- (void)updateManualOrdering:(id)manualOrdering;
 - (void)removeFromParentWithAccountChangeItem:(id)accountChangeItem;
 @end
 
@@ -159,6 +160,7 @@
 @interface REMReminder : NSObject
 - (id)list;
 - (id)remObjectID;
+- (BOOL)isSubtask;
 - (id)subtaskContext;
 @end
 
@@ -181,6 +183,18 @@
 - (void)setParentOwnerID:(id)objectID;
 - (void)setParentSubContainerID:(id)objectID;
 - (void)removeFromParentWithAccountChangeItem:(id)accountChangeItem;
+- (void)insertReminderChangeItem:(id)changeItem beforeReminderChangeItem:(id)siblingChangeItem;
+- (void)insertReminderChangeItem:(id)changeItem afterReminderChangeItem:(id)siblingChangeItem;
+@end
+
+@interface REMManualOrdering : NSObject
+- (instancetype)initWithObjectID:(id)objectID
+                        listType:(short)listType
+                          listID:(NSString *)listID
+              topLevelElementIDs:(NSArray *)topLevelElementIDs
+secondaryLevelElementIDsByTopLevelElementID:(NSDictionary *)secondaryLevelElementIDsByTopLevelElementID
+    uncommitedElementsAccountID:(id)accountID
+                    modifiedDate:(NSDate *)modifiedDate;
 @end
 
 @interface REMListGroceryContextChangeItem : NSObject
@@ -1008,6 +1022,186 @@ static NSDictionary *deleteGroup(NSDictionary *cmd) {
     return @{@"status": @"deleted", @"action": @"delete_group", @"groupId": groupID};
 }
 
+#pragma mark - Reminder ordering (upstream 374c24d)
+
+static NSURL *manualSortHintURL(NSString *ckIdentifier) {
+    return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDManualSortHint_v1/%@", ckIdentifier]];
+}
+
+static id fetchReminderWithID(REMStore *store, NSString *reminderID, NSString *label, NSString **outError) {
+    id objectID = [REMObjectID objectIDWithURL:reminderURL(reminderID)];
+    if (!objectID) {
+        *outError = [NSString stringWithFormat:@"Could not build ReminderKit %@ object ID", label];
+        return nil;
+    }
+    NSError *error = nil;
+    id reminder = [store fetchReminderWithObjectID:objectID error:&error];
+    if (!reminder) {
+        *outError = error.localizedDescription ?: [NSString stringWithFormat:@"%@ not found", label];
+    }
+    return reminder;
+}
+
+static BOOL isInList(id reminder, NSString *listID) {
+    return [objectUUIDString([[reminder list] remObjectID]) caseInsensitiveCompare:listID] == NSOrderedSame;
+}
+
+/// For --first/--last: the first (or last) other reminder in the list's ordering, which the moving
+/// reminder is placed before (or after). nil when it is the only one.
+static id edgeSibling(REMStore *store, REMList *list, NSString *reminderID, BOOL first, NSString **anchorID) {
+    NSArray *ordered = [[list reminderIDsOrdering] array];
+    for (id candidate in (first ? [ordered objectEnumerator] : [ordered reverseObjectEnumerator])) {
+        NSString *candidateID = objectUUIDString(candidate);
+        if (candidateID.length == 0 || [candidateID caseInsensitiveCompare:reminderID] == NSOrderedSame) continue;
+        NSError *error = nil;
+        id sibling = [store fetchReminderWithObjectID:candidate error:&error];
+        if (sibling) {
+            *anchorID = candidateID;
+            return sibling;
+        }
+    }
+    return nil;
+}
+
+static NSDictionary *moveReminderInList(NSDictionary *cmd) {
+    NSString *reminderID = cmd[@"id"];
+    NSString *listID = cmd[@"listId"];
+    NSString *position = cmd[@"position"];
+    NSString *anchorID = cmd[@"anchorId"];
+    if (![reminderID isKindOfClass:[NSString class]] || reminderID.length == 0) { RKP_FAIL(@"id is required"); }
+    if (![listID isKindOfClass:[NSString class]] || listID.length == 0) { RKP_FAIL(@"listId is required"); }
+    if (![position isKindOfClass:[NSString class]]
+        || ![[NSSet setWithArray:@[@"before", @"after", @"first", @"last"]] containsObject:position]) {
+        RKP_FAIL(@"position must be before, after, first, or last");
+    }
+    BOOL relative = [position isEqualToString:@"before"] || [position isEqualToString:@"after"];
+    REMStore *store = [REMStore new];
+    NSString *fetchError = nil;
+    id reminder = fetchReminderWithID(store, reminderID, @"Reminder", &fetchError);
+    if (!reminder) { RKP_FAIL(fetchError); }
+    if (!isInList(reminder, listID)) { RKP_FAIL(@"Reminder is not in the requested list"); }
+    REMList *list = [reminder list];
+
+    id sibling = nil;
+    NSString *effectiveAnchorID = anchorID;
+    if (relative) {
+        if (![anchorID isKindOfClass:[NSString class]] || anchorID.length == 0) {
+            RKP_FAIL(@"anchorId is required for before or after positioning");
+        }
+        if ([anchorID caseInsensitiveCompare:reminderID] == NSOrderedSame) {
+            RKP_FAIL(@"A reminder cannot be positioned relative to itself");
+        }
+        sibling = fetchReminderWithID(store, anchorID, @"Anchor reminder", &fetchError);
+        if (!sibling) { RKP_FAIL(fetchError); }
+        if (!isInList(sibling, listID)) { RKP_FAIL(@"Reminder and anchor are not in the same list"); }
+    } else {
+        if (![list respondsToSelector:@selector(reminderIDsOrdering)]) {
+            RKP_FAIL(@"ReminderKit list ordering is unavailable on this macOS version");
+        }
+        sibling = edgeSibling(store, list, reminderID, [position isEqualToString:@"first"], &effectiveAnchorID);
+        if (!sibling) {
+            return @{@"status": @"updated", @"action": @"move_reminder_in_list", @"id": reminderID,
+                     @"listId": listID, @"position": position};
+        }
+    }
+
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    REMListChangeItem *listChange = [save updateList:list];
+    REMReminderChangeItem *movingChange = [save updateReminder:reminder];
+    REMReminderChangeItem *siblingChange = [save updateReminder:sibling];
+    if (!listChange || !movingChange || !siblingChange) { RKP_FAIL(@"Could not create ReminderKit ordering change items"); }
+    BOOL after = [position isEqualToString:@"after"] || [position isEqualToString:@"last"];
+    SEL insert = after ? @selector(insertReminderChangeItem:afterReminderChangeItem:)
+                       : @selector(insertReminderChangeItem:beforeReminderChangeItem:);
+    if (![listChange respondsToSelector:insert]) {
+        RKP_FAIL(@"ReminderKit list ordering is unavailable on this macOS version");
+    }
+    if (after) {
+        [listChange insertReminderChangeItem:movingChange afterReminderChangeItem:siblingChange];
+    } else {
+        [listChange insertReminderChangeItem:movingChange beforeReminderChangeItem:siblingChange];
+    }
+    NSError *error = nil;
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit list ordering save failed");
+    }
+    return @{@"status": @"updated", @"action": @"move_reminder_in_list", @"id": reminderID, @"listId": listID,
+             @"position": position, @"anchorId": effectiveAnchorID ?: @""};
+}
+
+/// Writes an unsectioned custom smart list's manual order. ReminderKit replaces the whole
+/// ordering, so the caller sends every top-level element in its new order.
+static NSDictionary *setSmartListManualOrder(NSDictionary *cmd) {
+    NSString *reminderID = cmd[@"id"];
+    NSString *smartListID = cmd[@"smartListId"];
+    NSString *manualOrderingID = cmd[@"manualOrderingId"];
+    if (![reminderID isKindOfClass:[NSString class]] || reminderID.length == 0) { RKP_FAIL(@"id is required"); }
+    if (![smartListID isKindOfClass:[NSString class]] || smartListID.length == 0) { RKP_FAIL(@"smartListId is required"); }
+    if (![manualOrderingID isKindOfClass:[NSString class]] || manualOrderingID.length == 0) {
+        RKP_FAIL(@"manualOrderingId is required");
+    }
+    if (![cmd[@"listType"] isKindOfClass:[NSNumber class]] || [cmd[@"listType"] integerValue] != 2) {
+        RKP_FAIL(@"Only custom smart-list manual ordering is supported");
+    }
+    if (![cmd[@"topLevelElementIds"] isKindOfClass:[NSArray class]]) { RKP_FAIL(@"topLevelElementIds must be an array"); }
+    NSString *idsError = nil;
+    NSArray<NSString *> *topLevelIDs = stringArray(cmd[@"topLevelElementIds"], @"topLevelElementIds", &idsError);
+    if (idsError) { RKP_FAIL(idsError); }
+    if (topLevelIDs.count == 0) { RKP_FAIL(@"topLevelElementIds must not be empty"); }
+    if ([NSSet setWithArray:topLevelIDs].count != topLevelIDs.count) { RKP_FAIL(@"topLevelElementIds must not contain duplicates"); }
+    if (![topLevelIDs containsObject:reminderID]) { RKP_FAIL(@"topLevelElementIds must contain the target reminder"); }
+    NSMutableArray *topLevelObjectIDs = [NSMutableArray arrayWithCapacity:topLevelIDs.count];
+    for (NSString *identifier in topLevelIDs) {
+        id objectID = [REMObjectID objectIDWithURL:reminderURL(identifier)];
+        if (!objectID) { RKP_FAIL([NSString stringWithFormat:@"Could not build ReminderKit reminder object ID: %@", identifier]); }
+        [topLevelObjectIDs addObject:objectID];
+    }
+
+    REMStore *store = [REMStore new];
+    if (![store respondsToSelector:@selector(fetchCustomSmartListWithObjectID:error:)]) {
+        RKP_FAIL(@"ReminderKit smart-list ordering is unavailable on this macOS version");
+    }
+    id smartListObjectID = [REMObjectID objectIDWithURL:smartListURL(smartListID)];
+    if (!smartListObjectID) { RKP_FAIL(@"Could not build ReminderKit smart-list object ID"); }
+    NSError *error = nil;
+    id smartList = [store fetchCustomSmartListWithObjectID:smartListObjectID error:&error];
+    if (!smartList) { RKP_FAIL(error.localizedDescription ?: @"Custom smart list not found"); }
+    error = nil;
+    id account = [smartList respondsToSelector:@selector(account)] ? [smartList account] : nil;
+    if (!account) { account = fetchWritableCloudKitAccount(store, &error); }
+    if (!account) { RKP_FAIL(error.localizedDescription ?: @"No active iCloud Reminders account found"); }
+    id manualOrderingObjectID = [REMObjectID objectIDWithURL:manualSortHintURL(manualOrderingID)];
+    if (!manualOrderingObjectID) { RKP_FAIL(@"Could not build ReminderKit manual-ordering object ID"); }
+    Class manualOrderingClass = NSClassFromString(@"REMManualOrdering");
+    SEL initializer = @selector(initWithObjectID:listType:listID:topLevelElementIDs:secondaryLevelElementIDsByTopLevelElementID:uncommitedElementsAccountID:modifiedDate:);
+    if (!manualOrderingClass || ![manualOrderingClass instancesRespondToSelector:initializer]) {
+        RKP_FAIL(@"ReminderKit manual ordering is unavailable on this macOS version");
+    }
+    REMManualOrdering *manualOrdering = [[manualOrderingClass alloc]
+        initWithObjectID:manualOrderingObjectID
+        listType:2
+        listID:smartListID
+        topLevelElementIDs:topLevelObjectIDs
+        secondaryLevelElementIDsByTopLevelElementID:@{}
+        uncommitedElementsAccountID:[account remObjectID]
+        modifiedDate:[NSDate date]];
+    if (!manualOrdering) { RKP_FAIL(@"Could not create ReminderKit manual ordering"); }
+
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    REMSmartListChangeItem *change = [save updateSmartList:smartList];
+    if (!change || ![change respondsToSelector:@selector(updateManualOrdering:)]) {
+        RKP_FAIL(@"ReminderKit smart-list ordering is unavailable on this macOS version");
+    }
+    [change updateManualOrdering:manualOrdering];
+    error = nil;
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit smart-list ordering save failed");
+    }
+    return @{@"status": @"updated", @"action": @"set_smart_list_manual_order", @"id": reminderID,
+             @"smartListId": smartListID, @"manualOrderingId": manualOrderingID,
+             @"orderedCount": @(topLevelIDs.count)};
+}
+
 #pragma mark - Dispatch
 
 NSDictionary *RKPDispatch(NSDictionary *request) {
@@ -1040,6 +1234,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"create_group",
                 @"set_list_parent_group",
                 @"delete_group",
+                @"move_reminder_in_list",
+                @"set_smart_list_manual_order",
                 @"set_list_appearance",
                 @"set_list_pinned",
                 @"set_smart_list_pinned",
@@ -1063,6 +1259,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
             if ([action isEqualToString:@"create_group"]) { return createGroup(cmd); }
             if ([action isEqualToString:@"set_list_parent_group"]) { return setListParentGroup(cmd); }
             if ([action isEqualToString:@"delete_group"]) { return deleteGroup(cmd); }
+            if ([action isEqualToString:@"move_reminder_in_list"]) { return moveReminderInList(cmd); }
+            if ([action isEqualToString:@"set_smart_list_manual_order"]) { return setSmartListManualOrder(cmd); }
 
             if ([action isEqualToString:@"create_list"]) {
                 NSString *name = cmd[@"name"];

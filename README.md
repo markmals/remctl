@@ -48,7 +48,7 @@ There are no separate helper executables — the EventKit and ReminderKit logic 
 | --- | --- |
 | See what is due | `today`, `upcoming`, `overdue` |
 | Browse reminders | `lists`, `list-info`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats`, `location-lookup` |
-| Create and edit | `add`, `edit`, `done`, `undone`, `delete`, `flag`, `unflag` |
+| Create and edit | `add`, `edit`, `reminder-move`, `done`, `undone`, `delete`, `flag`, `unflag` |
 | Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `section-create`, `section-rename`, `section-delete`, `groups`, `group-info`, `group-create`, `group-edit`, `group-delete` |
 | Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
 | Share data | `export`, `import`, `link`, `open`, plus `--json` and `--format table` on read commands |
@@ -66,6 +66,7 @@ remctl add "Review PR" -l Work -d "tomorrow 10:00" -p high
 remctl add "Pay rent" -d "2026-06-01" --recurrence monthly
 remctl edit 23880 -d clear
 remctl edit 23880 -l Work
+remctl reminder-move 23880 --before 23881
 remctl done 23880 23881 --json
 remctl add "Research" -l Projects --url "https://example.com" -t remctl --new-section "Research"
 remctl section-create "Research" -l Projects

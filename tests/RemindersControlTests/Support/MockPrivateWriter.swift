@@ -33,6 +33,8 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case createGroup(name: String)
         case setListParentGroup(listId: String, groupId: String?)
         case deleteGroup(groupId: String)
+        case moveReminderInList(id: String, listId: String, position: String, anchorId: String?)
+        case setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String])
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
@@ -90,6 +92,8 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func createGroup(name: String) async throws -> PrivateResult { try record(.createGroup(name: name)) }
     func setListParentGroup(listId: String, groupId: String?) async throws -> PrivateResult { try record(.setListParentGroup(listId: listId, groupId: groupId)) }
     func deleteGroup(groupId: String) async throws -> PrivateResult { try record(.deleteGroup(groupId: groupId)) }
+    func moveReminderInList(id: String, listId: String, position: String, anchorId: String?) async throws -> PrivateResult { try record(.moveReminderInList(id: id, listId: listId, position: position, anchorId: anchorId)) }
+    func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String]) async throws -> PrivateResult { try record(.setSmartListManualOrder(id: id, smartListId: smartListId, manualOrderingId: manualOrderingId, topLevelElementIds: topLevelElementIds)) }
 
     private func record(_ call: Call) throws -> PrivateResult {
         calls.append(call)

@@ -35,6 +35,16 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [listPk]) }) ?? []
     }
 
+    /// Port of `q_smart_list_sections`: the live sections a custom smart list owns (its rows in
+    /// ZREMCDBASESECTION carry ZSMARTLIST instead of ZLIST). Stores without the column have none.
+    public func smartListSections(smartListPk: Int) -> [Row] {
+        guard tableColumnNames("ZREMCDBASESECTION").contains("ZSMARTLIST") else { return [] }
+        return (try? queue.read { try Row.fetchAll($0, sql: """
+            SELECT Z_PK, ZDISPLAYNAME, ZSMARTLIST, ZCKIDENTIFIER FROM ZREMCDBASESECTION
+            WHERE ZMARKEDFORDELETION = 0 AND ZSMARTLIST = ? ORDER BY Z_PK
+            """, arguments: [smartListPk]) }) ?? []
+    }
+
     /// A list's live section identifiers in Reminders' display order: the list's persisted
     /// `ZSECTIONIDSORDERINGASDATA` record first, then live sections it does not mention yet, in
     /// Z_PK order. Writes that add a section append to this, so they keep the user's order.

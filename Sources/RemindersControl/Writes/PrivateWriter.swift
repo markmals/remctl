@@ -117,4 +117,10 @@ public protocol PrivateWriter {
     /// Moves a list into `groupId`, or to the top level when it is nil. Only the container changes.
     func setListParentGroup(listId: String, groupId: String?) async throws -> PrivateResult
     func deleteGroup(groupId: String) async throws -> PrivateResult
+    // reminder ordering (keyed by reminder / list / smart-list ckIdentifier)
+    /// Places a reminder `position` (before/after `anchorId`, or first/last) in its list's ordering.
+    func moveReminderInList(id: String, listId: String, position: String, anchorId: String?) async throws -> PrivateResult
+    /// Replaces an unsectioned custom smart list's manual order with `topLevelElementIds`.
+    func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String,
+                                 topLevelElementIds: [String]) async throws -> PrivateResult
 }

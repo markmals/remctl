@@ -86,6 +86,10 @@ EventKit cannot move a reminder that owns subtasks, so `edit -l/--list` clones t
 
 Repeated `--subtask` values are created in the order you pass them, after any subtasks the parent already has. The result reports where the batch landed in `subtaskPlacement`: `afterExisting`, `first` (the parent had none), `unconfirmed` (the existing order could not be read, so the batch keeps its order but starts first), or `unordered` (the host's ReminderKit has no subtask ordering API).
 
+### Reminder order
+
+`reminder-move ID --before ID|--after ID|--first|--last` reorders a reminder through ReminderKit. In a list it inserts the reminder next to its anchor in the list's ordering (`REMListChangeItem insertReminderChangeItem:before/afterReminderChangeItem:`; `--first`/`--last` anchor on the first/last other reminder). With `--smart-list`/`--smart-list-id` it rewrites an unsectioned custom smart list's manual order (`REMManualOrdering` through `updateManualOrdering:`), so reminders from different lists can be ordered against each other — only once Reminders has recorded a manual order for that smart list, and never for built-in or sectioned smart lists (refused before saving). RemCTL computes the order the move must produce and reads the persisted order back until it matches: `verified: true`, or `order_unverified` when it never does.
+
 ### Attachments
 
 Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic file and PDF attachments are intentionally rejected because Reminders does not reliably display them. Rich-link and image edits are **additive**: RemCTL adds synced rich links and images but never removes or replaces existing ones.

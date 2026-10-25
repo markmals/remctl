@@ -404,4 +404,20 @@ public final class ReminderKitWriter: PrivateWriter {
     public func deleteGroup(groupId: String) async throws -> PrivateResult {
         await dispatchWithRetry(["action": "delete_group", "groupId": groupId])
     }
+
+    // MARK: - PrivateWriter — reminder ordering
+
+    public func moveReminderInList(id: String, listId: String, position: String, anchorId: String?) async throws -> PrivateResult {
+        var req: [String: Any] = ["action": "move_reminder_in_list", "id": id, "listId": listId, "position": position]
+        if let anchorId { req["anchorId"] = anchorId }
+        return await dispatchWithRetry(req)
+    }
+
+    public func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String,
+                                        topLevelElementIds: [String]) async throws -> PrivateResult {
+        await dispatchWithRetry([
+            "action": "set_smart_list_manual_order", "id": id, "smartListId": smartListId,
+            "manualOrderingId": manualOrderingId, "listType": 2, "topLevelElementIds": topLevelElementIds,
+        ])
+    }
 }
