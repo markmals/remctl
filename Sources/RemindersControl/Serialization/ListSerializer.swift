@@ -5,26 +5,42 @@ public func isGroceryListRow(_ row: ReminderRow) -> Bool {
     (row.int("ZSHOULDCATEGORIZEGROCERYITEMS") ?? 0) != 0
 }
 
+/// Index of a `CFKeyedArchiverUID` inside the archive's `$objects` array.
+///
+/// `PropertyListSerialization` surfaces a binary-plist UID as an opaque CoreFoundation object:
+/// it is not an `NSNumber`, is not KVC-compliant, and has no public accessor. Its index is only
+/// reachable through the `{value = N}` tail of its CoreFoundation description.
+private func archivedUIDIndex(_ value: Any) -> Int? {
+    let text = String(describing: value)
+    guard text.hasPrefix("<CFKeyedArchiverUID"), let marker = text.range(of: "{value = ") else { return nil }
+    return Int(text[marker.upperBound...].prefix(while: \.isNumber))
+}
+
 /// Port of parse_list_color (ZCOLOR NSKeyedArchiver binary plist -> {name, hex}).
-/// Default fallback is {"blue","#007AFF"}. NOTE: resolving the NSKeyedArchiver UID chain via
-/// PropertyListSerialization is best-effort; on any failure we return the default. Live custom
-/// list colors may therefore fall back to default in JSON until a proper NSKeyedUnarchiver pass
-/// is added (follow-up). The parity oracle only exercises the default path.
+/// Default fallback is {"blue","#007AFF"}, which is also what an unreadable or incomplete
+/// archive yields.
 public func parseListColor(_ blob: Data?) -> (name: String, hex: String) {
     let fallback = (name: "blue", hex: "#007AFF")
     guard let blob, !blob.isEmpty else { return fallback }
     guard let plist = try? PropertyListSerialization.propertyList(from: blob, options: [], format: nil),
           let dict = plist as? [String: Any],
           let objects = dict["$objects"] as? [Any] else { return fallback }
-    func resolve(_ uid: Any?) -> String? {
-        guard let uid else { return nil }
-        if let n = (uid as? NSNumber)?.intValue, n >= 0, n < objects.count { return objects[n] as? String }
-        return nil
+    /// Port of upstream's `decode_string`: follow a UID into `$objects`, then unwrap an archived
+    /// string object (`{NS.string: …}`), whose payload may itself be a UID.
+    func decodeString(_ value: Any) -> String? {
+        var current = value
+        if let idx = archivedUIDIndex(current), objects.indices.contains(idx) { current = objects[idx] }
+        if let wrapper = current as? [String: Any] {
+            guard let inner = wrapper["NS.string"] else { return nil }
+            current = inner
+            if let idx = archivedUIDIndex(current), objects.indices.contains(idx) { current = objects[idx] }
+        }
+        return current as? String
     }
-    for obj in objects {
-        guard let o = obj as? [String: Any], o["ckSymbolicColorName"] != nil else { continue }
-        let name = resolve(o["ckSymbolicColorName"]) ?? "blue"
-        let hex = resolve(o["daHexString"]) ?? ""
+    for case let object as [String: Any] in objects {
+        guard let nameValue = object["ckSymbolicColorName"] else { continue }
+        guard let name = decodeString(nameValue) else { return fallback }
+        guard let hex = object["daHexString"].map(decodeString) ?? "" else { return fallback }
         return (name, hex)
     }
     return fallback
