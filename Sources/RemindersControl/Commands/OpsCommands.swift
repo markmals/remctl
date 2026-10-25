@@ -54,11 +54,12 @@ struct Export: ParsableCommand {
 struct Import: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "import", abstract: "Import reminders.")
 
-    @Argument(help: "Path to a JSON file containing an array of reminder objects") var file: String
+    @Argument(help: "Path to a JSON file containing an array of reminder objects, or - for standard input") var file: String
+    @Flag(name: .long, help: "Validate every reminder without creating any") var dryRun = false
     @Flag(name: .long, help: "Emit the created/errors/total summary as one-line JSON instead of text.") var json = false
 
     func run() async throws {
-        let path = file, json = self.json
+        let path = file, json = self.json, dryRun = self.dryRun
         WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
             await Self.perform(
                 path: path,
@@ -70,7 +71,8 @@ struct Import: AsyncParsableCommand {
                     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
                     return (try? Data(contentsOf: url)) ?? Data()
                 },
-                json: json, store: store, writer: writer, private: priv)
+                stdin: .standard,
+                json: json, dryRun: dryRun, store: store, writer: writer, private: priv)
         })
     }
 
@@ -78,9 +80,11 @@ struct Import: AsyncParsableCommand {
     /// is validated before the first write, so one bad item can never leave the earlier ones
     /// half-created. Valid items then replay through `Add.perform` (the `add` code path, always in
     /// JSON mode so the created identifier can be captured); a runtime failure mid-import reports
-    /// `status: "partial"` with the created ids and indexed errors, and exits 1. `readFile` is
+    /// `status: "partial"` with the created ids and indexed errors, and exits 1. A `path` of `-`
+    /// takes the document from `stdin` instead, and `dryRun` (upstream 8f15241) stops right after
+    /// validation, reporting `status: "valid"` without calling a writer. `readFile`/`stdin` are
     /// injected so tests can supply canned bytes (or nil for "not found") without touching the real
-    /// filesystem; `now`/`calendar` flow into per-item due parsing.
+    /// filesystem or the process's input; `now`/`calendar` flow into per-item due parsing.
     ///
     /// Divergences from Python (documented for parity reviewers):
     ///   1. JSON decode error: Python interpolates the `json.JSONDecodeError`/`IOError` text;
@@ -92,13 +96,21 @@ struct Import: AsyncParsableCommand {
     static func perform(
         path: String,
         readFile: (String) -> Data?,
-        json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
+        stdin: StandardInput,
+        json: Bool, dryRun: Bool = false, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current
     ) async -> WriteOutcome {
 
         // Top-level error paths (each exit 1, NO per-item processing).
-        guard let data = readFile(path) else {
-            return .error("File '\(path)' not found")
+        let data: Data
+        if path == "-" {
+            switch readPipedDocument(stdin) {
+            case let .document(bytes):  data = bytes
+            case let .refused(outcome): return outcome
+            }
+        } else {
+            guard let bytes = readFile(path) else { return .error("File '\(path)' not found") }
+            data = bytes
         }
         guard let decoded = decodeJSON(data) else {
             return .error("Failed to read JSON: \(jsonErrorText(data))")
@@ -118,6 +130,14 @@ struct Import: AsyncParsableCommand {
         }
         guard validationErrors.isEmpty else {
             return validationFailure(validationErrors, total: total, json: json)
+        }
+
+        // --dry-run stops at the validation gate: the document is sound and nothing was written.
+        if dryRun {
+            let payload: JSONValue = .object([
+                ("status", .string("valid")), ("count", .int(pending.count)), ("created", .int(0)),
+            ])
+            return .ok(payload.serialized(indent: nil, ensureAscii: true) + "\n")
         }
 
         var out = "", err = ""
@@ -291,6 +311,29 @@ struct Import: AsyncParsableCommand {
 
     /// Decode the file bytes to an order-preserving JSONValue (nil on malformed JSON).
     private static func decodeJSON(_ data: Data) -> JSONValue? { OrderedJSON.parse(data) }
+
+    /// The largest document `import -` accepts (Python's 8 MiB cap).
+    private static let maxPipedDocumentBytes = 8 * 1024 * 1024
+
+    /// Read the document from standard input (`import -`). A terminal is refused without being
+    /// read, so an interactive caller is never left waiting for input nobody is going to type.
+    /// Both refusals keep Python's plain `Error: Failed to read JSON: …` line, like the file read
+    /// failures above; the structured payload starts at the per-item validation gate.
+    private static func readPipedDocument(_ stdin: StandardInput) -> PipedDocument {
+        guard !stdin.isInteractive() else {
+            return .refused(.error("Failed to read JSON: import - requires piped standard input"))
+        }
+        let data = stdin.read(maxPipedDocumentBytes)
+        guard data.count <= maxPipedDocumentBytes else {
+            return .refused(.error("Failed to read JSON: standard input exceeds 8 MiB"))
+        }
+        return .document(data)
+    }
+
+    private enum PipedDocument {
+        case document(Data)
+        case refused(WriteOutcome)
+    }
 
     /// Best-effort Swift error text for the `Failed to read JSON:` message. `OrderedJSON.parse`
     /// returns nil without an error object, so we re-run Foundation's decoder to surface a real

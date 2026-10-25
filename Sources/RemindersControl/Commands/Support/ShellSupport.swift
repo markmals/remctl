@@ -207,6 +207,13 @@ _remctl() {
                 '--json[JSON output]'
             return
             ;;
+        import)
+            _arguments \
+                '--dry-run[Validate every reminder without creating any]' \
+                '--json[JSON output]' \
+                '1:file:_files'
+            return
+            ;;
         list-symbols)
             _arguments \
                 '--html[Write a standalone HTML preview contact sheet]:path:_files' \
@@ -427,6 +434,9 @@ _remctl() {
     elif [ "$cmd" = "export" ]; then
         COMPREPLY=( $(compgen -W "--list -l --list-id --format --json" -- "$cur") )
         return
+    elif [ "$cmd" = "import" ]; then
+        COMPREPLY=( $(compgen -W "--dry-run --json" -- "$cur") )
+        return
     elif [ "$cmd" = "list-symbols" ]; then
         COMPREPLY=( $(compgen -W "--html --preview --json" -- "$cur") )
         return
@@ -551,6 +561,8 @@ complete -c remctl -n "__fish_seen_subcommand_from link" -l completed -d "Includ
 complete -c remctl -n "__fish_seen_subcommand_from export" -s l -l list -d "Export only this list" -r
 complete -c remctl -n "__fish_seen_subcommand_from export" -l list-id -d "Export only this list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from export" -l format -d "Export format" -a "json csv"
+complete -c remctl -n "__fish_seen_subcommand_from import" -l dry-run -d "Validate every reminder without creating any"
+complete -c remctl -n "__fish_seen_subcommand_from import" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from list-symbols" -l html -d "Write a standalone HTML preview contact sheet" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-symbols" -l preview -d "Generate and open the HTML preview contact sheet"
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l color -d "List color name; with --private also accepts #RRGGBB" -r

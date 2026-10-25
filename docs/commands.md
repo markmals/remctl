@@ -468,15 +468,19 @@ remctl export --list-id 153 --format json > shopping.json
 remctl export --format csv > all-reminders.csv
 ```
 
-### `import <file>`
-Import reminders from a JSON file containing an array of reminder objects. Each object may carry `title` (required), `list`, `notes`, `due`/`dueDate`, `priority`, `url`, `recurrence` (string spec or exported object), `alarm`, and `flagged`.
+### `import <file|->`
+Import reminders from a JSON file containing an array of reminder objects, or from standard input with `-` (piped only, up to 8 MiB). Each object may carry `title` (required), `list`, `notes`, `due`/`dueDate`, `priority`, `url`, `recurrence` (string spec or exported object), `alarm`, and `flagged`.
 
 The **whole document is validated first**: if any item has a non-string field, an unparseable due date, recurrence or alarm, an unknown priority, or a non-boolean `flagged`, nothing is created and the command exits 1 — with `--json`, a structured `invalid_import` error on stderr listing every bad item by index.
+
+`--dry-run` stops at that gate and prints `{"status": "valid", "count": N, "created": 0}` without creating anything; an invalid document still fails the same way.
 
 Once validation passes, items are created one by one. `--json` prints a one-line summary on stdout (`status` `completed`/`partial`, `created`, `createdIds`, indexed `errors`, `total`) and per-item progress on stderr; any item that fails to write makes the status `partial` and the exit code 1.
 ```bash
 remctl import shopping.json
 remctl import shopping.json --json
+remctl import shopping.json --dry-run
+remctl import - --json < shopping.json
 ```
 
 ### `link [IDS...]`

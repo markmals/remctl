@@ -20,6 +20,23 @@ import GRDB
     /// A `readFile` closure returning the given JSON string's UTF-8 bytes for ANY path.
     private func reader(_ json: String) -> (String) -> Data? { { _ in Data(json.utf8) } }
 
+    /// A `readFile` closure that fails the test: `import -` must never touch the filesystem.
+    private var noFile: (String) -> Data? {
+        { _ in Issue.record("import - must not read a file"); return nil }
+    }
+
+    /// A stdin seam that fails the test: `import <file>` must never touch standard input.
+    private var noStdin: StandardInput {
+        StandardInput(
+            isInteractive: { Issue.record("import <file> must not read standard input"); return true },
+            read: { _ in Issue.record("import <file> must not read standard input"); return Data() })
+    }
+
+    /// A stdin seam delivering `bytes` from a pipe (never a terminal).
+    private func piped(_ bytes: Data) -> StandardInput {
+        StandardInput(isInteractive: { false }, read: { _ in bytes })
+    }
+
     // A fixed reference date so due parsing is deterministic.
     private var fixedNow: Date { Date(timeIntervalSince1970: 1_700_000_000) }  // 2023-11-14T...
 
@@ -34,7 +51,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Buy milk"},{"title":"Walk dog"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 2)
         // Per-item human add success lines are present, then the summary with leading blank line.
@@ -50,7 +67,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Buy milk"},{"title":"Walk dog"}]"#),
-            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 2)
         // stdout is ONE parseable summary line; per-item progress goes to stderr.
@@ -67,7 +84,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"A"},{},{"title":"C"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stdout.isEmpty)
@@ -84,7 +101,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Good"},{"title":"Bad","due":"notadate"},{"title":"Worse","list":7}]"#),
-            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stdout.isEmpty)
@@ -100,7 +117,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"A"}]"#),
-            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(out.stdout == #"{"status": "partial", "created": 0, "createdIds": [], "errors": [{"index": 0, "title": "A", "message": "Error: List not found: Work"}], "total": 1}"# + "\n")
     }
@@ -113,7 +130,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Standup","recurrence":\#(recurrence)}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         guard case let .create(w)? = m.calls.first else { Issue.record("no create"); return }
         #expect(w.recurrence == RecurrenceWrite(frequency: "weekly", interval: 2, daysOfWeek: [2], weekNumbers: [0]))
@@ -125,7 +142,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Standup","recurrence":{}}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stderr.contains("Item 0: could not parse recurrence {}"))
@@ -134,7 +151,7 @@ import GRDB
         let out2 = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Standup","recurrence":null}]"#),
-            json: false, store: s, writer: m2, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m2, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out2.exitCode == 0)
         guard case let .create(w)? = m2.calls.first else { Issue.record("no create"); return }
         #expect(w.recurrence == nil)
@@ -147,7 +164,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Both","due":"tomorrow","dueDate":"2020-01-01"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 1)
         guard case let .create(w) = m.calls[0], case let .set(date)? = w.due else {
@@ -162,7 +179,7 @@ import GRDB
         let out2 = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"OnlyDD","dueDate":"tomorrow"}]"#),
-            json: false, store: s, writer: m2, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m2, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out2.exitCode == 0)
         guard case let .create(w2) = m2.calls[0], case .set? = w2.due else {
             Issue.record("expected dueDate to populate due"); return
@@ -175,7 +192,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","priority":"high"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 1)
         guard case let .create(w) = m.calls[0] else { Issue.record("no create"); return }
@@ -189,7 +206,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","priority":1}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stderr.contains("Item 0: priority must be a string"))
@@ -201,7 +218,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","priority":"urgent"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stderr.contains("Item 0: priority must be high, medium, low, or none"))
@@ -213,7 +230,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","flagged":"yes"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stderr.contains("Item 0: flagged must be a boolean"))
@@ -225,7 +242,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","alarm":"whenever"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stderr.contains("Item 0: could not parse alarm 'whenever'"))
@@ -240,7 +257,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"X","flagged":true}]"#),
-            json: false, store: s, writer: m, private: mp, now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: mp, now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 1)
         #expect(mp.calls == [.setFlagged(id: "EK-NEW", flagged: true)])
@@ -254,7 +271,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Good"},{"title":"Bad","due":"notadate"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         #expect(out.stdout.isEmpty)
@@ -267,7 +284,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: { _ in nil },                // file absent
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: File 'x.json' not found\n")
         #expect(m.calls.isEmpty)
@@ -282,7 +299,7 @@ import GRDB
         let out = await Import.perform(
             path: "/some/existing/but/unreadable.json",
             readFile: { _ in Data() },             // file exists but unreadable → empty bytes sentinel
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(out.stderr.hasPrefix("Error: Failed to read JSON: "))
         #expect(!out.stderr.contains("not found"))
@@ -297,7 +314,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[1, "x", null, {"title":"Good"}]"#),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(m.calls.isEmpty)
         for index in 0...2 { #expect(out.stderr.contains("Item \(index): item must be an object")) }
@@ -309,7 +326,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: { _ in Data("{not json".utf8) },
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         // Only the prefix is guaranteed (Swift's decode-error text diverges from Python's).
         #expect(out.stderr.hasPrefix("Error: Failed to read JSON: "))
@@ -322,7 +339,7 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"{"title":"x"}"#),    // a top-level object, not an array
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: JSON must be an array of reminder objects\n")
         #expect(m.calls.isEmpty)
@@ -334,9 +351,108 @@ import GRDB
         let out = await Import.perform(
             path: "x.json",
             readFile: reader("[]"),
-            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+            stdin: noStdin, json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(out.stdout == "\nImported 0/0 reminders (0 errors)\n")
         #expect(m.calls.isEmpty)
+    }
+
+    // MARK: - import - (standard input)
+
+    @Test func importReadsPipedDocumentFromStdin() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "-",
+            readFile: noFile,
+            stdin: piped(Data(#"[{"title":"Piped"}]"#.utf8)),
+            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        #expect(createCount(m) == 1)
+        #expect(out.stdout == #"{"status": "completed", "created": 1, "createdIds": ["EK-NEW"], "errors": [], "total": 1}"# + "\n")
+        #expect(out.stderr == "imported index=0 id=EK-NEW\n")
+    }
+
+    @Test func importRefusesTerminalStdinWithoutReadingIt() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let tty = StandardInput(
+            isInteractive: { true },
+            read: { _ in Issue.record("a terminal must not be read"); return Data() })
+        let out = await Import.perform(
+            path: "-", readFile: noFile, stdin: tty,
+            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: Failed to read JSON: import - requires piped standard input\n")
+        #expect(out.stdout.isEmpty)
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func importRejectsStdinLargerThanEightMiB() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let oversize = Data(repeating: UInt8(ascii: " "), count: 8 * 1024 * 1024 + 1)
+        let out = await Import.perform(
+            path: "-", readFile: noFile, stdin: piped(oversize),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: Failed to read JSON: standard input exceeds 8 MiB\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    /// Exactly 8 MiB is still accepted: the cap rejects only what is larger.
+    @Test func importAcceptsStdinAtExactlyEightMiB() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let head = #"[{"title":"Pad","notes":""#, tail = #""}]"#
+        let pad = String(repeating: "x", count: 8 * 1024 * 1024 - head.utf8.count - tail.utf8.count)
+        let document = Data((head + pad + tail).utf8)
+        #expect(document.count == 8 * 1024 * 1024)
+        let out = await Import.perform(
+            path: "-", readFile: noFile, stdin: piped(document),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 0)
+        #expect(createCount(m) == 1)
+    }
+
+    // MARK: - import --dry-run
+
+    @Test func importDryRunValidatesWithoutWriting() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        for json in [false, true] {
+            let m = MockWriter()
+            let out = await Import.perform(
+                path: "x.json",
+                readFile: reader(#"[{"title":"Preview","due":"2030-10-02"},{"title":"Second"}]"#),
+                stdin: noStdin, json: json, dryRun: true, store: s, writer: m, private: MockPrivateWriter(),
+                now: fixedNow, calendar: .current)
+            #expect(out.exitCode == 0)
+            #expect(m.calls.isEmpty)
+            #expect(out.stdout == #"{"status": "valid", "count": 2, "created": 0}"# + "\n")
+            #expect(out.stderr.isEmpty)
+        }
+    }
+
+    @Test func importDryRunRejectsInvalidDocumentLikeARealImport() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"Good"},{"title":"Bad","due":"notadate"}]"#),
+            stdin: noStdin, json: true, dryRun: true, store: s, writer: m, private: MockPrivateWriter(),
+            now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "invalid_import""#))
+    }
+
+    /// End-to-end through the binary: `-` really reads the pipe and `--dry-run` writes nothing.
+    @Test func importDashDryRunThroughTheCLI() async throws {
+        let (_, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["import", "-", "--dry-run"], storeDir: dir,
+                                  stdin: #"[{"title":"Piped"},{"title":"Second"}]"#)
+        #expect(r.exit == 0)
+        #expect(r.stdout == #"{"status": "valid", "count": 2, "created": 0}"# + "\n")
     }
 }

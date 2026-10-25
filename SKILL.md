@@ -70,6 +70,7 @@ remctl sharees Family --json
 remctl edit 23880 --assign Alex --json
 remctl link --list-id 153 --json
 remctl export --list-id 153 --format json
+remctl import - --dry-run < shopping.json
 remctl list-rename --list-id 123 --new-name "Project Archive" --json
 remctl list-delete --list-id 123 --force --json
 ```
@@ -82,6 +83,7 @@ remctl list-delete --list-id 123 --force --json
 - List targets resolve exact name → case-insensitive → normalized (e.g. `Weekly 513` for `🗓️ Weekly 513`). If multiple match, RemCTL fails; use `--list-id`. `show`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, and smart-list `--include-list-id` accept numeric targeting; `list-pin`/`list-unpin` also accept `--smart-list-id`. Passing both a name and `--list-id` is an error.
 - Note on exit codes: argument-parse errors (unknown flag, bad choice, missing argument) exit with `64` (Swift Argument Parser's `EX_USAGE`), not `2`. In-command validation errors (e.g. an unparseable due date) still exit `1`/`2` as documented per command.
 - `delete`, `list-delete`, `smart-list-delete`, and `template-delete` require `--force` whenever `--json` is set or stdin is not a terminal — without it they exit `1` with `code: confirmation_required` on stderr and write nothing. Always pass `--force` when scripting.
+- `import` takes a JSON file path or `-` for piped stdin (max 8 MiB; a terminal is refused). `--dry-run` validates the whole document and prints `{"status": "valid", "count": N, "created": 0}` without creating anything.
 
 ## Recurring Schedules
 

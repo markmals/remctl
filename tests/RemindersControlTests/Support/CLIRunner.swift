@@ -27,7 +27,9 @@ enum CLIRunner {
 
     struct Result { let stdout: String; let stderr: String; let exit: Int32 }
 
-    static func run(_ args: [String], storeDir: URL? = nil, extraEnv: [String: String] = [:]) throws -> Result {
+    /// `stdin`, when given, is piped to the process (so the binary sees a non-TTY input).
+    static func run(_ args: [String], storeDir: URL? = nil, extraEnv: [String: String] = [:],
+                    stdin: String? = nil) throws -> Result {
         try ensureBuilt()
         let p = Process()
         p.executableURL = binaryURL()
@@ -39,7 +41,14 @@ enum CLIRunner {
         p.environment = env
         let out = Pipe(), err = Pipe()
         p.standardOutput = out; p.standardError = err
-        try p.run(); p.waitUntilExit()
+        let input = Pipe()
+        if stdin != nil { p.standardInput = input }
+        try p.run()
+        if let stdin {
+            input.fileHandleForWriting.write(Data(stdin.utf8))
+            try? input.fileHandleForWriting.close()
+        }
+        p.waitUntilExit()
         let o = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let e = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return Result(stdout: o, stderr: e, exit: p.terminationStatus)
