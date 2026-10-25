@@ -45,6 +45,7 @@ _remctl() {
         'section-rename:Rename a section in a list'
         'section-delete:Delete a section in a list'
         'sharees:Show people available for assignment in a shared list'
+        'list-info:Show one list with its section ids and sharees'
         'stats:Statistics'
         'link:Get deep links'
         'open:Open in Reminders.app'
@@ -206,6 +207,12 @@ _remctl() {
         sharees)
             _arguments \
                 '--list-id[Shared list by stable numeric ID]:id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        list-info)
+            _arguments \
+                '--list-id[List by stable numeric ID]:id:' \
                 '--json[JSON output]'
             return
             ;;
@@ -422,7 +429,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -441,6 +448,9 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--force --batch --json" -- "$cur") )
         return
     elif [ "$cmd" = "sharees" ]; then
+        COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "list-info" ]; then
         COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "doctor" ]; then
@@ -554,6 +564,7 @@ complete -c remctl -n "__fish_use_subcommand" -a section-create -d "Create a sec
 complete -c remctl -n "__fish_use_subcommand" -a section-rename -d "Rename a section in a list"
 complete -c remctl -n "__fish_use_subcommand" -a section-delete -d "Delete a section in a list"
 complete -c remctl -n "__fish_use_subcommand" -a sharees -d "Show people available for assignment in a shared list"
+complete -c remctl -n "__fish_use_subcommand" -a list-info -d "Show one list with its section ids and sharees"
 complete -c remctl -n "__fish_use_subcommand" -a stats -d "Statistics"
 complete -c remctl -n "__fish_use_subcommand" -a link -d "Get deep links"
 complete -c remctl -n "__fish_use_subcommand" -a open -d "Open in Reminders.app"
@@ -711,6 +722,8 @@ complete -c remctl -n "__fish_seen_subcommand_from delete" -l batch -d "Report t
 complete -c remctl -n "__fish_seen_subcommand_from delete" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l list-id -d "Shared list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from list-info" -l list-id -d "List by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from list-info" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assign to section by stable ID" -r

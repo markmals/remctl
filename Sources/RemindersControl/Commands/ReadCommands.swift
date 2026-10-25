@@ -5,7 +5,8 @@ import Foundation
 
 let readCommands: [ParsableCommand.Type] = [
     Today.self, Upcoming.self, Overdue.self, Search.self, Flagged.self, Urgent.self,
-    Tags.self, Subtasks.self, Sections.self, Sharees.self, Stats.self, Show.self, Info.self,
+    Tags.self, Subtasks.self, Sections.self, Sharees.self, ListInfo.self, Stats.self,
+    Show.self, Info.self,
 ]
 
 struct Today: AsyncParsableCommand {

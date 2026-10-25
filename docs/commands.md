@@ -7,7 +7,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 ## Conventions
 
 - **Nouns are read-only inspectors** (`lists`, `smart-lists`, `templates`, `today`, `stats`); **verb commands are writes** (`add`, `edit`, `delete`, `list-create`, `smart-list-create`, `template-create`). List management uses the `list-*` prefix, custom smart-list writes use `smart-list-*`, template writes use `template-*`.
-- **List-name resolution** is conservative: exact match → case-insensitive → normalized fallback that ignores decorative punctuation and emoji prefixes (so `Weekly 513` resolves `🗓️ Weekly 513` when unambiguous). If more than one list matches, RemCTL fails and prints the candidate IDs — pass `--list-id` to disambiguate. Passing both a name and `--list-id` is an error. `show`, `search`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, and `list-delete` accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
+- **List-name resolution** is conservative: exact match → case-insensitive → normalized fallback that ignores decorative punctuation and emoji prefixes (so `Weekly 513` resolves `🗓️ Weekly 513` when unambiguous). If more than one list matches, RemCTL fails and prints the candidate IDs — pass `--list-id` to disambiguate. Passing both a name and `--list-id` is an error. `show`, `search`, `add`, `edit`, `link`, `export`, `list-info`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, and `list-delete` accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
 - **`--json`** works on every command. For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command, so both `remctl --format table show Work` and `remctl show Work --format table` are valid. `export --format json|csv` selects a file format, not a display style.
 - **`NO_COLOR=1`** (or `--no-color`) disables ANSI color.
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
@@ -93,6 +93,14 @@ Show the people available for assignment in a shared list. `--json`, `--no-color
 ```bash
 remctl sharees Family
 remctl sharees Family --json
+```
+
+### `list-info [NAME] [--list-id ID]`
+One list plus what a write into it needs: the object `lists --json` emits for that list, then its `sections` (each `{id, name}`, where `id` is the section ID `--section-id` takes), its `sharees` (same objects as `sharees`), and `shared`. `--json`, `--no-color`. Pass a name or `--list-id`, not both. A list group is refused with its child lists, like any other write target. When the name only matched case-insensitively or through the normalized fallback, the JSON adds `resolvedFrom` with the name you typed. Human output prints `Sections: none` and `Not shared` for a bare list.
+```bash
+remctl list-info Work
+remctl list-info Work --json
+remctl list-info --list-id 153 --json
 ```
 
 ### `stats`

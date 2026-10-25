@@ -12,7 +12,7 @@ func rootHasVersion() {
 func readCommandsRegistered() {
     let names = Set(RemindersControl.configuration.subcommands.compactMap { $0.configuration.commandName })
     for expected in ["today", "upcoming", "overdue", "search", "flagged", "urgent",
-                     "tags", "subtasks", "sections", "stats", "show", "info"] {
+                     "tags", "subtasks", "sections", "sharees", "list-info", "stats", "show", "info"] {
         #expect(names.contains(expected), "missing \(expected)")
     }
 }
@@ -58,9 +58,9 @@ func opsCommandsRegistered() {
     }
 }
 
-@Test("Exactly 49 unique subcommands are registered")
+@Test("Exactly 50 unique subcommands are registered")
 func allSubcommandsRegistered() {
     let names = RemindersControl.configuration.subcommands.compactMap { $0.configuration.commandName }
-    #expect(names.count == 49)
-    #expect(Set(names).count == 49, "duplicate command names: \(names)")
+    #expect(names.count == 50)
+    #expect(Set(names).count == 50, "duplicate command names: \(names)")
 }
