@@ -57,6 +57,7 @@ public struct ReminderWrite: Equatable {
     public var notes: String?
     public var url: String?              // appended to notes (rich URL is Phase 3)
     public var recurrence: RecurrenceWrite?
+    public var clearRecurrence = false   // remove the repeat rule (bridge `clearRecurrence`)
     public var alarm: AlarmWrite?
     public var location: LocationAlarmWrite?
     public init() {}

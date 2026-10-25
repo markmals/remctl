@@ -399,7 +399,7 @@ struct Edit: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Due date (YYYY-MM-DD, today, +3d, …) or 'clear'") var due: String?
     @Option(name: [.short, .long], help: "Priority: high, medium, low, or none") var priority: String?
     @Option(name: .long, help: "URL; appended to notes") var url: String?
-    @Option(name: .long, help: "Recurrence: daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', 'monthly 4th-fri', 'monthly last-fri', 'monthly -1-fri', interval xN 1-999 like 'daily x2' / 'monthly x2 4th-fri'") var recurrence: String?
+    @Option(name: .long, help: "Recurrence: daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', 'monthly 4th-fri', 'monthly last-fri', 'monthly -1-fri', interval xN 1-999 like 'daily x2' / 'monthly x2 4th-fri'; clear, none, or never stops repeating") var recurrence: String?
     @Option(name: .long, help: "Alarm: 15m, 1h, 1d, an absolute date, or clear") var alarm: String?
 
     // Location alarm (EventKit-expressible). Radius/proximity defaults live here.
@@ -527,8 +527,10 @@ struct Edit: AsyncParsableCommand {
             priorityValue = p
         }
 
+        // `clear`/`none`/`never` removes the repeat rule (upstream 8f15241).
+        let clearRecurrence = recurrence.map { ["clear", "none", "never"].contains($0.trimmingCharacters(in: .whitespaces).lowercased()) } ?? false
         var parsedRecurrence: RecurrenceWrite? = nil
-        if let recurrence, !recurrence.isEmpty {
+        if let recurrence, !recurrence.isEmpty, !clearRecurrence {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
                 throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
             }
@@ -557,8 +559,9 @@ struct Edit: AsyncParsableCommand {
 
         // 4b. Repeating-reminder guard (cmd_edit:9204): Reminders refuses to save a repeating
         //     reminder without a due date, and this edit has no transaction — refuse before the
-        //     first write rather than apply the other fields and fail on the date.
-        if dueIsClear, row.int("recurrence_frequency") != nil {
+        //     first write rather than apply the other fields and fail on the date. Clearing the
+        //     repeat in the same edit lifts the requirement.
+        if dueIsClear, row.int("recurrence_frequency") != nil, !clearRecurrence {
             return failRepeatingReminderNeedsDue(id: id, json: json)
         }
 
@@ -612,7 +615,7 @@ struct Edit: AsyncParsableCommand {
         // that rides along with a clone-delete move; count them as edits so the move refuses.
         let hasOtherChangesForMove = (title?.isEmpty == false) || notes != nil
             || (priority?.isEmpty == false) || (due?.isEmpty == false) || (url?.isEmpty == false)
-            || parsedRecurrence != nil || clearAlarm || parsedAlarm != nil || wantsPrivate
+            || parsedRecurrence != nil || clearRecurrence || clearAlarm || parsedAlarm != nil || wantsPrivate
             || latitude != nil
         var childRowsForMove: [Row] = []
         if movingToDifferentList {
@@ -668,7 +671,11 @@ struct Edit: AsyncParsableCommand {
             if dueAllDay { write.allDay = true }
         }
 
-        if let parsedRecurrence { write.recurrence = parsedRecurrence; hasChanges = true }
+        if clearRecurrence {
+            write.clearRecurrence = true; hasChanges = true
+        } else if let parsedRecurrence {
+            write.recurrence = parsedRecurrence; hasChanges = true
+        }
 
         // 6. Double-tap nudge: if the new due equals the current ZDUEDATE to the second, fire a
         //    separate intermediate update (+1h) FIRST so the CKRecord carries a real change.
@@ -830,7 +837,7 @@ struct Edit: AsyncParsableCommand {
     /// Port of `fail_repeating_reminder_needs_due` (remctl:4613). Exit 1, nothing written.
     private static func failRepeatingReminderNeedsDue(id: Int, json: Bool) -> WriteOutcome {
         let message = "A repeating reminder needs a due date, so RemCTL cannot clear it. "
-            + "Turn off the repeat in Reminders first, or pass a new due date. No reminder was changed."
+            + "Add --recurrence clear to the same edit to stop the repeat, or pass a new due date. No reminder was changed."
         if json {
             let payload: JSONValue = .object([
                 ("status", .string("error")),

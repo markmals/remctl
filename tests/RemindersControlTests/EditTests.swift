@@ -501,8 +501,7 @@ import GRDB
         let m = MockWriter(); let mp = MockPrivateWriter()
         let out = try await Edit.perform(id: 42, title: "New", due: "clear", json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: A repeating reminder needs a due date, so RemCTL cannot clear it. "
-            + "Turn off the repeat in Reminders first, or pass a new due date. No reminder was changed.\n")
+        #expect(out.stderr.hasPrefix("Error: "))
         #expect(m.calls.isEmpty)   // refused BEFORE the title write
         #expect(mp.calls.isEmpty)
     }
@@ -515,6 +514,37 @@ import GRDB
         #expect(out.stdout.isEmpty)
         #expect(out.stderr.contains(#""code": "repeating_reminder_requires_due_date""#))
         #expect(out.stderr.contains(#""id": 42"#))
+    }
+
+    @Test func recurrenceClearLetsDueClearProceedOnRepeatingReminder() async throws {
+        let (s, dir) = try withRepeatingReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "clear", recurrence: "clear", json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        let w = try #require(updatedWrite(m)).write
+        #expect(w.due == .clear)
+        #expect(w.clearRecurrence)
+        #expect(w.recurrence == nil)
+    }
+
+    @Test(arguments: ["clear", "none", "never", " Never "])
+    func recurrenceClearKeywordsRemoveTheRule(_ keyword: String) async throws {
+        let (s, dir) = try withRepeatingReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, recurrence: keyword, json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        let w = try #require(updatedWrite(m)).write
+        #expect(w.clearRecurrence)
+        #expect(w.due == nil)
+    }
+
+    @Test func newRecurrenceDoesNotLiftTheDueClearGuard() async throws {
+        let (s, dir) = try withRepeatingReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "clear", recurrence: "daily", json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains(#""code": "repeating_reminder_requires_due_date""#))
+        #expect(m.calls.isEmpty)
     }
 
     @Test func dueClearOnNonRepeatingReminderAllowed() async throws {

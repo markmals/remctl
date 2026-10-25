@@ -242,7 +242,9 @@ public final class EventKitWriter: RemindersWriter {
             }
         }
 
-        if let spec = write.recurrence {
+        if write.clearRecurrence {
+            reminder.recurrenceRules = []
+        } else if let spec = write.recurrence {
             guard let rule = buildRecurrenceRule(spec) else { throw WriteError("Invalid recurrence") }
             reminder.recurrenceRules = [rule]
         }
