@@ -254,8 +254,25 @@ import Foundation
     }
 
     @Test func dueSpecAllDayNonWeekdayWordIsNotAllDay() {
-        // Bare words that aren't weekdays fall through every branch → false.
+        // Bare words that aren't dates at all fall through every branch → false.
         #expect(!WriteParsing.dueSpecIsAllDay("someday"))
         #expect(!WriteParsing.dueSpecIsAllDay("notaday at 10"))
+    }
+
+    // ── Natural-language date-only phrases (port upstream 0d8c208) ────────────
+
+    /// A phrase the explicit grammar misses is still resolved by `parseDue`'s data-detector
+    /// fallback, so a date without a clock time has to make an all-day reminder.
+    @Test func dueSpecAllDayForNaturalLanguageDates() {
+        for spec in ["march 30", "dec 25 2026", "jan 3rd", "March 30"] {
+            #expect(WriteParsing.dueSpecIsAllDay(spec), "expected all-day: \(spec)")
+            #expect(WriteParsing.parseDue(spec) != nil, "expected parseDue to resolve: \(spec)")
+        }
+    }
+
+    @Test func dueSpecTimedForNaturalLanguageDateTimes() {
+        for spec in ["march 30 at 5pm", "dec 25 2026 at 09:30", "friday at noon", "today at 12:00"] {
+            #expect(!WriteParsing.dueSpecIsAllDay(spec), "expected timed: \(spec)")
+        }
     }
 }

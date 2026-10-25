@@ -173,7 +173,7 @@ Rejected before saving (non-materializing): untagged, no-date, relative date, no
 - `remctl add --json` returns `numericId` when the new reminder is resolvable; use it for `remctl info <numericId> --json`. If absent, resolve the `id` via `show <list> --json` by matching the title.
 - Prefer deterministic due-date strings; normalize "today at 3pm" to `YYYY-MM-DD HH:MM` in the user's timezone, or pass an accepted form. `add`/`edit` are atomic for due dates — on a parse failure they exit before writing and (with `--json`) emit a structured `invalid_due_date` error on stderr. Retry with a corrected date; do not create then patch.
 - Accepted due forms: `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, `eow`.
-- `dueDate` is the actual `ZDUEDATE`; a separate UI/alert date is reported as `displayDate`. For rescheduling, `edit ID -d "YYYY-MM-DD HH:MM"` carries a single matching absolute alarm forward; `edit ID -d clear` removes it. When debugging time mismatches, compare `dueDate`, `displayDate`, and `alarms`.
+- `dueDate` is the reminder's due date as a real instant; a separate UI/alert date is reported as `displayDate`, and `today`/`upcoming`/`overdue` bucket by the date Reminders shows (the display date). An all-day `dueDate` is local midnight of its day. For rescheduling, `edit ID -d "YYYY-MM-DD HH:MM"` carries matching absolute alarms forward — all acknowledged copies move together — while a date-only `-d` and `edit ID -d clear` remove them. When debugging time mismatches, compare `dueDate`, `displayDate`, and `alarms`.
 
 Fast create path:
 

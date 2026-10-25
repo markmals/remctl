@@ -476,9 +476,30 @@ public enum WriteParsing {
             return !["hour", "hours"].contains(m[2])
         }
         if let m = firstMatch(in: sl, pattern: #"^(?:(next|this)\s+)?(\w+)(?:\s+(?:at\s+)?(.+))?$"#, groupCount: 3) {
-            return daysMap[m[2]] != nil && m[3].isEmpty
+            if daysMap[m[2]] != nil && m[3].isEmpty { return true }
         }
-        return false
+        return dataDetectorIsDateOnly(s)
+    }
+
+    /// Port of the `parsedatetime` tail of `due_spec_is_all_day` (upstream 0d8c208). A phrase
+    /// the explicit grammar misses still resolves through `parseDue`'s NSDataDetector fallback,
+    /// so a date-only phrase such as "march 30" has to create an all-day reminder rather than
+    /// one timed at noon. NSDataDetector has no `parsedatetime` status, but it resolves a
+    /// phrase that names no clock time to 12:00 — so that reading, for a phrase that does not
+    /// itself say midday, is the status-1 "date without a time" case. The whole-input
+    /// requirement mirrors `dataDetectorDate`, the only way such a phrase becomes a due date.
+    private static func dataDetectorIsDateOnly(_ s: String) -> Bool {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else {
+            return false
+        }
+        let range = NSRange(s.startIndex..<s.endIndex, in: s)
+        guard let match = detector.firstMatch(in: s, options: [], range: range),
+              match.resultType == .date, match.range == range, let date = match.date else { return false }
+        let c = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        guard c.hour == 12, c.minute == 0, c.second == 0 else { return false }
+        return firstMatch(in: s.lowercased(),
+                          pattern: #"\bnoon\b|\bmidday\b|\b12\s*[:.]\s*\d{2}|\b12\s*[ap]\.?m\.?|\bat\s+12\b"#,
+                          groupCount: 0) == nil
     }
 
     // MARK: - Helpers

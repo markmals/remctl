@@ -188,7 +188,7 @@ RemCTL output is designed for both humans and agents:
 - flagged reminders show `⚑`; urgent reminders show `⏰`; recurring reminders show a repeat badge such as `↻ weekly Mon, Wed`; shared-list assignments show `@Name` (JSON: `assignment`)
 - Groceries lists show `🥕` in headings and summaries
 - `info --json` reports the actual due date as `dueDate`; a separate display/alert date appears as `displayDate`; EventKit and location alarms appear as `alarms`; Early Reminders appear as labels such as `15 minutes before`
-- `edit -d` carries a single matching absolute alarm forward; `edit -d clear` removes a single matching absolute alarm/display time; `edit --alarm clear` removes normal alarms explicitly
+- `edit -d` carries matching absolute alarms forward (all acknowledged copies move together) and removes them when the new due date is all-day; `edit -d clear` removes matching absolute alarms/display times; `edit --alarm clear` removes normal alarms explicitly
 - table output keeps a dedicated `Repeat` column when any row recurs
 - human output strips terminal control characters from Reminders text; every read command supports `--json`
 

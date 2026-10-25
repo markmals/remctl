@@ -18,7 +18,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 ## Viewing and Inspecting
 
 ### `today`
-Reminders due today. Tabular: `--format json|table|plain`, `-v/--verbose`. `--no-overdue` excludes overdue items. `--via-eventkit` is a limited no-FDA fallback (see below).
+Reminders due today. Tabular: `--format json|table|plain`, `-v/--verbose`. `--no-overdue` excludes overdue items. `--via-eventkit` is a limited no-FDA fallback (see below). `today`, `upcoming`, `overdue`, and `stats` bucket and label a reminder by the date Reminders.app shows it on, which follows an absolute alarm set to another time than the due date.
 ```bash
 remctl today
 remctl today --json
@@ -102,7 +102,7 @@ remctl show Family -v
 ```
 
 ### `info <id>`
-Detailed reminder info. `--json`, `--no-color`. `info --json` reports `dueDate` (the actual due date) vs `displayDate` (a separate UI/alert date — do not treat as the due date), `alarms` (EventKit relative/absolute alarms and location alarms), Early Reminders as labels (e.g. `15 minutes before`), recurrence, tags, sections, subtasks, parent and subtask image attachments, the deep link, and a rich-link `url` when present. Prefer this over raw SQLite checks.
+Detailed reminder info. `--json`, `--no-color`. `info --json` reports `dueDate` (the actual due date) vs `displayDate` (a separate UI/alert date — do not treat as the due date), `alarms` (EventKit relative/absolute alarms and location alarms), Early Reminders as labels (e.g. `15 minutes before`), recurrence, tags, sections, subtasks, parent and subtask image attachments, the deep link, and a rich-link `url` when present. An all-day `dueDate` is local midnight of its day in every time zone, and `displayDate` is omitted when it names the same moment as `dueDate`. The human output adds a `Shown at:` line when Reminders lists a timed reminder at another time than its due date (an absolute alarm an earlier due edit left behind). Prefer this over raw SQLite checks.
 ```bash
 remctl info 23880
 remctl info 23880 --json
@@ -145,7 +145,7 @@ remctl upcoming 14 --via-eventkit --json
 ### `add <title>`
 Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
 
-Date-only `-d` inputs (`today`, `tomorrow`, `2026-06-01`, `+3d`, `in 2 weeks`, `next friday`) create **all-day** reminders; inputs with explicit times create timed reminders.
+Date-only `-d` inputs (`today`, `tomorrow`, `2026-06-01`, `+3d`, `in 2 weeks`, `next friday`, and natural-language dates such as `march 30`) create **all-day** reminders; inputs with explicit times create timed reminders.
 
 `add --json` returns `numericId` when the new reminder is resolvable in the local database — use it for `info <numericId> --json` (fall back to matching the title via `show <list> --json` if absent).
 
@@ -234,13 +234,13 @@ remctl unflag 23880
 | `+Nd` | `-d +3d` |
 | `eod` / `eow` | `-d eod`, `-d eow` |
 
-`edit -d clear` clears the due date. Date-only forms (first row, `today`/`tomorrow`, `+Nd`, `in N days/weeks/months`, bare weekdays, `eow`) create **all-day** reminders; forms with explicit times create timed reminders (`eod` is timed: 17:00).
+`edit -d clear` clears the due date. Date-only forms (first row, `today`/`tomorrow`, `+Nd`, `in N days/weeks/months`, bare weekdays, `eow`, natural-language dates such as `march 30`) create **all-day** reminders; forms with explicit times create timed reminders (`eod` is timed: 17:00).
 
 **Recurrence** (EventKit, on `add` and `edit`): `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `yearly` — validated before write. Recurring reminders show a `↻` badge (and a `Repeat` column in table output) and decode back to a `recurrence` object in JSON.
 
 A recurrence **object** — exactly the shape `export` and `info --json` emit (`frequency`, `interval`, `daysOfWeek`/`daysOfWeekDetailed`/`weekNumbers`, `daysOfMonth`, `monthsOfYear`, `daysOfYear`, `weeksOfYear`, `setPositions`, `count`, `endDate`) — is also accepted anywhere a recurrence spec is, so exported rules round-trip back through `import`, `--subtask` JSON, and `--recurrence`. Every field is validated before the write; an unknown field, an out-of-range value, `{}`, or `endDate` together with `count` is rejected.
 
-**Alarms** (`--alarm 15m`, `1h`, `1d`, or an absolute date) are EventKit alarms; they appear under `alarms` in `info --json`. `edit --alarm clear` removes normal alarms. `edit -d` carries a single matching absolute alarm forward; `edit -d clear` removes a single matching absolute alarm/display time while preserving unrelated alarms.
+**Alarms** (`--alarm 15m`, `1h`, `1d`, or an absolute date) are EventKit alarms; they appear under `alarms` in `info --json`. `edit --alarm clear` removes normal alarms. `edit -d` carries matching absolute alarms forward — Reminders stores one acknowledged copy per device, and all copies move together — or removes them when the new due date is all-day; `edit -d clear` removes matching absolute alarms/display times while preserving unrelated alarms.
 
 **Early Reminders** (`--early-reminder`) are a *separate* Reminders Early Reminder (a private due-date delta alert, not an EventKit alarm). Accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; a non-clear value requires a due date. JSON readback includes `earlyReminder`/`earlyReminders`.
 
