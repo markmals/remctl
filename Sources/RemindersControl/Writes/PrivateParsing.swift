@@ -209,7 +209,7 @@ public enum PrivateParsing {
             let urlsRaw = spec["urls"] ?? spec["url"]
             let urls = normalizeStringList(urlsRaw, field: "urls")
             for url in urls {
-                if let problem = RichLinkURL.problem(url, flag: "--private --subtask url") {
+                if let problem = RichLinkURL.problem(url, flag: "--subtask url") {
                     throw CLIError(problem, code: "invalid_subtask")
                 }
             }

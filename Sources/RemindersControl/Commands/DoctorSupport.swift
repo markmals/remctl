@@ -210,7 +210,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
         name: "reminderkit",
         status: rkOK ? .ok : .warn,
         detail: p.reminderKitProbeResult,
-        fix: rkOK ? nil : "The private ReminderKit framework is unavailable; --private writes will not work."))
+        fix: rkOK ? nil : "The private ReminderKit framework is unavailable; private metadata writes (sections, subtasks, synced tags, flags) will not work."))
 
     // (permissions_helper DROPPED — no analog in-process.)
 

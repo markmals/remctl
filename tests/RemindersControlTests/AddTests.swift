@@ -326,7 +326,7 @@ import GRDB
             try await Add.perform(title: "Milk", list: "Work", grocery: true, json: false, store: s, writer: m, private: mp, groceryAttempts: 1, groceryDelay: 0)
         }
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: target list 'Work' is not a Groceries list. Use `remctl list-edit ... --private --groceries` first.\n")
+        #expect(out.stderr == "Error: target list 'Work' is not a Groceries list. Use `remctl list-edit ... --groceries` first.\n")
     }
 
     @Test func badDueBeatsGroceryFlag() async throws {
@@ -471,7 +471,7 @@ import GRDB
         let out = try await Add.perform(title: "T", url: "ftp://1.1.1.1/file", flag: true,
                                         json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: --private --url requires an http or https URL.\n")
+        #expect(out.stderr == "Error: --url requires an http or https URL.\n")
         #expect(m.calls.isEmpty)
         #expect(mp.calls.isEmpty)
     }

@@ -230,7 +230,7 @@ private func check(_ checks: [DoctorCheck], _ name: String) -> DoctorCheck? {
         let rk = check(checks, "reminderkit")
         #expect(rk?.status == .warn)
         #expect(rk?.detail == "reminderkit-missing")
-        #expect(rk?.fix?.contains("--private") == true)
+        #expect(rk?.fix?.contains("private metadata writes") == true)
         let (_, fail, _) = DoctorRuntime.buildResult(checks: checks, context: [:], forAgent: false)
         #expect(fail == 0)
     }

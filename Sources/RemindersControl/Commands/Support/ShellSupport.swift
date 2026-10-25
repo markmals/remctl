@@ -129,7 +129,6 @@ _remctl() {
             ;;
         add)
             _arguments \
-                '--private[Use unsupported private ReminderKit metadata writes]' \
                 '--section[Assign to existing section]:section:' \
                 '--section-id[Assign to section by stable ID]:section-id:' \
                 '--new-section[Create and assign to new section]:section:' \
@@ -149,8 +148,8 @@ _remctl() {
                 '--radius[Location alarm radius meters]:radius:' \
                 '--proximity[Location alarm trigger]:proximity:(arriving leaving)' \
                 '--location-address[Street address resolved to coordinates before any write]:address:' \
-                '--url[URL, web rich link with --private]:url:' \
-                '(-t --tags)'{-t,--tags}'[Tags, synced with --private]:tags:' \
+                '--url[URL; a synced rich link when other private metadata is present]:url:' \
+                '(-t --tags)'{-t,--tags}'[Tags; synced when other private metadata is present]:tags:' \
                 '(-l --list)'{-l,--list}'[Target list]:list:' \
                 '--list-id[Target list by stable numeric ID]:id:' \
                 '(-d --due)'{-d,--due}'[Due date]:due:' \
@@ -163,7 +162,6 @@ _remctl() {
             ;;
         edit)
             _arguments \
-                '--private[Use unsupported private ReminderKit metadata writes]' \
                 '--section[Assign to existing section]:section:' \
                 '--section-id[Assign to section by stable ID]:section-id:' \
                 '--new-section[Create and assign to new section]:section:' \
@@ -188,8 +186,8 @@ _remctl() {
                 '--title[New title]:title:' \
                 '(-l --list)'{-l,--list}'[Move to list]:list:' \
                 '--list-id[Move to list by stable numeric ID]:id:' \
-                '--url[URL, web rich link with --private]:url:' \
-                '(-t --tags)'{-t,--tags}'[Synced tags with --private]:tags:' \
+                '--url[URL; a synced rich link when other private metadata is present]:url:' \
+                '(-t --tags)'{-t,--tags}'[Synced tags]:tags:' \
                 '--set-tags[Replace all synced tags]:tags:' \
                 '--clear-tags[Remove all synced tags]' \
                 '--remove-tag[Remove one synced tag]:tag:' \
@@ -305,7 +303,6 @@ _remctl() {
             ;;
         smart-list-create)
             _arguments \
-                '--private[Use private ReminderKit smart-list creation]' \
                 '--color[Smart-list color name or #RRGGBB]:color:' \
                 '--symbol[Official Reminders list symbol]:symbol:' \
                 '--emoji[Private Reminders emoji badge]:emoji:' \
@@ -335,7 +332,6 @@ _remctl() {
             ;;
         smart-list-edit)
             _arguments \
-                '--private[Use private ReminderKit smart-list editing]' \
                 '--smart-list-id[Edit by numeric smart-list ID]:id:' \
                 '--color[Smart-list color name or #RRGGBB]:color:' \
                 '--symbol[Official Reminders list symbol]:symbol:' \
@@ -366,7 +362,6 @@ _remctl() {
             ;;
         smart-list-delete)
             _arguments \
-                '--private[Use private ReminderKit smart-list deletion]' \
                 '--smart-list-id[Delete by numeric smart-list ID]:id:' \
                 '--force[Skip confirmation prompt]' \
                 '--json[JSON output]'
@@ -377,29 +372,25 @@ _remctl() {
                 '--from-list[Source list name]:list:' \
                 '--from-list-id[Source list numeric ID]:id:' \
                 '--include-completed[Include completed reminders]' \
-                '--private[Use private ReminderKit template creation]' \
                 '--json[JSON output]'
             return
             ;;
         template-apply)
             _arguments \
                 '--template-id[Apply by numeric template ID]:id:' \
-                '--private[Use private ReminderKit template application]' \
                 '--json[JSON output]'
             return
             ;;
         template-delete)
             _arguments \
                 '--template-id[Delete by numeric template ID]:id:' \
-                '--private[Use private ReminderKit template deletion]' \
                 '--force[Skip confirmation prompt]' \
                 '--json[JSON output]'
             return
             ;;
         list-create)
             _arguments \
-                '--color[List color name; with --private also accepts #RRGGBB]:color:' \
-                '--private[Use private ReminderKit for list appearance and grocery metadata]' \
+                '--color[List color name or #RRGGBB]:color:' \
                 '--symbol[Official Reminders list symbol]:symbol:' \
                 '--emoji[Private Reminders list emoji badge]:emoji:' \
                 '--groceries[Create as a Reminders Groceries list]' \
@@ -414,7 +405,6 @@ _remctl() {
                 '--list-id[Edit a list by stable numeric ID]:id:' \
                 '--new-name[Rename the list through private ReminderKit]:name:' \
                 '--color[List color name or #RRGGBB]:color:' \
-                '--private[Required for list appearance and grocery metadata writes]' \
                 '--symbol[Official Reminders list symbol]:symbol:' \
                 '--emoji[Private Reminders list emoji badge]:emoji:' \
                 '--groceries[Convert to a Reminders Groceries list]' \
@@ -432,7 +422,6 @@ _remctl() {
             ;;
         list-pin|list-unpin)
             _arguments \
-                '--private[Use private ReminderKit list pinning]' \
                 '--list-id[Target list by stable numeric ID]:id:' \
                 '--smart-list-id[Target smart list by stable numeric ID]:id:' \
                 '--json[JSON output]'
@@ -525,10 +514,10 @@ _remctl() {
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "reminder-move" ]; then
         COMPREPLY=( $(compgen -W "--before --after --first --last --parent --top-level --smart-list --smart-list-id --json" -- "$cur") )
@@ -588,16 +577,16 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--html --preview --json" -- "$cur") )
         return
     elif [ "$cmd" = "list-create" ]; then
-        COMPREPLY=( $(compgen -W "--color --private --symbol --emoji --groceries --grocery-locale --group --group-id --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--color --symbol --emoji --groceries --grocery-locale --group --group-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "smart-list-create" ]; then
-        COMPREPLY=( $(compgen -W "--private --color --symbol --emoji --match --filter-json --flagged --priority --tags --tag-match --any-tag --date --date-today-include-past-due --date-on --date-before --date-after --date-range --time --include-list --include-list-id --vehicle --location-title --latitude --longitude --radius --proximity --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--color --symbol --emoji --match --filter-json --flagged --priority --tags --tag-match --any-tag --date --date-today-include-past-due --date-on --date-before --date-after --date-range --time --include-list --include-list-id --vehicle --location-title --latitude --longitude --radius --proximity --json" -- "$cur") )
         return
     elif [ "$cmd" = "smart-list-edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --smart-list-id --color --symbol --emoji --match --filter-json --flagged --priority --tags --tag-match --any-tag --date --date-today-include-past-due --date-on --date-before --date-after --date-range --time --include-list --include-list-id --vehicle --location-title --latitude --longitude --radius --proximity --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--smart-list-id --color --symbol --emoji --match --filter-json --flagged --priority --tags --tag-match --any-tag --date --date-today-include-past-due --date-on --date-before --date-after --date-range --time --include-list --include-list-id --vehicle --location-title --latitude --longitude --radius --proximity --json" -- "$cur") )
         return
     elif [ "$cmd" = "smart-list-delete" ]; then
-        COMPREPLY=( $(compgen -W "--private --smart-list-id --force --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--smart-list-id --force --json" -- "$cur") )
         return
     elif [ "$cmd" = "templates" ]; then
         COMPREPLY=( $(compgen -W "--json" -- "$cur") )
@@ -606,19 +595,19 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--template-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "template-create" ]; then
-        COMPREPLY=( $(compgen -W "--from-list --from-list-id --include-completed --private --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--from-list --from-list-id --include-completed --json" -- "$cur") )
         return
     elif [ "$cmd" = "template-apply" ]; then
-        COMPREPLY=( $(compgen -W "--template-id --private --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--template-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "template-delete" ]; then
-        COMPREPLY=( $(compgen -W "--template-id --private --force --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--template-id --force --json" -- "$cur") )
         return
     elif [ "$cmd" = "list-edit" ]; then
-        COMPREPLY=( $(compgen -W "--list-id --new-name --color --private --symbol --emoji --groceries --standard --grocery-locale --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--list-id --new-name --color --symbol --emoji --groceries --standard --grocery-locale --json" -- "$cur") )
         return
     elif [ "$cmd" = "list-pin" ] || [ "$cmd" = "list-unpin" ]; then
-        COMPREPLY=( $(compgen -W "--private --list-id --smart-list-id --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--list-id --smart-list-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "list-rename" ]; then
         COMPREPLY=( $(compgen -W "--list-id --new-name --json" -- "$cur") )
@@ -741,15 +730,13 @@ complete -c remctl -n "__fish_seen_subcommand_from import" -l dry-run -d "Valida
 complete -c remctl -n "__fish_seen_subcommand_from import" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from list-symbols" -l html -d "Write a standalone HTML preview contact sheet" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-symbols" -l preview -d "Generate and open the HTML preview contact sheet"
-complete -c remctl -n "__fish_seen_subcommand_from list-create" -l color -d "List color name; with --private also accepts #RRGGBB" -r
-complete -c remctl -n "__fish_seen_subcommand_from list-create" -l private -d "Use private ReminderKit list appearance writes"
+complete -c remctl -n "__fish_seen_subcommand_from list-create" -l color -d "List color name or #RRGGBB" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l symbol -d "Official Reminders list symbol name" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l emoji -d "Private Reminders list emoji badge" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l groceries -d "Create as a Reminders Groceries list"
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l grocery-locale -d "Groceries locale identifier" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l group -d "Create this list inside a list group" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l group-id -d "Create this list inside a group by numeric ID" -r
-complete -c remctl -n "__fish_seen_subcommand_from smart-list-create" -l private -d "Use private ReminderKit smart-list creation"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l color -d "Smart-list color name or #RRGGBB" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l symbol -d "Official Reminders list symbol" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l emoji -d "Private Reminders emoji badge" -r
@@ -776,12 +763,10 @@ complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l longitude -d "Longitude" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l radius -d "Radius meters" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l proximity -d "Location proximity" -a "enter leave arriving leaving"
-complete -c remctl -n "__fish_seen_subcommand_from smart-list-edit" -l private -d "Use private ReminderKit smart-list editing"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-edit" -l smart-list-id -d "Edit by numeric smart-list ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-edit" -l flagged -d "Filter to flagged reminders"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-edit" -l priority -d "Priority filter" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-edit" -l json -d "JSON output"
-complete -c remctl -n "__fish_seen_subcommand_from smart-list-delete" -l private -d "Use private ReminderKit smart-list deletion"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-delete" -l smart-list-id -d "Delete by numeric smart-list ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-delete" -l force -d "Skip confirmation prompt"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-delete" -l json -d "JSON output"
@@ -791,25 +776,20 @@ complete -c remctl -n "__fish_seen_subcommand_from template-info" -l json -d "JS
 complete -c remctl -n "__fish_seen_subcommand_from template-create" -l from-list -d "Source list name" -r
 complete -c remctl -n "__fish_seen_subcommand_from template-create" -l from-list-id -d "Source list numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from template-create" -l include-completed -d "Include completed reminders"
-complete -c remctl -n "__fish_seen_subcommand_from template-create" -l private -d "Use private ReminderKit template creation"
 complete -c remctl -n "__fish_seen_subcommand_from template-create" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from template-apply" -l template-id -d "Apply by numeric template ID" -r
-complete -c remctl -n "__fish_seen_subcommand_from template-apply" -l private -d "Use private ReminderKit template application"
 complete -c remctl -n "__fish_seen_subcommand_from template-apply" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from template-delete" -l template-id -d "Delete by numeric template ID" -r
-complete -c remctl -n "__fish_seen_subcommand_from template-delete" -l private -d "Use private ReminderKit template deletion"
 complete -c remctl -n "__fish_seen_subcommand_from template-delete" -l force -d "Skip confirmation prompt"
 complete -c remctl -n "__fish_seen_subcommand_from template-delete" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l list-id -d "Edit a list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l new-name -d "Rename the list through private ReminderKit" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l color -d "List color name or #RRGGBB" -r
-complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l private -d "Required for list appearance writes"
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l symbol -d "Official Reminders list symbol name" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l emoji -d "Private Reminders list emoji badge" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l groceries -d "Convert to a Reminders Groceries list"
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l standard -d "Convert a Groceries list back to a standard list"
 complete -c remctl -n "__fish_seen_subcommand_from list-edit" -l grocery-locale -d "Groceries locale identifier" -r
-complete -c remctl -n "__fish_seen_subcommand_from list-pin list-unpin" -l private -d "Use private ReminderKit list pinning"
 complete -c remctl -n "__fish_seen_subcommand_from list-pin list-unpin" -l list-id -d "Target list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-pin list-unpin" -l smart-list-id -d "Target smart list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-pin list-unpin" -l json -d "JSON output"
@@ -853,7 +833,6 @@ complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l list-id -d
 complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l section-id -d "Target section by stable ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l force -d "Skip confirmation prompt"
 complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l json -d "JSON output"
-complete -c remctl -n "__fish_seen_subcommand_from add" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section-id -d "Assign to section by stable ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l new-section -d "Create and assign to new section" -r
@@ -867,8 +846,8 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l grocery -d "Auto-cate
 complete -c remctl -n "__fish_seen_subcommand_from add" -l urgent -d "Set private urgent state"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l no-urgent -d "Clear private urgent state"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l early-reminder -d "Set Early Reminder delta, e.g. 15m, 1h, clear" -r
-complete -c remctl -n "__fish_seen_subcommand_from add" -l url -d "URL, web rich link with --private" -r
-complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags, synced with --private" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l url -d "URL; a synced rich link when other private metadata is present" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags; synced when other private metadata is present" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l list-id -d "Target list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l location-title -d "Location alarm title" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l latitude -d "Location alarm latitude" -r
@@ -896,7 +875,6 @@ complete -c remctl -n "__fish_seen_subcommand_from sharees" -l list-id -d "Share
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from list-info" -l list-id -d "List by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-info" -l json -d "JSON output"
-complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assign to section by stable ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l new-section -d "Create and assign to new section" -r
@@ -920,7 +898,7 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -l proximity -d "Locati
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l location-address -d "Street address resolved before any write" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -s l -l list -d "Move to list" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l list-id -d "Move to list by stable numeric ID" -r
-complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced tags with --private" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced tags" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l set-tags -d "Replace all synced tags" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l clear-tags -d "Remove all synced tags"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l remove-tag -d "Remove one synced tag" -r

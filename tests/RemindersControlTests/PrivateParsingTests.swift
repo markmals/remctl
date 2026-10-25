@@ -416,7 +416,7 @@ import GRDB
             _ = try PrivateParsing.parseSubtaskSpecs([#"{"title":"Task","url":"\#(url)"}"#])
             Issue.record("expected a refusal for \(url)")
         } catch let error as CLIError {
-            #expect(error.message == "--private --subtask url must resolve to a public http or https host.")
+            #expect(error.message == "--subtask url must resolve to a public http or https host.")
         } catch {
             Issue.record("unexpected \(error)")
         }

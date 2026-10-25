@@ -121,7 +121,7 @@ struct Add: AsyncParsableCommand {
 
         // validate_private_args: a refused rich link fails before the reminder exists, rather
         // than after it as a private_add_partial.
-        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--private --url") {
+        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--url") {
             return failInvalidRichLink(problem, url: url, json: json)
         }
 
@@ -593,7 +593,7 @@ struct Edit: AsyncParsableCommand {
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
             || assign != nil || unassign || replacementTags != nil
             || !subtask.isEmpty || !image.isEmpty
-        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--private --url") {
+        if wantsPrivate, let url, !url.isEmpty, let problem = RichLinkURL.problem(url, flag: "--url") {
             return Add.failInvalidRichLink(problem, url: url, json: json)
         }
 

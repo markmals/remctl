@@ -274,7 +274,7 @@ public enum PrivateChanges {
         }
         guard target.isGroceries else {
             throw CLIError("target list '\(target.name)' is not a Groceries list. "
-                + "Use `\(CLIName.current) list-edit ... --private --groceries` first.", code: "invalid_grocery_target")
+                + "Use `\(CLIName.current) list-edit ... --groceries` first.", code: "invalid_grocery_target")
         }
 
         // 2. The list's stable CloudKit identifier.

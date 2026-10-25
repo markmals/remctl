@@ -389,7 +389,7 @@ import GRDB
                 listPk: 20, reminderCkid: "GR1", store: s, private: mp, attempts: 1, delay: 0)
             Issue.record("expected throw")
         } catch let e as CLIError {
-            #expect(e.message == "target list 'Groceries' is not a Groceries list. Use `remctl list-edit ... --private --groceries` first.")
+            #expect(e.message == "target list 'Groceries' is not a Groceries list. Use `remctl list-edit ... --groceries` first.")
         }
         #expect(mp.calls.isEmpty)
     }

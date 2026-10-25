@@ -564,7 +564,7 @@ import GRDB
         let out = try await Edit.perform(id: 42, title: "New", url: "https://printer.local/status", tags: "a",
                                          json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: --private --url must resolve to a public http or https host.\n")
+        #expect(out.stderr == "Error: --url must resolve to a public http or https host.\n")
         #expect(m.calls.isEmpty)
         #expect(mp.calls.isEmpty)
     }
