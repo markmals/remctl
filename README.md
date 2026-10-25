@@ -89,7 +89,7 @@ remctl info 23880 --json
 
 The full command guide is in [docs/commands.md](docs/commands.md). Private-metadata behavior and guardrails are in [docs/private-metadata.md](docs/private-metadata.md). For smart lists, see [docs/commands.md#smart-lists](docs/commands.md#smart-lists); for templates, [docs/commands.md#templates](docs/commands.md#templates).
 
-Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`. Recurrence, alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, and `yearly`; `upcoming DAYS` requires 1 to 3650.
+Due dates are atomic. If `-d/--due` is present and RemCTL cannot parse it, the command fails before creating or editing anything. Supported deterministic forms include `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `today at 3pm`, `tomorrow 09:30`, `tonight at 11`, `Friday at 15:00`, `next friday at 3pm`, `+3d`, `eod`, and `eow`. Recurrence, alarm, and priority inputs are also validated before writes. Supported recurrence forms are `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, and `yearly`, plus an exported `recurrence` object as emitted by `export`/`info --json`; `upcoming DAYS` requires 1 to 3650. `import` validates every item in the file before creating the first reminder.
 
 ## Private Metadata
 
