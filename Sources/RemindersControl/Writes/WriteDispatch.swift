@@ -24,10 +24,16 @@ public enum WriteDispatch {
         guard let row = store.reminder(pk: id) else { throw WriteError("#\(id) not found") }
         let title = row.string("ZTITLE")
         guard let ckid = row.string("ZCKIDENTIFIER"), !ckid.isEmpty else {
-            let shownTitle = safeDisplay((title?.isEmpty == false ? title : nil) ?? "(untitled)")
-            throw WriteError("The reminder has no stable identifier. Refusing unsafe title-based fallback for #\(id) ('\(shownTitle)') while trying to \(op).")
+            throw WriteError(noStableIdentifierMessage(id: id, title: title, op: op))
         }
         return (title ?? "", ckid)
+    }
+
+    /// The refusal a reminder without a ZCKIDENTIFIER gets, shared by the single-write resolve
+    /// above and the batch path, which resolves rows itself.
+    public static func noStableIdentifierMessage(id: Int, title: String?, op: String) -> String {
+        let shownTitle = safeDisplay((title?.isEmpty == false ? title : nil) ?? "(untitled)")
+        return "The reminder has no stable identifier. Refusing unsafe title-based fallback for #\(id) ('\(shownTitle)') while trying to \(op)."
     }
 
     /// Run an async write core, mapping thrown WriteError / RemindersDBUnavailable / other to a WriteOutcome.

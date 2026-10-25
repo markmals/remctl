@@ -68,6 +68,8 @@ remctl edit 23880 -l Work --json
 remctl edit 23880 --recurrence monthly --json
 remctl done 23880 --json
 remctl done 23880 --date "2026-05-27 09:30" --json
+remctl done 23880 23881 --json
+remctl delete 23880 23881 --force --json
 remctl sharees Family --json
 remctl edit 23880 --assign Alex --json
 remctl link --list-id 153 --json
@@ -87,6 +89,7 @@ remctl list-delete --list-id 123 --force --json
 - Note on exit codes: argument-parse errors (unknown flag, bad choice, missing argument) exit with `64` (Swift Argument Parser's `EX_USAGE`), not `2`. In-command validation errors (e.g. an unparseable due date) still exit `1`/`2` as documented per command.
 - `delete`, `list-delete`, `smart-list-delete`, and `template-delete` require `--force` whenever `--json` is set or stdin is not a terminal — without it they exit `1` with `code: confirmation_required` on stderr and write nothing. Always pass `--force` when scripting. A deleted reminder stays in Reminders' Recently Deleted list for up to 30 days on supported accounts, where the user can recover it in Reminders.app.
 - `import` takes a JSON file path or `-` for piped stdin (max 8 MiB; a terminal is refused). `--dry-run` validates the whole document and prints `{"status": "valid", "count": N, "created": 0}` without creating anything.
+- `done`, `undone`, and `delete` accept several ids (up to 50, listed before the options) as one batch; `--batch` gives a single id the same result shape. Every id is resolved before the first write, repeats are written once, and the call exits `1` unless every id succeeded — read `results` for the per-id `status`/`code`.
 
 ## Recurring Schedules
 

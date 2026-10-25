@@ -64,6 +64,7 @@ remctl add "Review PR" -l Work -d "tomorrow 10:00" -p high
 remctl add "Pay rent" -d "2026-06-01" --recurrence monthly
 remctl edit 23880 -d clear
 remctl edit 23880 -l Work
+remctl done 23880 23881 --json
 remctl add "Research" -l Projects --url "https://example.com" -t remctl --new-section "Research"
 remctl section-create "Research" -l Projects
 remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m

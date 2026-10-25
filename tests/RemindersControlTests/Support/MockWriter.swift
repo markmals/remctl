@@ -38,9 +38,16 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
         if let e = updateError { throw e }
         return try resultOr("updated")
     }
-    func delete(id: String) async throws -> WriteResult { calls.append(.delete(id: id)); return try resultOr("deleted") }
-    func complete(id: String, completionDate: Date?) async throws -> WriteResult { calls.append(.complete(id: id, completionDate: completionDate)); return try resultOr("completed") }
-    func uncomplete(id: String) async throws -> WriteResult { calls.append(.uncomplete(id: id)); return try resultOr("uncompleted") }
+    /// Called with the identifier of each recorded complete/uncomplete/delete before it returns.
+    /// Throwing from it fails that one write; a batch test uses it to fail a single id, or to
+    /// change the fixture store mid-batch (a row removed with a parent deleted earlier).
+    var onStateWrite: (@Sendable (String) throws -> Void)?
+
+    func delete(id: String) async throws -> WriteResult { calls.append(.delete(id: id)); try onStateWrite?(id); return try resultOr("deleted") }
+    func complete(id: String, completionDate: Date?) async throws -> WriteResult {
+        calls.append(.complete(id: id, completionDate: completionDate)); try onStateWrite?(id); return try resultOr("completed")
+    }
+    func uncomplete(id: String) async throws -> WriteResult { calls.append(.uncomplete(id: id)); try onStateWrite?(id); return try resultOr("uncompleted") }
     func createList(title: String, color: String?) async throws -> WriteResult { calls.append(.createList(title: title, color: color)); return try resultOr("created") }
     func renameList(currentTitle: String, listId: String?, newTitle: String) async throws -> WriteResult { calls.append(.renameList(currentTitle: currentTitle, listId: listId, newTitle: newTitle)); return try resultOr("renamed") }
     func deleteList(title: String, listId: String?) async throws -> WriteResult { calls.append(.deleteList(title: title, listId: listId)); return try resultOr("deleted") }

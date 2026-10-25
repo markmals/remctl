@@ -232,20 +232,34 @@ remctl edit 23880 --unassign
 
 `--assign USER` targets the reminder's shared list and resolves `USER` against its sharees by display name, first/last name, email or phone address, numeric sharee ID, object UUID, or `me`. Run `remctl sharees LIST --json` first when scripting and prefer the returned `address`, `id`, or `objectUUID` — names can collide (ambiguity fails with the candidate list). `--unassign` clears the current assignment; the two flags are mutually exclusive. Verify with `remctl info ID --json` under `assignment`.
 
-### `done <id>` / `undone <id>`
-Mark a reminder complete or incomplete. `--json`. `done --date` sets an explicit completion date (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; strict — natural-language forms are rejected before any write). `--date` is not supported on recurring reminders: completing those advances the series, so run plain `done` instead.
+### `done <id> [<id>…]` / `undone <id> [<id>…]`
+Mark reminders complete or incomplete. `--json`. `done --date` sets an explicit completion date (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; strict — natural-language forms are rejected before any write). `--date` is not supported on recurring reminders: completing those advances the series, so run plain `done` instead.
 ```bash
 remctl done 23880
 remctl done 23880 --date "2026-05-27 09:30"
 remctl undone 23880
+remctl done 23880 23881 --json
 ```
 
-### `delete <id> [--force]`
-Delete a reminder; `--force` skips the confirmation prompt (and is required with `--json` or a non-interactive stdin). `--json`. Supported accounts keep the deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders.app can recover it.
+### `delete <id> [<id>…] [--force]`
+Delete reminders; `--force` skips the confirmation prompt (and is required with `--json` or a non-interactive stdin). A batch asks once, listing every reminder it would delete. `--json`. Supported accounts keep a deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders.app can recover it.
 ```bash
 remctl delete 23880
 remctl delete 23880 --force
+remctl delete 23880 23881 --force --json
 ```
+
+### Batches of ids (`done`, `undone`, `delete`)
+Pass several ids — up to 50, listed before the options — to run one batch; `--batch` gives a single id the same result shape. More than 50 ids is refused (`batch_too_large`) without reading or writing anything.
+
+Every id is resolved before the first write, so an unknown id (`reminder_not_found`), a reminder without a stable identifier (`no_stable_identifier`), and `done --date` on a recurring reminder (`completion_date_unsupported_for_recurring`) are reported without touching the rest of the batch. Repeated ids are written once and listed under `duplicatesIgnored`. A write that fails reports `write_failed` for that id and the batch continues. A batch `delete` asks once for every reminder it would delete; its `confirmation_required` refusal lists them under `ids`. The batch exits `1` unless every id succeeded (a declined delete prompt exits `0` and writes nothing).
+```bash
+remctl done 23880 23881 23881 --json
+```
+```json
+{"status": "partial", "operation": "done", "requested": [23880, 23881, 23881], "succeeded": [23880], "failed": [23881], "results": [{"id": 23880, "status": "completed", "title": "Pay rent", "list": "Home"}, {"id": 23881, "status": "not_found", "code": "reminder_not_found", "message": "#23881 not found"}], "duplicatesIgnored": [23881]}
+```
+`status` is `completed`/`uncompleted`/`deleted` when every id succeeded, `partial` when some did, and `failed` when none did. Human output prints one `Completed: #id title` line per success, one `Error: …` line per failure on stderr, and a closing `N of M completed` count.
 
 ### `flag <id>` / `unflag <id>`
 Toggle the flagged state. `--json`.

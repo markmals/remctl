@@ -38,7 +38,11 @@ func confirmDestructiveAction(
             ("code", .string("confirmation_required")),
             ("message", .string(message)),
         ]
-        if let identifier { pairs.append(("id", identifier)) }
+        if let identifier {
+            var key = "id"
+            if case .array = identifier { key = "ids" }   // upstream names a batch's targets `ids`
+            pairs.append((key, identifier))
+        }
         return WriteOutcome(stderr: JSONValue.object(pairs).serialized(indent: nil, ensureAscii: false) + "\n", exitCode: 1)
     }
 

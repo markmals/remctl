@@ -1004,15 +1004,23 @@ struct Edit: AsyncParsableCommand {
 }
 
 struct Done: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "done", abstract: "Mark reminders complete.")
-    @Argument(help: "Reminder ID") var id: Int
+    static let configuration = CommandConfiguration(
+        commandName: "done", abstract: "Mark reminders complete.",
+        discussion: ReminderStateBatch.helpDiscussion)
+    @Argument(help: ArgumentHelp("Reminder ID", valueName: "id")) var id: Int
+    @Argument(help: ArgumentHelp("More reminder IDs for one batch", valueName: "id")) var moreIds: [Int] = []
     @Option(name: .long, help: "Completion date (YYYY-MM-DD or YYYY-MM-DD HH:MM); defaults to now") var date: String?
+    @Flag(name: .long, help: "Report the batch result shape even for one id") var batch = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
-        let id = self.id, date = self.date, json = self.json
+        let ids = [id] + moreIds, date = self.date, json = self.json, batch = self.batch
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
-            try await Self.perform(id: id, date: date, json: json, store: store, writer: writer)
+            guard batch || ids.count > 1 else {
+                return try await Self.perform(id: ids[0], date: date, json: json, store: store, writer: writer)
+            }
+            return await ReminderStateBatch.run(operation: .done, ids: ids, date: date, json: json,
+                                                store: store, writer: writer, confirm: .standard)
         })
     }
 
@@ -1063,7 +1071,7 @@ struct Done: AsyncParsableCommand {
     }
 
     /// Python `datetime.isoformat()` for a whole-second local datetime: yyyy-MM-ddTHH:mm:ss.
-    private static func isoDateTime(_ date: Date, calendar: Calendar) -> String {
+    static func isoDateTime(_ date: Date, calendar: Calendar) -> String {
         let df = DateFormatter()
         df.calendar = calendar
         df.locale = Locale(identifier: "en_US_POSIX")
@@ -1073,7 +1081,7 @@ struct Done: AsyncParsableCommand {
     }
 
     /// Build the exit-2 invalid-completion-date outcome (port of `fail_invalid_completion_date`).
-    private static func failInvalidCompletionDate(_ value: String, json: Bool) -> WriteOutcome {
+    static func failInvalidCompletionDate(_ value: String, json: Bool) -> WriteOutcome {
         let examples = ["2026-05-27", "2026-05-27 09:30"]
         if json {
             let payload: JSONValue = .object([
@@ -1096,13 +1104,22 @@ struct Done: AsyncParsableCommand {
 }
 
 struct Undone: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "undone", abstract: "Mark reminders incomplete.")
-    @Argument(help: "Reminder ID") var id: Int
+    static let configuration = CommandConfiguration(
+        commandName: "undone", abstract: "Mark reminders incomplete.",
+        discussion: ReminderStateBatch.helpDiscussion)
+    @Argument(help: ArgumentHelp("Reminder ID", valueName: "id")) var id: Int
+    @Argument(help: ArgumentHelp("More reminder IDs for one batch", valueName: "id")) var moreIds: [Int] = []
+    @Flag(name: .long, help: "Report the batch result shape even for one id") var batch = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
+        let ids = [id] + moreIds, json = self.json, batch = self.batch
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
-            try await Self.perform(id: id, json: json, store: store, writer: writer)
+            guard batch || ids.count > 1 else {
+                return try await Self.perform(id: ids[0], json: json, store: store, writer: writer)
+            }
+            return await ReminderStateBatch.run(operation: .undone, ids: ids, json: json,
+                                                store: store, writer: writer, confirm: .standard)
         })
     }
 
@@ -1120,16 +1137,24 @@ struct Undone: AsyncParsableCommand {
 
 struct Delete: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "delete", abstract: "Delete a reminder.",
-        discussion: "Supported accounts keep a deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders can recover it. A terminal session asks first; --json and piped stdin need --force.")
-    @Argument(help: "Reminder ID") var id: Int
+        commandName: "delete", abstract: "Delete reminders.",
+        discussion: "Supported accounts keep a deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders can recover it. A terminal session asks first; --json and piped stdin need --force.\n\n"
+            + ReminderStateBatch.helpDiscussion)
+    @Argument(help: ArgumentHelp("Reminder ID", valueName: "id")) var id: Int
+    @Argument(help: ArgumentHelp("More reminder IDs for one batch", valueName: "id")) var moreIds: [Int] = []
     @Flag(name: .long, help: "Skip the confirmation prompt") var force = false
+    @Flag(name: .long, help: "Report the batch result shape even for one id") var batch = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
 
     func run() async throws {
-        let id = self.id, force = self.force, json = self.json
+        let ids = [id] + moreIds, force = self.force, json = self.json, batch = self.batch
         WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
-            try await Self.perform(id: id, force: force, json: json, store: store, writer: writer, confirm: .standard)
+            guard batch || ids.count > 1 else {
+                return try await Self.perform(id: ids[0], force: force, json: json, store: store,
+                                              writer: writer, confirm: .standard)
+            }
+            return await ReminderStateBatch.run(operation: .delete, ids: ids, force: force, json: json,
+                                                store: store, writer: writer, confirm: .standard)
         })
     }
 

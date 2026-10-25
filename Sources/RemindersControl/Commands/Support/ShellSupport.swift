@@ -183,7 +183,24 @@ _remctl() {
         done)
             _arguments \
                 '--date[Set completion date]:date:' \
-                '--json[JSON output]'
+                '--batch[Report the batch result shape even for one id]' \
+                '--json[JSON output]' \
+                '*:reminder id:'
+            return
+            ;;
+        undone)
+            _arguments \
+                '--batch[Report the batch result shape even for one id]' \
+                '--json[JSON output]' \
+                '*:reminder id:'
+            return
+            ;;
+        delete)
+            _arguments \
+                '--force[Skip confirmation prompt]' \
+                '--batch[Report the batch result shape even for one id]' \
+                '--json[JSON output]' \
+                '*:reminder id:'
             return
             ;;
         sharees)
@@ -415,7 +432,13 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
-        COMPREPLY=( $(compgen -W "--date --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--date --batch --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "undone" ]; then
+        COMPREPLY=( $(compgen -W "--batch --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "delete" ]; then
+        COMPREPLY=( $(compgen -W "--force --batch --json" -- "$cur") )
         return
     elif [ "$cmd" = "sharees" ]; then
         COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
@@ -679,7 +702,13 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l url -d "URL, web rich
 complete -c remctl -n "__fish_seen_subcommand_from add" -s t -l tags -d "Tags, synced with --private" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l list-id -d "Target list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from done" -l date -d "Set completion date" -r
+complete -c remctl -n "__fish_seen_subcommand_from done" -l batch -d "Report the batch result shape even for one id"
 complete -c remctl -n "__fish_seen_subcommand_from done" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from undone" -l batch -d "Report the batch result shape even for one id"
+complete -c remctl -n "__fish_seen_subcommand_from undone" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from delete" -l force -d "Skip confirmation prompt"
+complete -c remctl -n "__fish_seen_subcommand_from delete" -l batch -d "Report the batch result shape even for one id"
+complete -c remctl -n "__fish_seen_subcommand_from delete" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l list-id -d "Shared list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsupported private ReminderKit metadata writes"
