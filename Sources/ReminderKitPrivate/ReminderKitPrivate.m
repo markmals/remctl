@@ -37,6 +37,8 @@
 - (id)updateList:(id)list;
 - (id)updateSmartList:(id)smartList;
 - (id)updateTemplate:(id)templateObject;
+- (id)_copyReminder:(id)reminder toListChangeItem:(id)listChangeItem;
+- (id)_copyReminder:(id)reminder toReminderSubtaskContextChangeItem:(id)context;
 - (id)addReminderWithTitle:(NSString *)title toReminderSubtaskContextChangeItem:(id)context;
 - (id)addListWithName:(NSString *)name toAccountChangeItem:(id)accountChangeItem listObjectID:(id)objectID;
 - (id)addListSectionWithDisplayName:(NSString *)name toListSectionContextChangeItem:(id)context;
@@ -98,6 +100,7 @@
 @end
 
 @interface REMReminderChangeItem : NSObject
+- (id)remObjectID;
 - (id)assignmentContext;
 - (id)attachmentContext;
 - (id)dueDateDeltaAlertContext;
@@ -649,6 +652,7 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"create_template",
                 @"apply_template",
                 @"delete_template",
+                @"clone_reminder_tree_to_list",
             ]];
             if (![action isKindOfClass:[NSString class]] || ![allowedActions containsObject:action]) {
                 RKP_FAIL(@"Unknown action");
@@ -1180,6 +1184,94 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     @"action": action,
                     @"listId": listID,
                     @"remindersCategorized": @(reminderIDs.count),
+                };
+            }
+
+            if ([action isEqualToString:@"clone_reminder_tree_to_list"]) {
+                NSString *cloneReminderID = cmd[@"id"];
+                if (![cloneReminderID isKindOfClass:[NSString class]] || cloneReminderID.length == 0) {
+                    RKP_FAIL(@"id is required");
+                }
+                NSString *listID = cmd[@"listId"];
+                if (![listID isKindOfClass:[NSString class]] || listID.length == 0) {
+                    RKP_FAIL(@"listId is required");
+                }
+                NSString *childIDsError = nil;
+                NSArray<NSString *> *childIDs = stringArray(cmd[@"childIds"], @"childIds", &childIDsError);
+                if (childIDsError) { RKP_FAIL(childIDsError); }
+
+                REMStore *store = [REMStore new];
+                id cloneObjectID = [REMObjectID objectIDWithURL:reminderURL(cloneReminderID)];
+                if (!cloneObjectID) {
+                    RKP_FAIL(@"Could not build ReminderKit object ID");
+                }
+                id reminder = [store fetchReminderWithObjectID:cloneObjectID error:&error];
+                if (!reminder) {
+                    RKP_FAIL(error.localizedDescription ?: @"Reminder not found");
+                }
+                id listObjectID = [REMObjectID objectIDWithURL:listURL(listID)];
+                if (!listObjectID) {
+                    RKP_FAIL(@"Could not build ReminderKit target list object ID");
+                }
+                id list = [store fetchListWithObjectID:listObjectID error:&error];
+                if (!list) {
+                    RKP_FAIL(error.localizedDescription ?: @"Target list not found");
+                }
+
+                REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+                id listChange = [save updateList:list];
+                if (!listChange) {
+                    RKP_FAIL(@"Could not create ReminderKit target list change item");
+                }
+                REMReminderChangeItem *copiedParent = [save _copyReminder:reminder toListChangeItem:listChange];
+                if (!copiedParent) {
+                    RKP_FAIL(@"Could not clone parent reminder into target list");
+                }
+
+                NSMutableArray *clonedChildren = [NSMutableArray array];
+                if (childIDs.count > 0) {
+                    id subtaskContext = [copiedParent subtaskContext];
+                    if (!subtaskContext) {
+                        RKP_FAIL(@"Cloned parent reminder does not support subtasks");
+                    }
+                    for (NSString *childID in childIDs) {
+                        id childObjectID = [REMObjectID objectIDWithURL:reminderURL(childID)];
+                        if (!childObjectID) {
+                            RKP_FAIL([NSString stringWithFormat:@"Could not build ReminderKit child object ID: %@", childID]);
+                        }
+                        id childReminder = [store fetchReminderWithObjectID:childObjectID error:&error];
+                        if (!childReminder) {
+                            RKP_FAIL(error.localizedDescription ?: [NSString stringWithFormat:@"Child reminder not found: %@", childID]);
+                        }
+                        REMReminderChangeItem *copiedChild = [save _copyReminder:childReminder toReminderSubtaskContextChangeItem:subtaskContext];
+                        if (!copiedChild) {
+                            RKP_FAIL([NSString stringWithFormat:@"Could not clone child reminder: %@", childID]);
+                        }
+                        id childObjectIDOut = [copiedChild remObjectID];
+                        NSString *childUUID = childObjectIDOut && [childObjectIDOut respondsToSelector:@selector(uuid)] ? [[childObjectIDOut uuid] UUIDString] : @"";
+                        NSString *childURL = childObjectIDOut && [childObjectIDOut respondsToSelector:@selector(urlRepresentation)] ? [[childObjectIDOut urlRepresentation] absoluteString] : @"";
+                        [clonedChildren addObject:@{
+                            @"sourceId": childID,
+                            @"id": childUUID ?: @"",
+                            @"url": childURL ?: @"",
+                        }];
+                    }
+                }
+
+                if (![save saveSynchronouslyWithError:&error]) {
+                    RKP_FAIL(error.localizedDescription ?: @"ReminderKit clone save failed");
+                }
+                id parentObjectIDOut = [copiedParent remObjectID];
+                NSString *parentUUID = parentObjectIDOut && [parentObjectIDOut respondsToSelector:@selector(uuid)] ? [[parentObjectIDOut uuid] UUIDString] : @"";
+                NSString *parentURL = parentObjectIDOut && [parentObjectIDOut respondsToSelector:@selector(urlRepresentation)] ? [[parentObjectIDOut urlRepresentation] absoluteString] : @"";
+                return @{
+                    @"status": @"cloned",
+                    @"action": action,
+                    @"id": cloneReminderID,
+                    @"listId": listID,
+                    @"newId": parentUUID ?: @"",
+                    @"newUrl": parentURL ?: @"",
+                    @"children": clonedChildren,
                 };
             }
 

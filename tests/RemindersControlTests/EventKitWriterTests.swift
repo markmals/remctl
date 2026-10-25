@@ -1,5 +1,6 @@
 import Testing
 import CoreGraphics
+import EventKit
 @testable import RemindersControl
 
 /// Only the pure `colorForName` seam is covered here. The rest of EventKitWriter
@@ -25,5 +26,44 @@ import CoreGraphics
         let w = EventKitWriter()
         #expect(w.colorForName("chartreuse") == nil)
         #expect(w.colorForName("") == nil)
+    }
+
+    @Test func colorForNameCoversGrayAndTeal() {
+        let w = EventKitWriter()
+        let gray: [CGFloat] = [91.0 / 255, 98.0 / 255, 106.0 / 255, 1.0]
+        let teal: [CGFloat] = [48.0 / 255, 176.0 / 255, 199.0 / 255, 1.0]
+        #expect(w.colorForName("gray")?.components == gray)
+        #expect(w.colorForName("teal")?.components == teal)
+    }
+
+    @Test func colorsUseTheSRGBColorSpace() {
+        #expect(EventKitWriter().colorForName("red")?.colorSpace?.name == CGColorSpace.sRGB)
+    }
+
+    // MARK: - Location alarms
+
+    @Test func locationAlarmReplacesTheExistingOne() {
+        let old = EKAlarm()
+        old.structuredLocation = EKStructuredLocation(title: "Old")
+        old.proximity = .enter
+        let new = EKAlarm()
+        new.structuredLocation = EKStructuredLocation(title: "New")
+        new.proximity = .leave
+
+        let result = EventKitWriter.replacingLocationAlarms(in: [old], with: new)
+        #expect(result.count == 1)
+        #expect(result.first?.structuredLocation?.title == "New")
+    }
+
+    @Test func locationAlarmKeepsTimeAlarms() {
+        let timed = EKAlarm(relativeOffset: -900)
+        let location = EKAlarm()
+        location.structuredLocation = EKStructuredLocation(title: "Office")
+        location.proximity = .enter
+
+        let result = EventKitWriter.replacingLocationAlarms(in: [timed, location], with: location)
+        #expect(result.count == 2)
+        #expect(result.first?.relativeOffset == -900)
+        #expect(result.last?.structuredLocation?.title == "Office")
     }
 }

@@ -46,9 +46,44 @@ public final class EventKitWriter: RemindersWriter {
         return item
     }
 
-    private func findList(name: String) throws -> EKCalendar {
-        guard let cal = store.calendars(for: .reminder).first(where: { $0.title == name }) else {
-            throw WriteError("List not found: \(name)")
+    /// Account providers, resolved once per process (upstream e2cbc6b resolves them once
+    /// per command and ships them to the bridge).
+    private lazy var accountProviders: [String: String] = AccountProviders.shared
+
+    private func reminderCalendars() -> [EKCalendar] { store.calendars(for: .reminder) }
+
+    private func descriptor(_ calendar: EKCalendar) -> ReminderCalendarDescriptor {
+        ReminderCalendarDescriptor(
+            identifier: calendar.calendarIdentifier, title: calendar.title,
+            source: descriptor(calendar.source))
+    }
+
+    private func descriptor(_ source: EKSource?) -> ReminderSourceDescriptor {
+        ReminderSourceDescriptor(
+            identifier: source?.sourceIdentifier ?? "", title: source?.title ?? "",
+            isCalDAV: source?.sourceType == .calDAV)
+    }
+
+    /// Resolves the write target by stable ReminderKit identifier first, then by unique
+    /// iCloud title (upstream c0db904). A title match alone picks the wrong list when two
+    /// accounts use the same list name.
+    private func findList(name: String?, listId: String? = nil) throws -> EKCalendar {
+        let calendars = reminderCalendars()
+        do {
+            let index = try ListTargeting.findListIndex(
+                in: calendars.map(descriptor), name: name, listId: listId, providers: accountProviders)
+            return calendars[index]
+        } catch let e as ListTargetingError {
+            throw WriteError(e.message)
+        }
+    }
+
+    /// New reminders without an explicit list land in the default list only when it is an
+    /// iCloud list (upstream c0db904).
+    private func defaultICloudReminderList() throws -> EKCalendar {
+        guard let cal = store.defaultCalendarForNewReminders(),
+              ListTargeting.isICloud(descriptor(cal), providers: accountProviders) else {
+            throw WriteError("Default Reminders list is not in iCloud; pass -l/--list for an iCloud Reminders list")
         }
         return cal
     }
@@ -146,9 +181,13 @@ public final class EventKitWriter: RemindersWriter {
             "purple": (0.69, 0.32, 0.87),
             "brown":  (0.64, 0.52, 0.37),
             "cyan":   (0.35, 0.78, 0.98),
+            "gray":   (91.0 / 255, 98.0 / 255, 106.0 / 255),
+            "teal":   (48.0 / 255, 176.0 / 255, 199.0 / 255),
         ]
         guard let (r, g, b) = map[name.lowercased()] else { return nil }
-        return CGColor(red: r, green: g, blue: b, alpha: 1.0)
+        // sRGB explicitly: a device-RGB CGColor is reinterpreted by Reminders and shifts the hue.
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return CGColor(colorSpace: space, components: [r, g, b, 1.0])
     }
 
     // MARK: - Field mapping
@@ -156,8 +195,8 @@ public final class EventKitWriter: RemindersWriter {
     private func applyFields(_ reminder: EKReminder, _ write: ReminderWrite) throws {
         if let t = write.title { reminder.title = t }
 
-        if let list = write.list {
-            reminder.calendar = try findList(name: list)
+        if write.list != nil || write.listId != nil {
+            reminder.calendar = try findList(name: write.list, listId: write.listId)
         }
 
         // due: .set(date) → set date, .clear → remove.
@@ -236,10 +275,15 @@ public final class EventKitWriter: RemindersWriter {
                 ? EKAlarmProximity.leave
                 : EKAlarmProximity.enter
             alarm.proximity = proximityValue
-            var alarms = reminder.alarms ?? []
-            alarms.append(alarm)
-            reminder.alarms = alarms
+            reminder.alarms = EventKitWriter.replacingLocationAlarms(in: reminder.alarms ?? [], with: alarm)
         }
+    }
+
+    /// A reminder carries at most one location alarm: a repeated `edit --latitude/--longitude`
+    /// must replace the existing structured-location alarm, not stack another one on top
+    /// (upstream e6d2a7e). Non-location alarms are preserved.
+    static func replacingLocationAlarms(in existing: [EKAlarm], with alarm: EKAlarm) -> [EKAlarm] {
+        existing.filter { $0.structuredLocation == nil && $0.proximity == .none } + [alarm]
     }
 
     // MARK: - Reminder actions
@@ -251,10 +295,10 @@ public final class EventKitWriter: RemindersWriter {
         }
         let reminder = EKReminder(eventStore: store)
         reminder.title = title
-        if let list = write.list {
-            reminder.calendar = try findList(name: list)
+        if write.list != nil || write.listId != nil {
+            reminder.calendar = try findList(name: write.list, listId: write.listId)
         } else {
-            reminder.calendar = store.defaultCalendarForNewReminders()
+            reminder.calendar = try defaultICloudReminderList()
         }
         try applyFields(reminder, write)
         do {
@@ -323,13 +367,18 @@ public final class EventKitWriter: RemindersWriter {
         guard !title.isEmpty else { throw WriteError("title is required for create_list") }
         let cal = EKCalendar(for: .reminder, eventStore: store)
         cal.title = title
-        // Use the local/iCloud source for reminders
-        guard let source = store.sources.first(where: { $0.sourceType == .calDAV })
-                ?? store.sources.first(where: { $0.sourceType == .local }) else {
-            throw WriteError("No suitable calendar source found")
+        // New lists belong in iCloud: a local or third-party CalDAV account would silently
+        // swallow the list and never sync (upstream c0db904, e2cbc6b).
+        let sources = store.sources
+        guard let index = ListTargeting.firstICloudSourceIndex(
+            in: sources.map(descriptor), providers: accountProviders) else {
+            throw WriteError("No iCloud Reminders source found")
         }
-        cal.source = source
-        if let colorName = color, let cg = colorForName(colorName) {
+        cal.source = sources[index]
+        if let colorName = color {
+            guard let cg = colorForName(colorName) else {
+                throw WriteError("Unsupported list color: \(colorName)")
+            }
             cal.cgColor = cg
         }
         do {
@@ -340,9 +389,9 @@ public final class EventKitWriter: RemindersWriter {
         return WriteResult(status: "created", id: cal.calendarIdentifier, title: cal.title)
     }
 
-    public func renameList(currentTitle: String, newTitle: String) async throws -> WriteResult {
+    public func renameList(currentTitle: String, listId: String?, newTitle: String) async throws -> WriteResult {
         try await requestAccess()
-        let cal = try findList(name: currentTitle)
+        let cal = try findList(name: currentTitle, listId: listId)
         cal.title = newTitle
         do {
             try store.saveCalendar(cal, commit: true)
@@ -352,9 +401,9 @@ public final class EventKitWriter: RemindersWriter {
         return WriteResult(status: "renamed", id: cal.calendarIdentifier, title: cal.title)
     }
 
-    public func deleteList(title: String) async throws -> WriteResult {
+    public func deleteList(title: String, listId: String?) async throws -> WriteResult {
         try await requestAccess()
-        let cal = try findList(name: title)
+        let cal = try findList(name: title, listId: listId)
         do {
             try store.removeCalendar(cal, commit: true)
         } catch {

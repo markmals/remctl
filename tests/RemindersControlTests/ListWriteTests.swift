@@ -189,7 +189,7 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let human = try await ListRename.perform(name: "Work", newNamePositional: "Renamed", listId: nil, newNameOption: nil, json: false, store: s, writer: m)
-        #expect(m.calls == [.renameList(currentTitle: "Work", newTitle: "Renamed")])
+        #expect(m.calls == [.renameList(currentTitle: "Work", listId: nil, newTitle: "Renamed")])
         #expect(human == WriteOutcome.ok("Renamed: Work -> Renamed\n"))
 
         let m2 = MockWriter()
@@ -197,12 +197,33 @@ import GRDB
         #expect(js.stdout == #"{"status": "renamed", "id": 10, "old_name": "Work", "new_name": "Renamed"}"# + "\n")
     }
 
+    /// The resolved list's CKID goes to the writer alongside the title so a duplicate list
+    /// name in another account cannot absorb the rename or delete (upstream c0db904).
+    @Test func renameAndDeleteForwardTheListCKID() async throws {
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s = try RemindersStore.open(storeDir: dir)
+
+        let renamer = MockWriter()
+        _ = try await ListRename.perform(name: "Work", newNamePositional: "Renamed", listId: nil,
+                                         newNameOption: nil, json: false, store: s, writer: renamer)
+        #expect(renamer.calls == [.renameList(currentTitle: "Work", listId: "CK-W", newTitle: "Renamed")])
+
+        let deleter = MockWriter()
+        _ = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false,
+                                         store: s, writer: deleter, confirm: .unexpected)
+        #expect(deleter.calls == [.deleteList(title: "Work", listId: "CK-W")])
+    }
+
     @Test func renameByListId() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let js = try await ListRename.perform(name: nil, newNamePositional: nil, listId: 10, newNameOption: "Renamed", json: true, store: s, writer: m)
         // old_name is the RESOLVED title 'Work', not the raw arg.
-        #expect(m.calls == [.renameList(currentTitle: "Work", newTitle: "Renamed")])
+        #expect(m.calls == [.renameList(currentTitle: "Work", listId: nil, newTitle: "Renamed")])
         #expect(js.stdout == #"{"status": "renamed", "id": 10, "old_name": "Work", "new_name": "Renamed"}"# + "\n")
     }
 
@@ -239,7 +260,7 @@ import GRDB
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let human = try await ListDelete.perform(name: "Work", listId: nil, force: true, json: false, store: s, writer: m, confirm: .unexpected)
-        #expect(m.calls == [.deleteList(title: "Work")])
+        #expect(m.calls == [.deleteList(title: "Work", listId: nil)])
         #expect(human == WriteOutcome.ok("Deleted list: Work\n"))
 
         let m2 = MockWriter()
@@ -253,7 +274,7 @@ import GRDB
         let seen = Prompted()
         let out = try await ListDelete.perform(name: "Work", listId: nil, force: false, json: false, store: s, writer: m, confirm: .recording { seen.value = $0 })
         #expect(seen.value == "Delete list 'Work'? This cannot be undone. [y/N] ")
-        #expect(m.calls == [.deleteList(title: "Work")])
+        #expect(m.calls == [.deleteList(title: "Work", listId: nil)])
         #expect(out.stdout == "Deleted list: Work\n")
     }
 

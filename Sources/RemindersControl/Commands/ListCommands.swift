@@ -477,13 +477,14 @@ struct ListRename: AsyncParsableCommand {
         }
 
         // 2. Resolve the target list. resolveRequiredListTarget's CLIErrors pass through (mapped to
-        //    "Error: <msg>" exit 1). The RESOLVED title is sent to the writer, NOT the raw `name` arg.
+        //    "Error: <msg>" exit 1). The RESOLVED title + CKID are sent to the writer, NOT the raw
+        //    `name` arg — the CKID is what keeps duplicate titles apart (upstream c0db904).
         let target = try resolveRequiredListTarget(store: store, name: name, listId: listId)
         let targetName = target.title
 
         // 3. Rename. On a caught WriteError, re-wrap to match cmd_list_rename:6261.
         do {
-            _ = try await writer.renameList(currentTitle: targetName, newTitle: newName)
+            _ = try await writer.renameList(currentTitle: targetName, listId: target.objectUUID, newTitle: newName)
         } catch let e as WriteError {
             let suffix = e.message.isEmpty ? "" : ": \(e.message)"
             throw WriteError("Failed to rename list '\(targetName)'\(suffix)", exitCode: e.exitCode)
@@ -542,7 +543,7 @@ struct ListDelete: AsyncParsableCommand {
 
         // 3. Delete. On a caught WriteError, re-wrap to match cmd_list_delete:6291.
         do {
-            _ = try await writer.deleteList(title: targetName)
+            _ = try await writer.deleteList(title: targetName, listId: target.objectUUID)
         } catch let e as WriteError {
             let suffix = e.message.isEmpty ? "" : ": \(e.message)"
             throw WriteError("Failed to delete list '\(targetName)'\(suffix)", exitCode: e.exitCode)

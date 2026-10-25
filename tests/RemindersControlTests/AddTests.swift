@@ -233,6 +233,15 @@ import GRDB
         #expect(createdWrite(m)?.list == "Work")
     }
 
+    /// The target list's CKID rides along so EventKit can pick the right list when two
+    /// accounts share a list title (upstream c0db904).
+    @Test func listTargetCarriesTheListCKID() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Add.perform(title: "T", list: "Work", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(createdWrite(m)?.listId == "CK-W")
+    }
+
     @Test func listNotFoundExitsOne() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()

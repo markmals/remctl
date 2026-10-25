@@ -86,6 +86,9 @@ public protocol PrivateWriter {
     func setEarlyReminder(id: String, spec: EarlyReminderWrite) async throws -> PrivateResult
     func addLocationAlarm(id: String, location: PrivateLocation) async throws -> PrivateResult
     func categorizeGroceryItems(listId: String, reminderIds: [String]) async throws -> PrivateResult
+    /// Copies a reminder (and the given subtasks) into another list. ReminderKit is the only
+    /// write path that can carry a subtask tree across a list boundary (upstream ed5e982).
+    func cloneReminderTree(id: String, listId: String, childIds: [String]) async throws -> PrivateResult
     // list / smart-list / template scoped
     func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult
     func setListPinned(listId: String, pinned: Bool) async throws -> PrivateResult

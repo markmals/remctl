@@ -131,7 +131,7 @@ Private metadata rules:
 
 - `--url` creates a synced web rich link (public `http`/`https` host required) when other private metadata is present; otherwise it appends to notes.
 - `-t/--tags` creates synced tags when private metadata is present or on `edit`; on a bare `add` it writes inline `#hashtag` title tokens.
-- `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
+- `edit -l/--list` and `edit --list-id` move a reminder. A reminder with subtasks (or a move EventKit refuses across accounts) is moved by clone-delete and gets a **new id**: read `id` (new) and `oldId` from `--json` (`method: "clone-delete"`, `subtasksMoved`, `originalDeleted`) and chain the new id afterwards. Such a move cannot be combined with other edit flags — move first, then edit.
 - `--section` resolves by name (single non-empty match wins on duplicates); use `--section-id` for exact assignment.
 - `--early-reminder` writes Reminders' Early Reminder due-date delta alert: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; non-clear values require a due date. Verify in `info --json`.
 - `--location-title` + `--latitude`/`--longitude` persist through EventKit structured-location alarms; verify in `info --json` under `alarms`.

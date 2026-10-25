@@ -172,7 +172,7 @@ How RemCTL picks the path from context on a bare `add`:
 - `-f/--flag` always writes the real Reminders flag through ReminderKit, so it implies the private path (as `edit --flagged` does). EventKit has no flagged API, so a failed flag write is reported as an error — RemCTL never substitutes a priority change.
 
 ### `edit <id>`
-Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (ordinary EventKit move), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
 
 Date-only `-d` values keep the reminder all-day through the edit (re-setting the same all-day date nudges by a day, not an hour, so the change still syncs).
 
@@ -183,6 +183,21 @@ Rich-link and image edits are **additive** — RemCTL adds, never removes or rep
 An edit that changes nothing prints `Nothing to update.` and exits 0; under `--json` that is `{"status":"unchanged","code":"nothing_to_update","id":…,"title":…,"message":"Nothing to update."}`. Every `edit --json` result echoes `title`.
 
 Location alarms are range-checked before the first write: `--latitude` -90 to 90, `--longitude` -180 to 180, `--radius` 1 to 100000 meters (`invalid_location_radius` under `--json`).
+
+**List moves.** An ordinary move goes through EventKit and keeps the reminder's id. A reminder
+that owns subtasks cannot be moved that way, so RemCTL clones the parent and its subtasks into
+the destination through ReminderKit, verifies the clone in the store, then deletes the original
+— the same fallback runs when EventKit refuses a childless move across a list or container
+boundary. The moved reminder therefore gets a **new id**: `--json` reports `method:
+"clone-delete"` with `id` (new), `oldId`, `objectUUID`, `subtasksMoved`, and `originalDeleted`;
+human output prints `Moved #OLD -> #NEW`. A clone-delete move cannot be combined with other edit
+flags (`list_move_with_subtasks_conflicts_with_edits`) — move first, then edit the new id. When
+the clone cannot be verified the original is left in place and nothing is deleted
+(`clone_move_unverified`).
+
+Writes target iCloud Reminders lists. A list that lives in a local or third-party account is
+refused rather than silently written to the wrong account, and duplicate list titles are resolved
+by the list's stable identifier.
 
 ```bash
 remctl edit 23880 --title "New title"
@@ -252,7 +267,7 @@ A recurrence **object** — exactly the shape `export` and `info --json` emit (`
 
 **Early Reminders** (`--early-reminder`) are a *separate* Reminders Early Reminder (a private due-date delta alert, not an EventKit alarm). Accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; a non-clear value requires a due date. JSON readback includes `earlyReminder`/`earlyReminders`.
 
-**Location alarms** (`--location-title` with `--latitude`/`--longitude`, plus `--radius` and `--proximity arriving|leaving`) are written through EventKit structured-location alarms. Verify in `info --json` under `alarms` with `type: "location"` and a `location` object (title, coordinates, radius, proximity). Available on `edit`.
+**Location alarms** (`--location-title` with `--latitude`/`--longitude`, plus `--radius` and `--proximity arriving|leaving`) are written through EventKit structured-location alarms. A reminder keeps at most one location alarm — editing the location replaces the existing one instead of stacking another — while time alarms are left alone. Verify in `info --json` under `alarms` with `type: "location"` and a `location` object (title, coordinates, radius, proximity). Available on `edit`.
 
 ### Subtasks
 
@@ -275,7 +290,7 @@ remctl lists --json
 ```
 
 ### `list-create <name>`
-Create a list. Appearance: `--color NAME` (named colors `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `brown`, `gray`, `cyan`, `teal` use EventKit). A `--symbol` or `--emoji` uses the ReminderKit appearance path. Groceries: `--groceries` with `--grocery-locale en_US`.
+Create a list. Appearance: `--color NAME` (named colors `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `brown`, `gray`, `cyan`, `teal` use EventKit; an unrecognized name is an error, not a silently colorless list). A `--symbol` or `--emoji` uses the ReminderKit appearance path. Groceries: `--groceries` with `--grocery-locale en_US`. New lists are created in the iCloud Reminders account; without one, `list-create` fails instead of writing to a local or third-party account.
 ```bash
 remctl list-create "Project X" --color blue
 remctl list-create "Research" --color orange --symbol education3

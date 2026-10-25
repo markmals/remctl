@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import GRDB
 
 let writeCommands: [ParsableCommand.Type] = [
     Add.self, Edit.self, Done.self, Undone.self, Delete.self,
@@ -169,10 +170,12 @@ struct Add: AsyncParsableCommand {
         // 3. List resolution (only when a list name / id was given). EventKit uses the
         //    default list otherwise. Capture the resolution method for the resolvedList output.
         var resolvedListTitle: String? = nil
+        var resolvedListCkid: String? = nil
         var resolution: (requested: String, title: String, id: Int, method: String)? = nil
         if list != nil || listId != nil {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             resolvedListTitle = target.title
+            resolvedListCkid = target.objectUUID
             let requested = listId != nil ? String(listId!) : (list ?? "")
             let method = WriteFormatting.resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
@@ -194,6 +197,8 @@ struct Add: AsyncParsableCommand {
         var write = ReminderWrite()
         write.title = finalTitle
         if let resolvedListTitle { write.list = resolvedListTitle }
+        // The CKID disambiguates duplicate list titles across accounts (upstream c0db904).
+        if let resolvedListCkid { write.listId = resolvedListCkid }
         if let notes, !notes.isEmpty { write.notes = notes }
         if let dueDate {
             write.due = .set(dueDate)
@@ -396,7 +401,8 @@ struct Edit: AsyncParsableCommand {
         assign: String? = nil, unassign: Bool = false, address: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
-        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25,
+        cloneAttempts: Int = 24, cloneDelay: Double = 0.25
     ) async throws -> WriteOutcome {
 
         // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
@@ -441,10 +447,12 @@ struct Edit: AsyncParsableCommand {
         //    both-list check, and `edit ID --list nonexistent -d notadate` exits 1 on list-not-found,
         //    rather than exit 2 on the bad due. Both name+id -> exit 1 (CLIError "not both").
         var resolvedListTitle: String? = nil
+        var listTarget: (id: Int, title: String, objectUUID: String?)? = nil
         var resolution: (requested: String, title: String, id: Int, method: String)? = nil
         if list != nil || listId != nil {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             resolvedListTitle = target.title
+            listTarget = target
             let requested = listId != nil ? String(listId!) : (list ?? "")
             let method = WriteFormatting.resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
@@ -540,11 +548,38 @@ struct Edit: AsyncParsableCommand {
             throw WriteError("--address is not currently supported for location alarms.")
         }
 
+        // 4b. Parent-with-subtasks list move (upstream ed5e982): EventKit cannot carry a subtask
+        //     tree across lists, so the move goes through ReminderKit's verified clone-delete.
+        //     It replaces the whole edit, so it refuses to combine with other field changes.
+        let movingToDifferentList = listTarget != nil && listTarget!.id != row.int("ZLIST")
+        let hasOtherChangesForMove = (title?.isEmpty == false) || notes != nil
+            || (priority?.isEmpty == false) || (due?.isEmpty == false) || (url?.isEmpty == false)
+            || parsedRecurrence != nil || clearAlarm || parsedAlarm != nil || wantsPrivate
+        var childRowsForMove: [Row] = []
+        if movingToDifferentList {
+            childRowsForMove = store.subtasksForMove(parentPk: id)
+            if !childRowsForMove.isEmpty {
+                if hasOtherChangesForMove {
+                    return CloneMoveError(
+                        code: "list_move_with_subtasks_conflicts_with_edits",
+                        message: "moving a parent reminder with subtasks cannot currently be combined with other edits. "
+                            + "Move it first, then edit the cloned reminder returned by remctl."
+                    ).outcome(json: json)
+                }
+                return try await performCloneDeleteMove(
+                    store: store, row: row, childRows: childRowsForMove, target: listTarget!,
+                    resolution: resolution, writer: writer, private: priv, json: json,
+                    attempts: cloneAttempts, delay: cloneDelay)
+            }
+        }
+
         // 5. Build the ReminderWrite from validated fields.
         var write = ReminderWrite()
         var hasChanges = false
         if let title, !title.isEmpty { write.title = title; hasChanges = true }
         if let resolvedListTitle { write.list = resolvedListTitle; hasChanges = true }
+        // The CKID disambiguates duplicate list titles across accounts (upstream c0db904).
+        if let listTarget, let ckid = listTarget.objectUUID { write.listId = ckid }
 
         // url merges into notes (notes + "\n\n" + url, or url alone). notes gate is `!= nil`:
         // an empty notes string still sets notes (mirrors Python `notes_body is not None`), so
@@ -672,6 +707,14 @@ struct Edit: AsyncParsableCommand {
         }
         do {
             _ = try await writer.update(id: ckid, write)
+        } catch let e as WriteError where movingToDifferentList && !hasOtherChangesForMove
+            && ListMove.failureAllowsCloneDelete(e.message) {
+            // EventKit refuses some moves across list/container boundaries; a pure move can still
+            // go through the verified clone-delete path (upstream cd31b51).
+            return try await performCloneDeleteMove(
+                store: store, row: row, childRows: [], target: listTarget!,
+                resolution: resolution, writer: writer, private: priv, json: json,
+                attempts: cloneAttempts, delay: cloneDelay)
         } catch {
             // The nudge already moved the due date, so a failed real write would strand the
             // reminder an hour (or a day) off. Put the original back before reporting
@@ -768,6 +811,25 @@ struct Edit: AsyncParsableCommand {
         if let result = try? await writer.update(id: ckid, restore), result.status == "updated" { return nil }
         let offset = allDay ? "1 day" : "1 hour"
         return "Warning: reminder due date may be wrong by \(offset) (reminder id \(ckid)); check it in Reminders.\n"
+    }
+
+    /// Runs the clone-delete move and renders it, turning a `CloneMoveError` into the structured
+    /// error payload instead of a thrown WriteError (the original reminder is left untouched).
+    private static func performCloneDeleteMove(
+        store: RemindersStore, row: Row, childRows: [Row],
+        target: (id: Int, title: String, objectUUID: String?),
+        resolution: (requested: String, title: String, id: Int, method: String)?,
+        writer: RemindersWriter, private priv: PrivateWriter, json: Bool,
+        attempts: Int, delay: Double
+    ) async throws -> WriteOutcome {
+        do {
+            let move = try await ListMove.cloneDelete(
+                store: store, row: row, childRows: childRows, target: target,
+                writer: writer, private: priv, attempts: attempts, delay: delay)
+            return ListMove.outcome(move, json: json, resolution: resolution)
+        } catch let e as CloneMoveError {
+            return e.outcome(json: json)
+        }
     }
 
     /// Adapter: parse tags (CSV) and forward to the shared `PrivateChanges.apply` fan-out. The

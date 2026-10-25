@@ -49,7 +49,8 @@ public struct LocationAlarmWrite: Equatable {
 /// Mirrors the bridge `Command` (EventKit-settable fields). nil = leave unchanged.
 public struct ReminderWrite: Equatable {
     public var title: String?
-    public var list: String?             // target list NAME (EventKit findList by title)
+    public var list: String?             // target list NAME (fallback when the CKID cannot be matched)
+    public var listId: String?           // target list CKID (ZCKIDENTIFIER) — matched first, so duplicate titles resolve correctly
     public var due: DueWrite?
     public var allDay: Bool?             // with .set due: store date-only components (mirrors bridge Command.allDay)
     public var priority: Int?            // 0/1/5/9
@@ -91,8 +92,8 @@ public protocol RemindersWriter {
     func complete(id: String, completionDate: Date?) async throws -> WriteResult
     func uncomplete(id: String) async throws -> WriteResult
     func createList(title: String, color: String?) async throws -> WriteResult
-    func renameList(currentTitle: String, newTitle: String) async throws -> WriteResult
-    func deleteList(title: String) async throws -> WriteResult
+    func renameList(currentTitle: String, listId: String?, newTitle: String) async throws -> WriteResult
+    func deleteList(title: String, listId: String?) async throws -> WriteResult
 }
 
 public extension RemindersWriter {

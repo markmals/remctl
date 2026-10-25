@@ -71,10 +71,17 @@ Ordinary mutations go through Apple's EventKit, in-process. `EventKitWriter`
   date-only `dueDateComponents`), priority, notes, and notes-appended URLs
 - explicit completion dates (`done --date`)
 - recurrence rules and normal (relative/absolute) alarms
-- moving a reminder between lists
+- moving a reminder between lists (a parent with subtasks, or a move EventKit
+  refuses across a container boundary, falls back to the ReminderKit
+  clone-delete in `Writes/ListMove.swift`)
 - list create, rename, and delete
 - structured-location alarms (written through EventKit's structured-location
   path because they materialize reliably there on current macOS)
+
+Write and read targeting is iCloud-scoped: `Writes/ListTargeting.swift` matches a
+list by its stable ReminderKit identifier before its title, identifies iCloud
+sources by account provider (`Store/AccountProviders.swift`, falling back to the
+account title), and rejects ambiguous or non-iCloud targets instead of guessing.
 
 EventKit also backs the **limited read fallback** (`--via-eventkit` on `show`,
 `search`, `today`, `upcoming`): `EventKitReader`
@@ -115,8 +122,8 @@ The target exposes a small, dictionary-in / dictionary-out C entry point
 - `RKPProbe()` — a probe that returns `reminderkit-ok` when `REMStore` resolves
   at runtime, `reminderkit-missing` otherwise. No writes.
 - `RKPDispatch(NSDictionary *request)` — dispatches one allow-listed private
-  action and returns a response dict (`status` of `created`/`updated`/`deleted`,
-  or `{"status": "error", "message": ...}`). It never throws and never calls
+  action and returns a response dict (`status` of `created`/`updated`/`deleted`/
+  `cloned`, or `{"status": "error", "message": ...}`). It never throws and never calls
   `exit()`; any private-API fault is caught and returned as an error dict.
 
 Private writes cover the parts of Reminders that EventKit does not:
@@ -126,6 +133,8 @@ Private writes cover the parts of Reminders that EventKit does not:
 - **List metadata:** exact `#RRGGBB` colors, official list symbols, emoji
   badges, Groceries conversion/locale and item categorization, and list /
   smart-list pin state.
+- **Reminder moves:** `clone_reminder_tree_to_list` copies a reminder and its
+  subtasks into another list, which EventKit cannot do.
 - **Custom smart lists:** create/edit/delete for the Reminders filters RemCTL
   has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete.

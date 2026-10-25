@@ -15,6 +15,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case setEarlyReminder(id: String, spec: EarlyReminderWrite)
         case addLocationAlarm(id: String, location: PrivateLocation)
         case categorizeGroceryItems(listId: String, reminderIds: [String])
+        case cloneReminderTree(id: String, listId: String, childIds: [String])
         case setListAppearance(listId: String, appearance: ListAppearance)
         case setListPinned(listId: String, pinned: Bool)
         case setSmartListPinned(smartListId: String, pinned: Bool)
@@ -34,6 +35,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     /// Per-method result override for `categorizeGroceryItems` (P14) so tests can simulate the
     /// helper returning an error/non-updated status independently of the shared `result`.
     var groceryResult: PrivateResult?
+    /// Per-method result override for `cloneReminderTree` so a list-move test can return the
+    /// cloned reminder's `newId` without disturbing the shared `result`.
+    var cloneResult: PrivateResult?
     var throwError: Error?
 
     private func resultOr(_ status: String) throws -> PrivateResult {
@@ -53,6 +57,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func setEarlyReminder(id: String, spec: EarlyReminderWrite) async throws -> PrivateResult { calls.append(.setEarlyReminder(id: id, spec: spec)); return try resultOr("updated") }
     func addLocationAlarm(id: String, location: PrivateLocation) async throws -> PrivateResult { calls.append(.addLocationAlarm(id: id, location: location)); return try resultOr("updated") }
     func categorizeGroceryItems(listId: String, reminderIds: [String]) async throws -> PrivateResult { calls.append(.categorizeGroceryItems(listId: listId, reminderIds: reminderIds)); if let e = throwError { throw e }; return groceryResult ?? result }
+    func cloneReminderTree(id: String, listId: String, childIds: [String]) async throws -> PrivateResult { calls.append(.cloneReminderTree(id: id, listId: listId, childIds: childIds)); if let e = throwError { throw e }; return cloneResult ?? result }
     func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.setListAppearance(listId: listId, appearance: appearance)); return try resultOr("updated") }
     func setListPinned(listId: String, pinned: Bool) async throws -> PrivateResult { calls.append(.setListPinned(listId: listId, pinned: pinned)); return try resultOr("updated") }
     func setSmartListPinned(smartListId: String, pinned: Bool) async throws -> PrivateResult { calls.append(.setSmartListPinned(smartListId: smartListId, pinned: pinned)); return try resultOr("updated") }

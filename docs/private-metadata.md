@@ -74,6 +74,10 @@ Shared lists support assigning a reminder to a participant. `--assign USER` reso
 
 Subtask due dates, priority, recurrence, and alarms use the same validators as parent reminders, and rich subtask URLs follow the same public-host rule. A date-only `due` (`today`, `2026-06-01`, `+3d`) creates an **all-day** child, exactly as on the parent; `recurrence` takes a string spec or an exported recurrence object. Invalid parent or subtask values fail before RemCTL creates or edits anything, so private metadata is never silently dropped onto a partially-created reminder.
 
+### Moving a parent with subtasks
+
+EventKit cannot move a reminder that owns subtasks, so `edit -l/--list` clones the parent and its subtasks into the destination through ReminderKit, waits for the clone to appear in the store, and only then deletes the original. The moved reminder gets a **new numeric id** (`--json`: `id`, `oldId`, `method: "clone-delete"`, `subtasksMoved`, `originalDeleted`), and the move cannot be combined with other edit flags. If the clone cannot be verified, nothing is deleted.
+
 ### Attachments
 
 Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic file and PDF attachments are intentionally rejected because Reminders does not reliably display them. Rich-link and image edits are **additive**: RemCTL adds synced rich links and images but never removes or replaces existing ones.
@@ -94,7 +98,7 @@ Location-based alarms use `--location-title`, `--latitude`, `--longitude`, `--ra
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200 --proximity arriving
 ```
 
-Although a location alarm is conceptually Reminders metadata, RemCTL writes it through **EventKit's structured-location path**, because that materializes reliably on current macOS. RemCTL validates latitude, longitude, radius, and proximity before saving (note: `address` is not supported). Verify the result in `info --json` under `alarms`.
+Although a location alarm is conceptually Reminders metadata, RemCTL writes it through **EventKit's structured-location path**, because that materializes reliably on current macOS. RemCTL validates latitude, longitude, radius, and proximity before saving (note: `address` is not supported), and replaces any existing location alarm instead of stacking a second one — time alarms are untouched. Verify the result in `info --json` under `alarms`.
 
 ## List metadata
 

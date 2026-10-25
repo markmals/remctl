@@ -283,6 +283,12 @@ public final class ReminderKitWriter: PrivateWriter {
         return await dispatchWithRetry(req)
     }
 
+    /// Not retried: a second clone after a transient error would leave a duplicate tree behind.
+    public func cloneReminderTree(id: String, listId: String, childIds: [String]) async throws -> PrivateResult {
+        let req: [String: Any] = ["action": "clone_reminder_tree_to_list", "id": id, "listId": listId, "childIds": childIds]
+        return await dispatchWithRetry(req)
+    }
+
     // MARK: - PrivateWriter — list / smart-list / template
 
     public func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult {
