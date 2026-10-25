@@ -551,6 +551,117 @@ struct Show: AsyncParsableCommand {
         return nil
     }
 
+    /// Port of `cmd_show_group`: the reminders of every child list of a group, grouped by child
+    /// list and printed in each list's own manual display order.
+    private func showGroup(store: RemindersStore, id: Int, title: String, objectUUID: String?) {
+        let children = store.childLists(groupPk: id)
+        if children.isEmpty {
+            if opts.effectiveJSON {
+                Dispatch.printJSON(.array([]), ensureAscii: false)
+            } else {
+                print("No child lists in group '\(safeDisplay(title))'")
+            }
+            return
+        }
+        var sectionsByList: [Int: [Row]] = [:]
+        var membershipsByList: [Int: [String: String]] = [:]
+        for pk in children.compactMap({ $0.int("Z_PK") }) {
+            let secs = store.sectionsForList(pk)
+            sectionsByList[pk] = secs
+            membershipsByList[pk] = secs.isEmpty ? [:] : store.sectionMemberships(pk)
+        }
+        let items = store.reminders(listPks: children.compactMap { $0.int("Z_PK") },
+                                    completed: completed, topLevel: true, manualOrder: true)
+        if opts.effectiveJSON {
+            printGroupJSON(store: store, id: id, title: title, objectUUID: objectUUID,
+                           children: children, items: items, membershipsByList: membershipsByList)
+            return
+        }
+        if items.isEmpty {
+            print("No \(completed ? "" : "active ")reminders in group '\(safeDisplay(title))'")
+            return
+        }
+        printGroupReminders(store: store, title: title, children: children, items: items,
+                            sectionsByList: sectionsByList, membershipsByList: membershipsByList)
+    }
+
+    /// `show <group> --json`: the child list's stub replaces each reminder's plain list name, and
+    /// the group it came through is appended.
+    private func printGroupJSON(store: RemindersStore, id: Int, title: String, objectUUID: String?,
+                                children: [Row], items: [Row],
+                                membershipsByList: [Int: [String: String]])
+    {
+        var childById: [Int: Row] = [:]
+        for child in children { if let pk = child.int("Z_PK") { childById[pk] = child } }
+        // Reminder identifiers are unique across lists, so one lookup covers every child.
+        let memberships = membershipsByList.values.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
+        var groupStub: [(String, JSONValue)] = [("id", .int(id)), ("title", .string(title))]
+        if let objectUUID, !objectUUID.isEmpty { groupStub.append(("objectUUID", .string(objectUUID))) }
+        let payload = zip(items, serializeReminders(items, store: store, memberships: memberships))
+            .map { item, obj -> JSONValue in
+                guard let child = item.int("ZLIST").flatMap({ childById[$0] }) else { return .object(obj) }
+                var out = obj.map { key, value in key == "list" ? (key, JSONValue.object(listGroupStub(child))) : (key, value) }
+                out.append(("group", .object(groupStub)))
+                return .object(out)
+            }
+        Dispatch.printJSON(.array(payload), ensureAscii: false)
+    }
+
+    /// The human and table renderings of a group: one heading (and, in table mode, one table) per
+    /// child list and per section within it.
+    private func printGroupReminders(store: RemindersStore, title: String, children: [Row], items: [Row],
+                                     sectionsByList: [Int: [Row]], membershipsByList: [Int: [String: String]])
+    {
+        let ansi = opts.ansi()
+        let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })
+        func render(_ rows: [Row]) {
+            if rows.isEmpty { return }
+            if opts.useTable {
+                print(fmtTable(remindersToTableData(rows, ansi: ansi), ansi: ansi,
+                               dateColumn: completed ? .completed : .due, includeList: false))
+                return
+            }
+            for r in rows {
+                let p = r.int("Z_PK") ?? 0
+                print(fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose,
+                          indent: "    ", assigneeName: store.assignmentAssignee(pk: p)))
+            }
+        }
+        print("\(ansi.bold(colorListName(title, ansi: ansi))) \(ansi.dim("(group)")):")
+        for child in children {
+            guard let pk = child.int("Z_PK") else { continue }
+            let childItems = items.filter { $0.int("ZLIST") == pk }
+            if childItems.isEmpty { continue }
+            let isGroceries = isGroceryListRow(child)
+            var heading = colorListName(child.string("ZNAME"), ansi: ansi)
+            if isGroceries { heading += " \(Constants.groceryListMarker)" }
+            print("\n  \(ansi.bold(heading)):")
+            let secs = sectionsByList[pk] ?? []
+            guard !secs.isEmpty else {
+                render(childItems)
+                continue
+            }
+            let memberships = membershipsByList[pk] ?? [:]
+            var sectionItems: [String: [Row]] = [:]
+            var unsectioned: [Row] = []
+            for item in childItems {
+                if let name = item.string("ZCKIDENTIFIER").flatMap({ memberships[$0] }) {
+                    sectionItems[name, default: []].append(item)
+                } else {
+                    unsectioned.append(item)
+                }
+            }
+            render(unsectioned)
+            for name in secs.map({ $0.string("ZDISPLAYNAME") ?? "" }) {
+                guard let sectioned = sectionItems[name] else { continue }
+                print("\n    \(ansi.bold("[\(safeDisplay(formatGrocerySectionName(name, isGroceries: isGroceries)))]"))")
+                render(sectioned)
+            }
+        }
+        let n = items.count
+        print("\n\(n) reminder\(n == 1 ? "" : "s")")
+    }
+
     func run() async throws {
         if viaEventkit {
             await EventKitReadCLI.run(
@@ -561,7 +672,12 @@ struct Show: AsyncParsableCommand {
             return
         }
         Dispatch.runRead { store in
-            let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+            // A group holds lists, not reminders, so `show` reads through to its child lists.
+            let target = try resolveRequiredListTarget(store: store, name: list, listId: listId, allowGroups: true)
+            if target.isGroup {
+                showGroup(store: store, id: target.id, title: target.title, objectUUID: target.objectUUID)
+                return
+            }
             let pk = target.id
             let isGroceries = store.listIsGroceries(pk)
             let items = store.reminders(listPk: pk, completed: completed, topLevel: true, manualOrder: true)

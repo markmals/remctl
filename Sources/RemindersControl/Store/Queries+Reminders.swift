@@ -66,6 +66,42 @@ extension RemindersStore {
         return Array(sortReminderRows(rows, identifierOrder: identifierOrder).prefix(limit))
     }
 
+    /// Port of `q_reminders_for_lists`: the reminders of several lists at once, kept grouped in
+    /// the order the list ids are passed in — what `show <group>` needs for a group's child
+    /// lists. `manualOrder` sorts each list's rows by that list's own display-order record.
+    public func reminders(listPks: [Int], completed: Bool = false, topLevel: Bool = false,
+                          limit: Int = 500, manualOrder: Bool = false) -> [Row] {
+        guard !listPks.isEmpty else { return [] }
+        var identifierOrders: [Int: [String]] = [:]
+        if manualOrder {
+            for listPk in listPks { identifierOrders[listPk] = listReminderOrder(listPk: listPk) }
+        }
+        let hasIdentifierOrder = identifierOrders.values.contains { !$0.isEmpty }
+        var c = [liveReminderSQL]
+        let placeholders = Array(repeating: "?", count: listPks.count).joined(separator: ", ")
+        c.append("r.ZLIST IN (\(placeholders))")
+        if !completed { c.append("r.ZCOMPLETED = 0") }
+        if topLevel { c.append("(r.ZPARENTREMINDER IS NULL OR r.ZPARENTREMINDER = 0)") }
+        let orderCases = listPks.enumerated().map { "WHEN \($0.element) THEN \($0.offset)" }.joined(separator: " ")
+        let cols = remCols()  // built OUTSIDE the read (reentrancy)
+        var sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK "
+            + "WHERE \(c.joined(separator: " AND ")) "
+            + "ORDER BY CASE r.ZLIST \(orderCases) ELSE \(listPks.count) END, r.Z_PK"
+        var args: [DatabaseValueConvertible] = listPks
+        if !hasIdentifierOrder {
+            sql += " LIMIT ?"
+            args.append(limit)
+        }
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(args)) }) ?? []
+        guard manualOrder else { return rows }
+        var rowsByList: [Int: [Row]] = [:]
+        for row in rows { rowsByList[row.int("ZLIST") ?? 0, default: []].append(row) }
+        let ordered = listPks.flatMap { listPk in
+            sortReminderRows(rowsByList[listPk] ?? [], identifierOrder: identifierOrders[listPk] ?? [])
+        }
+        return Array(ordered.prefix(limit))
+    }
+
     /// Port of `q_list_reminder_order`: the list's persisted display order as stable identifiers.
     /// Missing column, unreadable blob, or a non-array payload all mean "no manual order".
     func listReminderOrder(listPk: Int) -> [String] {

@@ -16,7 +16,7 @@ import GRDB
         let dir = try FixtureDB.tempStore { db in try FixtureDB.createRemindersSchema(db) }
         defer { try? FileManager.default.removeItem(at: dir) }
         let r = try CLIRunner.run(["lists"], storeDir: dir)
-        #expect(r.stdout == "Reminder Lists:\n\n0 lists\n")
+        #expect(r.stdout == "Reminder Lists:\n\n0 lists, 0 groups\n")
     }
 
     @Test func jsonReportsGroceryMetadata() throws {
@@ -57,7 +57,7 @@ import GRDB
         #expect(r.stdout.contains("Groceries"))
         #expect(r.stdout.contains("🥕"))
         #expect(r.stdout.contains("(id: 1)"))
-        #expect(r.stdout.contains("\n1 list\n"))
+        #expect(r.stdout.contains("\n1 list, 0 groups\n"))
     }
 
     @Test func appearanceBadgeAndColorFallback() throws {

@@ -5,6 +5,62 @@ public func isGroceryListRow(_ row: ReminderRow) -> Bool {
     (row.int("ZSHOULDCATEGORIZEGROCERYITEMS") ?? 0) != 0
 }
 
+/// Port of is_group_list_row: a Reminders list group, which holds lists instead of reminders.
+public func isGroupListRow(_ row: ReminderRow) -> Bool {
+    (row.int("ZISGROUP") ?? 0) != 0
+}
+
+/// Port of list_parent_pk: the group a list belongs to. Reminders has used both ZPARENTLIST and
+/// ZPARENTLIST1 for that reference, so the first one carrying a value wins.
+public func listParentPk(_ row: ReminderRow) -> Int? {
+    for key in ["ZPARENTLIST", "ZPARENTLIST1"] {
+        if let value = row.int(key), value != 0 { return value }
+    }
+    return nil
+}
+
+/// Port of list_child_sort_value: a child list's position inside its group. Reminders writes
+/// newer ordered positions as larger sparse keys, so `listChildPrecedes` sorts them descending.
+private func listChildSortValue(_ row: ReminderRow) -> Int {
+    for key in ["Z_FOK_PARENTLIST", "Z_FOK_PARENTLIST1", "ZDADISPLAYORDER"] {
+        if let value = row.int(key), value != 0 { return value }
+    }
+    return 0
+}
+
+/// Port of list_child_sort_key: order inside a group, then normalized title, then id.
+public func listChildPrecedes(_ a: ReminderRow, _ b: ReminderRow) -> Bool {
+    let (oa, ob) = (-listChildSortValue(a), -listChildSortValue(b))
+    if oa != ob { return oa < ob }
+    let (na, nb) = (normalizeListLookupName(a.string("ZNAME") ?? ""), normalizeListLookupName(b.string("ZNAME") ?? ""))
+    if na != nb { return na < nb }
+    return (a.int("Z_PK") ?? 0) < (b.int("Z_PK") ?? 0)
+}
+
+/// Port of list_row_title_sort_key: normalized title, then id.
+public func listTitlePrecedes(_ a: ReminderRow, _ b: ReminderRow) -> Bool {
+    let (na, nb) = (normalizeListLookupName(a.string("ZNAME") ?? ""), normalizeListLookupName(b.string("ZNAME") ?? ""))
+    if na != nb { return na < nb }
+    return (a.int("Z_PK") ?? 0) < (b.int("Z_PK") ?? 0)
+}
+
+/// Active/completed/total reminder counts a group reports for itself and its child lists.
+public struct ListReminderCounts {
+    public var active: Int
+    public var completed: Int
+    public var total: Int
+
+    public init(active: Int = 0, completed: Int = 0, total: Int = 0) {
+        self.active = active
+        self.completed = completed
+        self.total = total
+    }
+
+    public var payload: JSONValue {
+        .object([("active", .int(active)), ("completed", .int(completed)), ("total", .int(total))])
+    }
+}
+
 /// Index of a `CFKeyedArchiverUID` inside the archive's `$objects` array.
 ///
 /// `PropertyListSerialization` surfaces a binary-plist UID as an opaque CoreFoundation object:
@@ -101,17 +157,20 @@ private func groceryHasAnyTruthy(_ pairs: [(String, JSONValue)]) -> Bool {
     }
 }
 
-/// Port of list_to_dict — ordered keys: id, title, listType, isGroceries, [objectUUID], [color],
-/// [badge, badgeEmblem], [grocery], [pinned], [pinnedDate].
+/// Port of list_to_dict — ordered keys: id, title, listType, isGroup, isGroceries, [objectUUID],
+/// [parentListId], [color], [badge, badgeEmblem], [grocery], [pinned], [pinnedDate].
 public func listToDict(_ row: ReminderRow) -> [(String, JSONValue)] {
+    let isGroup = isGroupListRow(row)
     let isGroceries = isGroceryListRow(row)
     var item: [(String, JSONValue)] = [
         ("id", .int(row.int("Z_PK") ?? 0)),
         ("title", row.string("ZNAME").map { .string($0) } ?? .null),
-        ("listType", .string(isGroceries ? "groceries" : "standard")),
-        ("isGroceries", .bool(isGroceries)),
+        ("listType", .string(isGroup ? "group" : isGroceries ? "groceries" : "standard")),
+        ("isGroup", .bool(isGroup)),
+        ("isGroceries", .bool(!isGroup && isGroceries)),
     ]
     if let uuid = row.string("ZCKIDENTIFIER"), !uuid.isEmpty { item.append(("objectUUID", .string(uuid))) }
+    if let parentId = listParentPk(row) { item.append(("parentListId", .int(parentId))) }
     if row.has("ZCOLOR"), let blob = row.data("ZCOLOR"), !blob.isEmpty {
         let c = parseListColor(blob)
         item.append(("color", .object([("name", .string(c.name)), ("hex", .string(c.hex))])))
@@ -120,7 +179,8 @@ public func listToDict(_ row: ReminderRow) -> [(String, JSONValue)] {
         if let badge = parseBadgeEmblem(raw) { item.append(("badge", .object(badge))) }
         item.append(("badgeEmblem", .string(raw)))
     }
-    if let grocery = groceryListPayload(row), isGroceries || groceryHasAnyTruthy(grocery) {
+    // A group is a container: Reminders never gives it grocery metadata of its own.
+    if let grocery = groceryListPayload(row), !isGroup, isGroceries || groceryHasAnyTruthy(grocery) {
         item.append(("grocery", .object(grocery)))
     }
     if row.has("ZISPINNEDBYCURRENTUSER") {
@@ -130,4 +190,80 @@ public func listToDict(_ row: ReminderRow) -> [(String, JSONValue)] {
         item.append(("pinnedDate", .double(pd)))
     }
     return item
+}
+
+/// Port of list_group_stub: how a group is named from one of its child lists (and how a child
+/// list is named from a reminder in it).
+public func listGroupStub(_ row: ReminderRow) -> [(String, JSONValue)] {
+    var payload: [(String, JSONValue)] = [
+        ("id", .int(row.int("Z_PK") ?? 0)),
+        ("title", row.string("ZNAME").map { .string($0) } ?? .null),
+    ]
+    if let uuid = row.string("ZCKIDENTIFIER"), !uuid.isEmpty { payload.append(("objectUUID", .string(uuid))) }
+    return payload
+}
+
+/// Port of split_list_group_rows: groups (by title), each group's child lists (in child order),
+/// and the lists that belong to no group (by title).
+public func splitListGroupRows<Row: ReminderRow>(_ rows: [Row])
+    -> (groups: [Row], children: [Int: [Row]], ungrouped: [Row])
+{
+    let groups = rows.filter(isGroupListRow).sorted(by: listTitlePrecedes)
+    let groupIds = Set(groups.map { $0.int("Z_PK") ?? 0 })
+    var children: [Int: [Row]] = [:]
+    for id in groupIds { children[id] = [] }
+    var ungrouped: [Row] = []
+    for row in rows where !isGroupListRow(row) {
+        if let parentId = listParentPk(row), groupIds.contains(parentId) {
+            children[parentId, default: []].append(row)
+        } else {
+            ungrouped.append(row)
+        }
+    }
+    for id in children.keys { children[id] = children[id]?.sorted(by: listChildPrecedes) }
+    return (groups, children, ungrouped.sorted(by: listTitlePrecedes))
+}
+
+/// Port of group_payload_from_rows: a group payload whose `children` carry their group stub and
+/// reminder counts, with the group's own counts summed from them.
+public func groupPayloadFromRows(_ groupRow: ReminderRow, children childRows: [ReminderRow],
+                                 counts: [Int: ListReminderCounts]) -> [(String, JSONValue)]
+{
+    var group = listToDict(groupRow)
+    let stub = listGroupStub(groupRow)
+    var totals = ListReminderCounts()
+    var children: [JSONValue] = []
+    for childRow in childRows {
+        var child = listToDict(childRow)
+        child.append(("group", .object(stub)))
+        let childCounts = counts[childRow.int("Z_PK") ?? 0] ?? ListReminderCounts()
+        child.append(("counts", childCounts.payload))
+        totals.active += childCounts.active
+        totals.completed += childCounts.completed
+        totals.total += childCounts.total
+        children.append(.object(child))
+    }
+    group.append(("counts", totals.payload))
+    group.append(("children", .array(children)))
+    return group
+}
+
+/// Port of list_hierarchy_payloads for `lists --json`: every group with its children nested,
+/// each child repeated at the top level (so a flat scan still sees every list), then the lists
+/// that belong to no group.
+public func listHierarchyPayloads<Row: ReminderRow>(_ rows: [Row],
+                                                    counts: [Int: ListReminderCounts]) -> [JSONValue]
+{
+    let (groups, childRows, ungrouped) = splitListGroupRows(rows)
+    var payloads: [JSONValue] = []
+    for groupRow in groups {
+        let children = childRows[groupRow.int("Z_PK") ?? 0] ?? []
+        let group = groupPayloadFromRows(groupRow, children: children, counts: counts)
+        payloads.append(.object(group))
+        for (key, value) in group where key == "children" {
+            if case let .array(childPayloads) = value { payloads.append(contentsOf: childPayloads) }
+        }
+    }
+    payloads.append(contentsOf: ungrouped.map { .object(listToDict($0)) })
+    return payloads
 }

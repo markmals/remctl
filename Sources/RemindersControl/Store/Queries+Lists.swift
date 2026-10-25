@@ -1,34 +1,50 @@
 import GRDB
 import Foundation
 
-/// Outcome of resolving a list reference (mirrors resolve_list_ref).
+/// Outcome of resolving a list reference (mirrors resolve_list_ref). `.group` is a Reminders
+/// list group: a container for lists, not for reminders, so only `show` accepts one.
 public enum ListResolution {
     case found(id: Int, title: String, objectUUID: String?)
+    case group(id: Int, title: String, objectUUID: String?, children: [(id: Int, title: String)])
     case ambiguous(candidates: [(id: Int, title: String)])
     case notFound
 }
 
 extension RemindersStore {
+    /// Port of `list_group_filter_sql`: list groups live in ZREMCDBASELIST next to the lists they
+    /// contain, so every list read that is not explicitly about groups filters them out. Stores
+    /// without the column predate groups and need no filter.
+    func listGroupFilterSQL(includeGroups: Bool) -> String {
+        if includeGroups || !tableColumnNames("ZREMCDBASELIST").contains("ZISGROUP") { return "" }
+        return "AND COALESCE(ZISGROUP, 0) = 0 "
+    }
+
     /// q_lists, minimal columns for name resolution. ORDER BY ZNAME (binary), Z_ENT=3, named only.
     func listsForResolution() -> [Row] {
-        (try? queue.read { try Row.fetchAll($0, sql:
-            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' ORDER BY ZNAME") }) ?? []
+        let filter = listGroupFilterSQL(includeGroups: false)  // OUTSIDE the read (reentrancy)
+        return (try? queue.read { try Row.fetchAll($0, sql:
+            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' \(filter)ORDER BY ZNAME") }) ?? []
+    }
+
+    /// q_list_groups, minimal columns for name resolution: the group rows `listsForResolution`
+    /// filters out. A store without ZISGROUP has no groups.
+    func listGroupsForResolution() -> [Row] {
+        guard tableColumnNames("ZREMCDBASELIST").contains("ZISGROUP") else { return [] }
+        return (try? queue.read { try Row.fetchAll($0, sql:
+            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' AND COALESCE(ZISGROUP, 0) = 1 ORDER BY ZNAME") }) ?? []
     }
 
     func listByPkForResolution(_ id: Int) -> Row? {
-        try? queue.read { try Row.fetchOne($0, sql:
-            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER FROM ZREMCDBASELIST WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''",
+        let groupColumn = tableColumnNames("ZREMCDBASELIST").contains("ZISGROUP") ? ", ZISGROUP" : ""
+        return try? queue.read { try Row.fetchOne($0, sql:
+            "SELECT Z_PK, ZNAME, ZCKIDENTIFIER\(groupColumn) FROM ZREMCDBASELIST WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''",
             arguments: [id]) }
     }
 
-    /// Port of resolve_list_ref: by id, or 4-tier name match (exact → casefold → normalized).
-    public func resolveListRef(name: String?, listId: Int?) -> ListResolution {
-        if let listId {
-            guard let row = listByPkForResolution(listId) else { return .notFound }
-            return .found(id: row.int("Z_PK") ?? listId, title: row.string("ZNAME") ?? "", objectUUID: row.string("ZCKIDENTIFIER"))
-        }
-        guard let name, !name.isEmpty else { return .notFound }
-        let rows = listsForResolution()
+    /// Port of `list_resolution_from_rows`: 3-tier name match (exact → casefold → normalized)
+    /// over one set of candidate rows. `nil` means no tier matched, so the caller can try the
+    /// list groups next.
+    private func resolution(from rows: [Row], name: String) -> ListResolution? {
         func found(_ r: Row) -> ListResolution {
             .found(id: r.int("Z_PK") ?? 0, title: r.string("ZNAME") ?? "", objectUUID: r.string("ZCKIDENTIFIER"))
         }
@@ -46,11 +62,37 @@ extension RemindersStore {
         if ci.count > 1 { return candidates(ci) }
         // tier 3: normalized
         let normalized = normalizeListLookupName(name)
-        if normalized.isEmpty { return .notFound }
+        if normalized.isEmpty { return nil }
         let nm = rows.filter { normalizeListLookupName($0.string("ZNAME") ?? "") == normalized }
         if nm.count == 1 { return found(nm[0]) }
         if nm.count > 1 { return candidates(nm) }
-        return .notFound
+        return nil
+    }
+
+    /// Promote a resolved row to `.group`, carrying the child lists the group error message (and
+    /// `show`) needs, in Reminders' child order.
+    private func groupResolution(id: Int, title: String, objectUUID: String?) -> ListResolution {
+        .group(id: id, title: title, objectUUID: objectUUID,
+               children: childLists(groupPk: id).map { (id: $0.int("Z_PK") ?? 0, title: $0.string("ZNAME") ?? "") })
+    }
+
+    /// Port of resolve_list_ref: by id, or 3-tier name match (exact → casefold → normalized),
+    /// lists first and list groups second.
+    public func resolveListRef(name: String?, listId: Int?) -> ListResolution {
+        if let listId {
+            guard let row = listByPkForResolution(listId) else { return .notFound }
+            let id = row.int("Z_PK") ?? listId
+            let title = row.string("ZNAME") ?? ""
+            let uuid = row.string("ZCKIDENTIFIER")
+            if isGroupListRow(row) { return groupResolution(id: id, title: title, objectUUID: uuid) }
+            return .found(id: id, title: title, objectUUID: uuid)
+        }
+        guard let name, !name.isEmpty else { return .notFound }
+        if let listResult = resolution(from: listsForResolution(), name: name) { return listResult }
+        // An ambiguous group name stays ambiguous; a single match resolves to the group itself.
+        guard let groupResult = resolution(from: listGroupsForResolution(), name: name) else { return .notFound }
+        guard case let .found(id, title, uuid) = groupResult else { return groupResult }
+        return groupResolution(id: id, title: title, objectUUID: uuid)
     }
 
     /// Resolve a list AND report which tier matched, mirroring `resolve_list_ref`'s `method`
@@ -106,9 +148,11 @@ extension RemindersStore {
     }
 }
 
-/// Port of `list_ref_payload` (remctl:789): ordered keys id, title, objectUUID, requested, method,
-/// isGroceries, [grocery]. `requested` is the original user input string (name or "id N").
+/// Port of `list_ref_payload` (remctl:1174): ordered keys id, title, objectUUID, requested, method,
+/// listType, isGroup, isGroceries, [parentListId], [grocery]. `requested` is the original user
+/// input string (name or "id N").
 public func listRefPayload(_ row: ReminderRow, requested: String?, method: String) -> [(String, JSONValue)] {
+    let isGroup = isGroupListRow(row)
     let isGroceries = isGroceryListRow(row)
     var payload: [(String, JSONValue)] = [
         ("id", .int(row.int("Z_PK") ?? 0)),
@@ -116,9 +160,13 @@ public func listRefPayload(_ row: ReminderRow, requested: String?, method: Strin
         ("objectUUID", row.string("ZCKIDENTIFIER").map { .string($0) } ?? .null),
         ("requested", requested.map { .string($0) } ?? .null),
         ("method", .string(method)),
-        ("isGroceries", .bool(isGroceries)),
+        ("listType", .string(isGroup ? "group" : isGroceries ? "groceries" : "standard")),
+        ("isGroup", .bool(isGroup)),
+        ("isGroceries", .bool(!isGroup && isGroceries)),
     ]
-    if let grocery = groceryListPayload(row), isGroceries || groceryHasAnyTruthyRef(grocery) {
+    if let parentId = listParentPk(row) { payload.append(("parentListId", .int(parentId))) }
+    if let grocery = groceryListPayload(row), !isGroup,
+       isGroceries || groceryHasAnyTruthyRef(grocery) {
         payload.append(("grocery", .object(grocery)))
     }
     return payload
@@ -142,7 +190,9 @@ extension RemindersStore {
     func listSelectColumns() -> [String] {
         var cols = ["Z_PK", "ZNAME", "ZCKIDENTIFIER"]
         let t = tableColumnNames("ZREMCDBASELIST")
-        for c in ["ZBADGEEMBLEM", "ZCOLOR", "ZISPINNEDBYCURRENTUSER", "ZPINNEDDATE",
+        for c in ["ZBADGEEMBLEM", "ZCOLOR", "ZISGROUP", "ZPARENTLIST", "ZPARENTLIST1",
+                  "Z_FOK_PARENTLIST", "Z_FOK_PARENTLIST1", "ZDADISPLAYORDER",
+                  "ZISPINNEDBYCURRENTUSER", "ZPINNEDDATE",
                   "ZSHOULDCATEGORIZEGROCERYITEMS", "ZSHOULDAUTOCATEGORIZEITEMS",
                   "ZSHOULDSUGGESTCONVERSIONTOGROCERYLIST", "ZGROCERYLOCALEID",
                   "ZAUTOCATEGORIZATIONLOCALCORRECTIONSCHECKSUM"] where t.contains(c) {
@@ -154,11 +204,63 @@ extension RemindersStore {
         return cols
     }
 
-    /// q_lists: named user lists (Z_ENT=3), ORDER BY ZNAME (binary).
-    public func lists() -> [Row] {
-        let cols = listSelectColumns().joined(separator: ", ")  // OUTSIDE the read (reentrancy)
-        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' ORDER BY ZNAME"
+    /// q_base_lists: named user lists (Z_ENT=3), ORDER BY ZNAME (binary). `includeGroups` keeps
+    /// the list groups in, which only the `lists` hierarchy view wants.
+    public func lists(includeGroups: Bool) -> [Row] {
+        // Built OUTSIDE the read (reentrancy).
+        let cols = listSelectColumns().joined(separator: ", ")
+        let filter = listGroupFilterSQL(includeGroups: includeGroups)
+        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' \(filter)ORDER BY ZNAME"
         return (try? queue.read { try Row.fetchAll($0, sql: sql) }) ?? []
+    }
+
+    /// Port of `q_child_lists`: the lists a group contains, in Reminders' child order. Reminders
+    /// has used both ZPARENTLIST and ZPARENTLIST1 for the group reference, so both are matched
+    /// when present.
+    public func childLists(groupPk: Int) -> [Row] {
+        let t = tableColumnNames("ZREMCDBASELIST")
+        var clauses: [String] = []
+        var args: [DatabaseValueConvertible] = []
+        for column in ["ZPARENTLIST", "ZPARENTLIST1"] where t.contains(column) {
+            clauses.append("\(column) = ?")
+            args.append(groupPk)
+        }
+        guard !clauses.isEmpty else { return [] }
+        let cols = listSelectColumns().joined(separator: ", ")
+        let filter = listGroupFilterSQL(includeGroups: false)
+        let sql = "SELECT \(cols) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' \(filter)AND (\(clauses.joined(separator: " OR ")))"
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(args)) }) ?? []
+        return rows.sorted(by: listChildPrecedes)
+    }
+
+    /// Port of `q_list_reminder_counts`: active/completed/total top-level reminders per list,
+    /// for the counts `lists --json` reports on a group and its children. Schema-guarded: a store
+    /// without the reminder table (or its list column) reports no counts.
+    public func listReminderCounts(listPks: [Int]) -> [Int: ListReminderCounts] {
+        guard !listPks.isEmpty else { return [:] }
+        let columns = tableColumnNames("ZREMCDREMINDER")
+        guard columns.contains("ZLIST") else { return [:] }
+        let placeholders = Array(repeating: "?", count: listPks.count).joined(separator: ", ")
+        var where_ = ["ZLIST IN (\(placeholders))"]
+        if columns.contains("ZMARKEDFORDELETION") { where_.append("ZMARKEDFORDELETION = 0") }
+        if columns.contains("ZACCOUNT") { where_.append("ZACCOUNT IS NOT NULL") }
+        if columns.contains("ZPARENTREMINDER") { where_.append("(ZPARENTREMINDER IS NULL OR ZPARENTREMINDER = 0)") }
+        let completed = columns.contains("ZCOMPLETED") ? "ZCOMPLETED" : "0"
+        let sql = "SELECT ZLIST AS list_id, "
+            + "SUM(CASE WHEN \(completed) = 0 THEN 1 ELSE 0 END) AS active_count, "
+            + "SUM(CASE WHEN \(completed) = 1 THEN 1 ELSE 0 END) AS completed_count, "
+            + "COUNT(*) AS total_count FROM ZREMCDREMINDER "
+            + "WHERE \(where_.joined(separator: " AND ")) GROUP BY ZLIST"
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(listPks)) }) ?? []
+        var counts: [Int: ListReminderCounts] = [:]
+        for row in rows {
+            guard let listId = row.int("list_id") else { continue }
+            let active = row.int("active_count") ?? 0
+            let done = row.int("completed_count") ?? 0
+            counts[listId] = ListReminderCounts(active: active, completed: done,
+                                                total: row.int("total_count") ?? (active + done))
+        }
+        return counts
     }
 
     /// Count of live sections for a list (q_sections list_pk count, for the human lists view).
@@ -261,9 +363,24 @@ extension RemindersStore {
     }
 }
 
+/// Port of `_print_list_resolution_error`'s `list_is_group` branch: a group holds lists, so the
+/// message points at the child lists a reminder can actually go in.
+public func listIsGroupMessage(title: String, children: [(id: Int, title: String)]) -> String {
+    var message = "\(WriteFormatting.pyRepr(title)) is a Reminders list group, not a writable list."
+    if !children.isEmpty {
+        let options = children.map { "\($0.title) (id \($0.id))" }.joined(separator: ", ")
+        message += " Use one of its child lists: \(options)"
+    }
+    return message
+}
+
 /// Command-level helper mirroring resolve_required_list_target_or_die — throws CLIError
-/// (Dispatch.runRead prints "Error: <msg>" + exit 1). Returns the resolved list.
-public func resolveRequiredListTarget(store: RemindersStore, name: String?, listId: Int?) throws -> (id: Int, title: String, objectUUID: String?) {
+/// (Dispatch.runRead prints "Error: <msg>" + exit 1). Returns the resolved list. `allowGroups`
+/// (upstream's flag of the same name) is only for `show`, which can read a whole group.
+public func resolveRequiredListTarget(store: RemindersStore, name: String?, listId: Int?,
+                                      allowGroups: Bool = false) throws
+    -> (id: Int, title: String, objectUUID: String?, isGroup: Bool)
+{
     if name == nil && listId == nil {
         throw CLIError("pass a list name or --list-id.")
     }
@@ -273,7 +390,10 @@ public func resolveRequiredListTarget(store: RemindersStore, name: String?, list
     let requested = listId != nil ? "id \(listId!)" : (name ?? "")
     switch store.resolveListRef(name: name, listId: listId) {
     case .found(let id, let title, let uuid):
-        return (id, title, uuid)
+        return (id, title, uuid, false)
+    case .group(let id, let title, let uuid, let children):
+        guard allowGroups else { throw CLIError(listIsGroupMessage(title: title, children: children)) }
+        return (id, title, uuid, true)
     case .ambiguous(let candidates):
         let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
         throw CLIError("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)")

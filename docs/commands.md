@@ -95,12 +95,13 @@ remctl stats
 ```
 
 ### `show [LIST] [--list-id ID] [--completed]`
-Reminders in a list (name positionally or `--list-id`), in Reminders' stored manual display order when the list has one; reminders not yet in that record follow, in id order. Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories.
+Reminders in a list (name positionally or `--list-id`), in Reminders' stored manual display order when the list has one; reminders not yet in that record follow, in id order. Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories. Naming a list group shows the reminders of its child lists instead, grouped by child list and each in that list's own manual order; `--format table` prints one table per child list (and per section), and `show <group> --json` names the owning `list` and `group` on every reminder. A group with no child lists reports `No child lists in group '<name>'`.
 ```bash
 remctl show Shopping
 remctl show --list-id 153 --json
 remctl show Work --completed
 remctl show Family -v
+remctl show Writing          # a list group: every child list's reminders
 ```
 
 ### `info <id>`
@@ -285,6 +286,8 @@ remctl edit 23880 --subtask '{"title":"Follow up","due":"next friday at 3pm","ur
 
 ### `lists`
 List all lists. `--format json|table|plain`, `--no-color`. `lists --json` includes `color`, `badge`, pin state, and Groceries fields (`listType`, `isGroceries`, `grocery` locale). Human output marks Groceries lists with `🥕`.
+
+Reminders list groups are containers for lists, not for reminders, and `lists` is the view that shows the hierarchy: a group prints its child lists indented beneath it, and the footer counts lists and groups separately. In `lists --json` a group carries `listType: "group"`, `isGroup: true`, its child lists under `children` (in Reminders' child order) and summed reminder `counts`; each child repeats at the top level with `parentListId`, its `group` stub, and its own `counts`. Groups never carry Groceries metadata. Everywhere else a group is not a list: `stats` leaves groups out of its list count, and naming one as a reminder target (`add -l`, `edit -l`, `--list-id`) fails with the group's child lists listed as alternatives.
 ```bash
 remctl lists
 remctl lists --json

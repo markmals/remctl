@@ -110,18 +110,21 @@ private func pad(_ s: String, _ width: Int) -> String {
 /// `ansi` controls only header bolding (`C.bold(h)` in source); cell contents are already
 /// colored by `remindersToTableData`. Defaults to disabled so uncolored output is the
 /// common case; pass an enabled `Ansi` to bold headers when emitting a colored table.
+/// `includeList` drops the List column for tables that are already headed by their list, as
+/// the per-child-list tables of `show <group>` are.
 public func fmtTable(_ rowsData: [TableRow], maxWidth: Int = 80,
                      ansi: Ansi = Ansi(enabled: false),
-                     dateColumn: TableDateColumn = .due) -> String {
+                     dateColumn: TableDateColumn = .due,
+                     includeList: Bool = true) -> String {
     if rowsData.isEmpty { return "" }
 
     // Columns in fixed order; Repeat only when at least one row has a non-empty repeat.
     var columns: [(label: String, value: (TableRow) -> String)] = [
         ("ID", { $0.id }),
         ("Title", { $0.title }),
-        ("List", { $0.list }),
     ]
     let titleIndex = 1
+    if includeList { columns.append(("List", { $0.list })) }
     switch dateColumn {
     case .due: columns.append(("Due", { $0.due }))
     case .completed: columns.append(("Completed", { $0.completed }))

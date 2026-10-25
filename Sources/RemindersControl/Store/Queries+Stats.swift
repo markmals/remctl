@@ -33,8 +33,10 @@ extension RemindersStore {
                              overdue: row["overdue"] ?? 0)
     }
 
+    /// The `Lists:` counter: named user lists, without the list groups that merely contain them.
     public func statListCount() -> Int {
-        count("SELECT COUNT(*) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''")
+        let filter = listGroupFilterSQL(includeGroups: false)  // OUTSIDE the read (reentrancy)
+        return count("SELECT COUNT(*) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != '' \(filter)")
     }
     private func count(_ sql: String) -> Int {
         (try? queue.read { try Int.fetchOne($0, sql: sql) ?? 0 }) ?? 0

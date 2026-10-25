@@ -163,6 +163,8 @@ struct TemplateCreate: AsyncParsableCommand {
         let listId: Int, listTitle: String, listUUID: String?
         switch resolution {
         case .found(let id, let title, let uuid): (listId, listTitle, listUUID) = (id, title, uuid)
+        case .group(_, let title, _, let children):
+            return .error(listIsGroupMessage(title: title, children: children))
         case .ambiguous(let candidates):
             let requested = fromListId != nil ? "id \(fromListId!)" : (fromList ?? "")
             let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")

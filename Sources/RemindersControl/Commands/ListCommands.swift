@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import GRDB
 import AppKit
 
 let listCommands: [ParsableCommand.Type] = [
@@ -16,36 +17,73 @@ struct Lists: ParsableCommand {
     func run() throws {
         let effJSON = json || format == .json
         Dispatch.runRead { store in
-            let rows = store.lists()
+            // Groups come along: `lists` is the one view that shows the hierarchy.
+            let rows = store.lists(includeGroups: true)
+            let (groups, childRows, ungrouped) = splitListGroupRows(rows)
             if effJSON {
-                Dispatch.printJSON(.array(rows.map { .object(listToDict($0)) }), ensureAscii: false)
+                let childIds = childRows.values.flatMap { $0.compactMap { $0.int("Z_PK") } }
+                let counts = store.listReminderCounts(listPks: childIds)
+                Dispatch.printJSON(.array(listHierarchyPayloads(rows, counts: counts)), ensureAscii: false)
                 return
             }
             let ansi = Ansi.resolve(noColorFlag: noColor)
             if format == .table {
-                let trows = rows.map { r -> TableRow in
-                    let name = safeDisplay(r.string("ZNAME"))
-                    let title = isGroceryListRow(r) ? "\(name) \(Constants.groceryListMarker)" : name
-                    return TableRow(id: "\(r.int("Z_PK") ?? 0)", title: title, list: "", due: "", repeatText: "", pri: "")
-                }
-                print(fmtTable(trows, ansi: ansi))
+                print(fmtTable(listTableRows(groups: groups, childRows: childRows, ungrouped: ungrouped), ansi: ansi))
                 return
             }
-            print(ansi.bold("Reminder Lists:"))
-            for r in rows {
-                let pk = r.int("Z_PK") ?? 0
-                var listName = colorListName(r.string("ZNAME"), ansi: ansi)
-                if isGroceryListRow(r) { listName += " \(Constants.groceryListMarker)" }
-                let idDim = ansi.dim("(id: \(pk))")
-                let secCount = store.sectionCountForList(pk)
-                let secInfo = secCount >= 1 ? ansi.dim(" [\(secCount) sections]") : ""
-                let pinned = r.has("ZISPINNEDBYCURRENTUSER") && (r.int("ZISPINNEDBYCURRENTUSER") ?? 0) != 0
-                let pinInfo = pinned ? ansi.dim(" [pinned]") : ""
-                print("  \(listName) \(idDim)\(secInfo)\(pinInfo)")
-            }
-            let n = rows.count
-            print("\n\(n) list\(n == 1 ? "" : "s")")
+            printLists(store: store, groups: groups, childRows: childRows, ungrouped: ungrouped, ansi: ansi)
+            let listCount = rows.count - groups.count
+            print("\n\(listCount) list\(listCount == 1 ? "" : "s"), \(groups.count) group\(groups.count == 1 ? "" : "s")")
         }
+    }
+
+    /// Table rows for the hierarchy: a group row labelled `group` with its child count, its child
+    /// lists indented under it, then the lists that belong to no group.
+    private func listTableRows(groups: [Row], childRows: [Int: [Row]], ungrouped: [Row]) -> [TableRow] {
+        func title(_ r: Row) -> String {
+            let name = safeDisplay(r.string("ZNAME"))
+            return isGroceryListRow(r) ? "\(name) \(Constants.groceryListMarker)" : name
+        }
+        var trows: [TableRow] = []
+        for group in groups {
+            let children = childRows[group.int("Z_PK") ?? 0] ?? []
+            trows.append(TableRow(id: "\(group.int("Z_PK") ?? 0)", title: safeDisplay(group.string("ZNAME")),
+                                  list: "group", due: "", repeatText: "", pri: "\(children.count) lists"))
+            trows.append(contentsOf: children.map { child in
+                TableRow(id: "\(child.int("Z_PK") ?? 0)", title: "  \(title(child))",
+                         list: group.string("ZNAME") ?? "", due: "", repeatText: "", pri: "")
+            })
+        }
+        trows.append(contentsOf: ungrouped.map { r in
+            TableRow(id: "\(r.int("Z_PK") ?? 0)", title: title(r), list: "", due: "", repeatText: "", pri: "")
+        })
+        return trows
+    }
+
+    /// The human listing: each group with its child count, its child lists indented under it, then
+    /// the lists that belong to no group.
+    private func printLists(store: RemindersStore, groups: [Row], childRows: [Int: [Row]],
+                            ungrouped: [Row], ansi: Ansi)
+    {
+        func printList(_ r: Row, indent: String) {
+            let pk = r.int("Z_PK") ?? 0
+            var listName = colorListName(r.string("ZNAME"), ansi: ansi)
+            if isGroceryListRow(r) { listName += " \(Constants.groceryListMarker)" }
+            let secCount = store.sectionCountForList(pk)
+            let secInfo = secCount >= 1 ? ansi.dim(" [\(secCount) sections]") : ""
+            let pinned = r.has("ZISPINNEDBYCURRENTUSER") && (r.int("ZISPINNEDBYCURRENTUSER") ?? 0) != 0
+            let pinInfo = pinned ? ansi.dim(" [pinned]") : ""
+            print("\(indent)\(listName) \(ansi.dim("(id: \(pk))"))\(secInfo)\(pinInfo)")
+        }
+        print(ansi.bold("Reminder Lists:"))
+        for group in groups {
+            let children = childRows[group.int("Z_PK") ?? 0] ?? []
+            let idDim = ansi.dim("(id: \(group.int("Z_PK") ?? 0))")
+            let childInfo = ansi.dim(" [\(children.count) list\(children.count == 1 ? "" : "s")]")
+            print("  \(colorListName(group.string("ZNAME"), ansi: ansi)) \(idDim)\(childInfo)")
+            for child in children { printList(child, indent: "    ") }
+        }
+        for r in ungrouped { printList(r, indent: "  ") }
     }
 }
 
@@ -332,7 +370,8 @@ struct ListPin: AsyncParsableCommand {
                     return .error("target smart list has no stable CloudKit identifier.")
                 }
                 ckid = c
-            case .ambiguous, .notFound:
+            // A smart list is never a group; `.group` can only mean "no smart list here".
+            case .group, .ambiguous, .notFound:
                 return .error("smart list not found: id \(smartListId)")
             }
         } else if let listId {
@@ -344,6 +383,8 @@ struct ListPin: AsyncParsableCommand {
                     return .error("target list has no stable CloudKit identifier.")
                 }
                 ckid = c
+            case .group(_, let title, _, let children):
+                return .error(listIsGroupMessage(title: title, children: children))
             case .ambiguous, .notFound:
                 return .error("list not found: id \(listId)")
             }
@@ -357,6 +398,9 @@ struct ListPin: AsyncParsableCommand {
             if case .ambiguous(let candidates) = listRes {
                 let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
                 return .error("multiple lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact list name or --list-id with one of: \(options)")
+            }
+            if case .group(_, let title, _, let children) = listRes {
+                return .error(listIsGroupMessage(title: title, children: children))
             }
             if case .ambiguous(let candidates) = smartRes {
                 let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")

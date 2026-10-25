@@ -508,7 +508,7 @@ struct Edit: AsyncParsableCommand {
         if list != nil || listId != nil {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             resolvedListTitle = target.title
-            listTarget = target
+            listTarget = (target.id, target.title, target.objectUUID)
             let requested = listId != nil ? String(listId!) : (list ?? "")
             let method = WriteFormatting.resolveMethod(store: store, name: list, listId: listId, resolvedTitle: target.title)
             resolution = (requested: requested, title: target.title, id: target.id, method: method)
