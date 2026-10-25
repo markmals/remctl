@@ -59,4 +59,34 @@ import GRDB
         #expect(r.stdout.contains("  Lists:      1\n"))
         #expect(r.stdout.contains("  Sections:   1\n"))
     }
+
+    /// A reminder left behind by a deleted list must not be counted (upstream ef244ef),
+    /// and the overdue counter buckets all-day items by their display date (upstream 0d8c208).
+    @Test func countsSkipDeletedListsAndBucketAllDayByDisplayDate() throws {
+        let cal = Calendar.current
+        let now = Date()
+        let yesterday = AppleEpoch.toTs(cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!)
+        let today = AppleEpoch.toTs(cal.startOfDay(for: now))
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Work',0);
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (11,3,'Gone',1);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZFLAGGED,ZMARKEDFORDELETION,ZDUEDATE)
+            VALUES (1,'late',10,1,0,1,0,\(yesterday));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZFLAGGED,ZMARKEDFORDELETION,ZDUEDATE)
+            VALUES (2,'stale',11,1,0,1,0,\(yesterday));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZALLDAY,ZDUEDATE,ZDISPLAYDATEDATE)
+            VALUES (3,'allday today',10,1,0,0,1,\(yesterday),\(today));
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["stats", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let d = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any]
+        #expect(d?["total"] as? Int == 2)      // the deleted list's reminder is invisible
+        #expect(d?["active"] as? Int == 2)
+        #expect(d?["flagged"] as? Int == 1)
+        #expect(d?["overdue"] as? Int == 1)    // #3 buckets to today by its display date
+    }
 }

@@ -57,8 +57,9 @@ import GRDB
     @Test func remindersWithCompletedTrueIncludesDone() throws {
         let (s, dir) = try store { db in
             try db.execute(sql: """
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (1,'a',1,0,0);
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (2,'b',1,1,0);
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'L',0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (1,'a',10,1,0,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION) VALUES (2,'b',10,1,1,0);
             """)
         }
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -67,9 +68,10 @@ import GRDB
     @Test func reminderByPkFiltersDeletedAndNullAccount() throws {
         let (s, dir) = try store { db in
             try db.execute(sql: """
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (1,'ok',1,0);
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (2,'del',1,1);
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (3,'noacct',NULL,0);
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'L',0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (1,'ok',10,1,0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (2,'del',10,1,1);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (3,'noacct',10,NULL,0);
             """)
         }
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -80,8 +82,9 @@ import GRDB
     @Test func reminderByIdentifierIsCaseInsensitiveNewestWins() throws {
         let (s, dir) = try store { db in
             try db.execute(sql: """
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (1,'old',1,0,'abc');
-            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (5,'new',1,0,'ABC');
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'L',0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (1,'old',10,1,0,'abc');
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (5,'new',10,1,0,'ABC');
             """)
         }
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -311,5 +314,57 @@ import GRDB
         #expect(row.has("ZTITLE") == true)
         #expect(row.has("ZABSENT") == false)         // not selected -> nil/false
         #expect(row.string("ZABSENT") == nil)
+    }
+}
+
+/// Deleting a list can leave its reminder rows behind without the deleted flag; Reminders
+/// hides them, and so must every RemCTL reminder read (upstream 0d8c208 / de5a136).
+@Suite struct DeletedListReminderTests {
+    /// `live` sits in a live list, `orphan` in no list at all, `stale` in a deleted list.
+    private func store() throws -> (RemindersStore, URL) {
+        let due = AppleEpoch.toTs(Date(timeIntervalSince1970: 978_307_200))  // long past -> overdue
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Live',0);
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (11,3,'Gone',1);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZFLAGGED,ZISURGENTSTATEENABLEDFORCURRENTUSER,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE)
+            VALUES (1,'live',10,1,0,1,1,0,'CK-LIVE',\(due));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZFLAGGED,ZISURGENTSTATEENABLEDFORCURRENTUSER,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE)
+            VALUES (2,'stale',11,1,0,1,1,0,'CK-STALE',\(due));
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZFLAGGED,ZISURGENTSTATEENABLEDFORCURRENTUSER,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE)
+            VALUES (3,'orphan',NULL,1,0,1,1,0,'CK-ORPHAN',\(due));
+            """)
+        }
+        return (try RemindersStore.open(storeDir: dir), dir)
+    }
+
+    @Test func everyReminderReadHidesDeletedAndOrphanLists() throws {
+        let (s, dir) = try store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.reminders().map { $0.int("Z_PK")! } == [1])
+        #expect(s.reminders(listPk: 11).isEmpty)
+        #expect(s.reminder(pk: 1)?.string("ZTITLE") == "live")
+        #expect(s.reminder(pk: 2) == nil)
+        #expect(s.reminder(pk: 3) == nil)
+        #expect(s.reminder(identifier: "CK-LIVE")?.int("Z_PK") == 1)
+        #expect(s.reminder(identifier: "CK-STALE") == nil)
+        #expect(s.reminder(identifier: "CK-ORPHAN") == nil)
+        #expect(s.search("e").map { $0.int("Z_PK")! } == [1])
+        #expect(s.flagged().map { $0.int("Z_PK")! } == [1])
+        #expect(s.urgent().map { $0.int("Z_PK")! } == [1])
+        #expect(s.overdue().map { $0.int("Z_PK")! } == [1])
+        #expect(s.dueToday().map { $0.int("Z_PK")! } == [1])
+    }
+
+    @Test func statsCountOnlyLiveLists() throws {
+        let (s, dir) = try store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let counts = s.reminderStats()
+        #expect(counts.total == 1)
+        #expect(counts.active == 1)
+        #expect(counts.flagged == 1)
+        #expect(counts.urgent == 1)
+        #expect(counts.overdue == 1)
     }
 }

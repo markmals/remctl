@@ -78,7 +78,7 @@ import GRDB
         #expect(out.stderr == "Error: #99 not found\n"); #expect(out.exitCode == 1); #expect(m.calls.isEmpty)
     }
     @Test func noIdentifierRefuses() async throws {
-        let (s, dir) = try store { db in try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (7,'Loose',1,0)") }
+        let (s, dir) = try store { db in try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0); INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (7,'Loose',1,1,0)") }
         defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await WriteDispatch.perform { try await Delete.perform(id: 7, force: true, json: false, store: s, writer: m, confirm: .unexpected) }

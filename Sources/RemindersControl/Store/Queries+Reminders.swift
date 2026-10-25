@@ -1,11 +1,19 @@
 import GRDB
 import Foundation
 
+/// What every reminder read requires, so RemCTL shows what Reminders shows: the reminder
+/// isn't deleted, it belongs to an account, and its list still exists and isn't deleted
+/// either. Deleting a list can leave its reminder rows behind without the deleted flag.
+/// Assumes the `r` (reminder) / `l` (joined list) aliases every reminder query uses.
+let liveReminderSQL =
+    "r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL "
+    + "AND l.Z_PK IS NOT NULL AND l.ZMARKEDFORDELETION = 0"
+
 extension RemindersStore {
     /// q_reminders: WHERE base + optional list/parent/topLevel + completed filter; ORDER BY r.Z_PK LIMIT n.
     public func reminders(listPk: Int? = nil, completed: Bool = false,
                           parentPk: Int? = nil, topLevel: Bool = false, limit: Int = 500) -> [Row] {
-        var c = ["r.ZMARKEDFORDELETION = 0", "r.ZACCOUNT IS NOT NULL"]
+        var c = [liveReminderSQL]
         var args: [DatabaseValueConvertible] = []
         if !completed { c.append("r.ZCOMPLETED = 0") }
         if let listPk { c.append("r.ZLIST = ?"); args.append(listPk) }
@@ -19,14 +27,14 @@ extension RemindersStore {
 
     public func reminder(pk: Int) -> Row? {
         let cols = remCols()
-        let sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE r.Z_PK = ? AND r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL"
+        let sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE r.Z_PK = ? AND \(liveReminderSQL)"
         return try? queue.read { try Row.fetchOne($0, sql: sql, arguments: [pk]) }
     }
 
     public func reminder(identifier: String) -> Row? {
         guard !identifier.isEmpty else { return nil }
         let cols = remCols()
-        let sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE lower(r.ZCKIDENTIFIER) = lower(?) AND r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL ORDER BY r.Z_PK DESC LIMIT 1"
+        let sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE lower(r.ZCKIDENTIFIER) = lower(?) AND \(liveReminderSQL) ORDER BY r.Z_PK DESC LIMIT 1"
         return try? queue.read { try Row.fetchOne($0, sql: sql, arguments: [identifier]) }
     }
 
@@ -70,7 +78,7 @@ extension RemindersStore {
             .replacingOccurrences(of: "%", with: "\\%")
             .replacingOccurrences(of: "_", with: "\\_")
         let pat = "%\(safe)%"
-        var w = ["r.ZMARKEDFORDELETION = 0", "r.ZACCOUNT IS NOT NULL", "l.Z_PK IS NOT NULL",
+        var w = [liveReminderSQL,
                  "(r.ZTITLE LIKE ? ESCAPE '\\' OR r.ZNOTES LIKE ? ESCAPE '\\')"]
         if !completed { w.append("r.ZCOMPLETED = 0") }
         return reminderListView(where: w.joined(separator: " AND "), args: [pat, pat], order: "r.Z_PK DESC LIMIT 100")
@@ -82,27 +90,27 @@ extension RemindersStore {
         let w: String
         if includeOverdue { w = "\(due) < \(AppleEpoch.toTs(eod)) AND \(due) IS NOT NULL" }
         else { w = "\(due) >= \(AppleEpoch.toTs(sod)) AND \(due) < \(AppleEpoch.toTs(eod))" }
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(w)", args: [], order: due)
+        return reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND \(w)", args: [], order: due)
     }
 
     public func upcoming(days: Int = 7, now: Date = Date()) -> [Row] {
         let (sod, future) = DateWindows.upcomingWindow(days: days, now: now)
         let due = dueFilterExpr()  // display-date-aware for all-day items
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(due) IS NOT NULL AND \(due) >= \(AppleEpoch.toTs(sod)) AND \(due) < \(AppleEpoch.toTs(future))", args: [], order: due)
+        return reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND \(due) IS NOT NULL AND \(due) >= \(AppleEpoch.toTs(sod)) AND \(due) < \(AppleEpoch.toTs(future))", args: [], order: due)
     }
 
     public func overdue(now: Date = Date()) -> [Row] {
         let sod = DateWindows.startOfDay(now)
         let due = dueFilterExpr()  // display-date-aware for all-day items
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(due) IS NOT NULL AND \(due) < \(AppleEpoch.toTs(sod))", args: [], order: due)
+        return reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND \(due) IS NOT NULL AND \(due) < \(AppleEpoch.toTs(sod))", args: [], order: due)
     }
 
     public func flagged() -> [Row] {
-        reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND r.ZFLAGGED = 1", args: [], order: "r.ZDUEDATE NULLS LAST")
+        reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND r.ZFLAGGED = 1", args: [], order: "r.ZDUEDATE NULLS LAST")
     }
 
     public func urgent() -> [Row] {
         let w = urgentWhereClause()  // OUTSIDE the read
-        return reminderListView(where: "r.ZMARKEDFORDELETION = 0 AND r.ZCOMPLETED = 0 AND r.ZACCOUNT IS NOT NULL AND l.Z_PK IS NOT NULL AND \(w)", args: [], order: "r.ZDUEDATE NULLS LAST")
+        return reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND \(w)", args: [], order: "r.ZDUEDATE NULLS LAST")
     }
 }

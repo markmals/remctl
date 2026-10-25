@@ -235,9 +235,13 @@ import GRDB
     @Test func unflagNoIdentifierRefuses() async throws {
         let (s, dir) = try store { db in
             try db.execute(sql: """
+                INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION)
+                VALUES (1,3,'Home',0)
+            """)
+            try db.execute(sql: """
                 INSERT INTO ZREMCDREMINDER
-                  (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION)
-                VALUES (8,'Loose item',1,0)
+                  (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION)
+                VALUES (8,'Loose item',1,1,0)
             """)
         }
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -258,9 +262,13 @@ import GRDB
         // Reminder with empty title → should show "(untitled)" in error.
         let (s, dir) = try store { db in
             try db.execute(sql: """
+                INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION)
+                VALUES (1,3,'Home',0)
+            """)
+            try db.execute(sql: """
                 INSERT INTO ZREMCDREMINDER
-                  (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER)
-                VALUES (3,'',1,0,'CK3')
+                  (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER)
+                VALUES (3,'',1,1,0,'CK3')
             """)
         }
         defer { try? FileManager.default.removeItem(at: dir) }

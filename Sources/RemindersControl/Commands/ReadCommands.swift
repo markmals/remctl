@@ -501,15 +501,14 @@ struct Stats: ParsableCommand {
     func run() throws {
         Dispatch.runRead { store in
             let ansi = opts.ansi()
-            let now = Date()
-            let total = store.statTotal()
-            let active = store.statActive()
-            let flagged = store.statFlagged()
-            let urgent = store.statUrgent()
-            let overdue = store.statOverdue(now: now)
+            let counts = store.reminderStats()
+            let total = counts.total
+            let active = counts.active
+            let flagged = counts.flagged
+            let urgent = counts.urgent
+            let overdue = counts.overdue
             let lists = store.statListCount()
             let sections = store.statSectionCount()
-
             if opts.json {
                 let pairs: [(String, JSONValue)] = [
                     ("total", .int(total)),

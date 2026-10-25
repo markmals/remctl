@@ -24,7 +24,7 @@ import GRDB
     }
     @Test func noIdentifierRefuses() throws {
         let (s, dir) = try store { db in
-            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (7,'Loose',1,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0); INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (7,'Loose',1,1,0)")
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         do { _ = try WriteDispatch.resolveReminderForWrite(s, id: 7, op: "delete it"); Issue.record("should throw") }
@@ -37,7 +37,7 @@ import GRDB
     @Test func noIdentifierEmptyTitleShowsUntitled() throws {
         // An empty-string ZTITLE must be treated as absent → message shows (untitled).
         let (s, dir) = try store { db in
-            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (8,'',1,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0); INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (8,'',1,1,0)")
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         do { _ = try WriteDispatch.resolveReminderForWrite(s, id: 8, op: "edit it"); Issue.record("should throw") }
@@ -50,7 +50,7 @@ import GRDB
         // A title containing a control character must have it scrubbed by safeDisplay in the message.
         let (s, dir) = try store { db in
             // Title contains a BEL control char (\u{07}) between "Bad" and "Title".
-            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZACCOUNT,ZMARKEDFORDELETION) VALUES (9,'Bad\u{07}Title',1,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0); INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION) VALUES (9,'Bad\u{07}Title',1,1,0)")
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         do { _ = try WriteDispatch.resolveReminderForWrite(s, id: 9, op: "complete it"); Issue.record("should throw") }
