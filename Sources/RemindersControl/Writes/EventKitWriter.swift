@@ -370,8 +370,15 @@ public final class EventKitWriter: RemindersWriter {
         // New lists belong in iCloud: a local or third-party CalDAV account would silently
         // swallow the list and never sync (upstream c0db904, e2cbc6b).
         let sources = store.sources
-        guard let index = ListTargeting.firstICloudSourceIndex(
-            in: sources.map(descriptor), providers: accountProviders) else {
+        let descriptors = sources.map { source in
+            var described = descriptor(source)
+            described.holdsReminderLists = !source.calendars(for: .reminder).isEmpty
+            return described
+        }
+        guard let index = ListTargeting.newListSourceIndex(
+            in: descriptors,
+            defaultReminderSource: store.defaultCalendarForNewReminders()?.source.sourceIdentifier,
+            providers: accountProviders) else {
             throw WriteError("No iCloud Reminders source found")
         }
         cal.source = sources[index]

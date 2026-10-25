@@ -96,30 +96,52 @@ import Foundation
     // MARK: - iCloud source identification
 
     @Test func iCloudSourceIsPickedOverLocalAndExchange() {
-        let sources = [localSource(), exchangeSource(), iCloudSource()]
-        #expect(ListTargeting.firstICloudSourceIndex(in: sources, providers: [:]) == 2)
+        var withLists = iCloudSource(); withLists.holdsReminderLists = true
+        let sources = [localSource(), exchangeSource(), withLists]
+        #expect(ListTargeting.newListSourceIndex(in: sources, defaultReminderSource: nil, providers: [:]) == 2)
     }
 
     @Test func noICloudSourceYieldsNil() {
         let sources = [localSource(), exchangeSource()]
-        #expect(ListTargeting.firstICloudSourceIndex(in: sources, providers: [:]) == nil)
+        #expect(ListTargeting.newListSourceIndex(in: sources, defaultReminderSource: "src-local", providers: [:]) == nil)
+    }
+
+    /// An iCloud account exposes a calendar source and a Reminders source, both titled
+    /// "iCloud" and both CalDAV; the calendar one rejects lists ("That account does not
+    /// support reminders").
+    @Test func calendarOnlyICloudSourceIsSkipped() {
+        let calendars = iCloudSource("src-icloud-calendars")
+        let reminders = ReminderSourceDescriptor(identifier: "src-icloud-reminders", title: "iCloud",
+                                                 isCalDAV: true, holdsReminderLists: true)
+        #expect(ListTargeting.newListSourceIndex(in: [calendars, reminders], defaultReminderSource: nil, providers: [:]) == 1)
+    }
+
+    /// A Reminders account with no lists yet still owns the default list's source.
+    @Test func defaultReminderSourceWinsEvenWithoutLists() {
+        let calendars = iCloudSource("src-icloud-calendars")
+        let reminders = iCloudSource("src-icloud-reminders")
+        #expect(ListTargeting.newListSourceIndex(in: [calendars, reminders],
+                                                 defaultReminderSource: "src-icloud-reminders", providers: [:]) == 1)
+        #expect(ListTargeting.newListSourceIndex(in: [calendars, reminders], defaultReminderSource: nil, providers: [:]) == nil)
     }
 
     /// Account IDs survive renaming; a renamed iCloud account no longer contains "iCloud".
     @Test func renamedICloudAccountIsRecognizedByProvider() {
-        let renamed = ReminderSourceDescriptor(identifier: "ABC-123", title: "Personal", isCalDAV: true)
+        let renamed = ReminderSourceDescriptor(identifier: "ABC-123", title: "Personal", isCalDAV: true,
+                                               holdsReminderLists: true)
         let providers = ["abc-123": ListTargeting.appleAccountProvider]
-        #expect(ListTargeting.firstICloudSourceIndex(in: [renamed], providers: providers) == 0)
-        #expect(ListTargeting.firstICloudSourceIndex(in: [renamed], providers: [:]) == nil)
+        #expect(ListTargeting.newListSourceIndex(in: [renamed], defaultReminderSource: nil, providers: providers) == 0)
+        #expect(ListTargeting.newListSourceIndex(in: [renamed], defaultReminderSource: nil, providers: [:]) == nil)
     }
 
     /// A non-Apple account that merely says "iCloud" in its name is not iCloud when the
     /// account records are readable.
     @Test func providerMapOverridesMisleadingTitle() {
-        let fake = ReminderSourceDescriptor(identifier: "XYZ-9", title: "iCloud Mirror", isCalDAV: true)
+        let fake = ReminderSourceDescriptor(identifier: "XYZ-9", title: "iCloud Mirror", isCalDAV: true,
+                                            holdsReminderLists: true)
         let providers = ["xyz-9": "com.apple.account.CalDAV"]
-        #expect(ListTargeting.firstICloudSourceIndex(in: [fake], providers: providers) == nil)
-        #expect(ListTargeting.firstICloudSourceIndex(in: [fake], providers: [:]) == 0)
+        #expect(ListTargeting.newListSourceIndex(in: [fake], defaultReminderSource: "XYZ-9", providers: providers) == nil)
+        #expect(ListTargeting.newListSourceIndex(in: [fake], defaultReminderSource: nil, providers: [:]) == 0)
     }
 
     // MARK: - Read scoping

@@ -5,8 +5,12 @@ public struct ReminderSourceDescriptor: Equatable {
     public var identifier: String
     public var title: String
     public var isCalDAV: Bool
-    public init(identifier: String, title: String, isCalDAV: Bool) {
+    /// Whether the source already holds reminder lists. Only filled in where a list is
+    /// created, since finding out means asking EventKit for the source's calendars.
+    public var holdsReminderLists: Bool
+    public init(identifier: String, title: String, isCalDAV: Bool, holdsReminderLists: Bool = false) {
         self.identifier = identifier; self.title = title; self.isCalDAV = isCalDAV
+        self.holdsReminderLists = holdsReminderLists
     }
 }
 
@@ -62,10 +66,20 @@ public enum ListTargeting {
         calendars.filter { isICloud($0, providers: providers) }
     }
 
-    /// The source new lists belong in. nil means the account has no iCloud Reminders source.
-    public static func firstICloudSourceIndex(in sources: [ReminderSourceDescriptor],
-                                              providers: [String: String]) -> Int? {
-        sources.indices.first { isICloudSource(sources[$0], providers: providers) }
+    /// The source new lists belong in, or nil when no iCloud source holds Reminders.
+    /// An iCloud account exposes two CalDAV sources with the same title, one for calendars
+    /// and one for Reminders, and only the latter accepts reminder lists ("That account does
+    /// not support reminders"). Prefer the default Reminders list's source, then an iCloud
+    /// source that already holds lists.
+    public static func newListSourceIndex(in sources: [ReminderSourceDescriptor],
+                                          defaultReminderSource: String?,
+                                          providers: [String: String]) -> Int? {
+        let iCloud = sources.indices.filter { isICloudSource(sources[$0], providers: providers) }
+        if let defaultReminderSource,
+           let index = iCloud.first(where: { sources[$0].identifier == defaultReminderSource }) {
+            return index
+        }
+        return iCloud.first { sources[$0].holdsReminderLists }
     }
 
     /// Port of the bridge `findList`: match the stable ReminderKit identifier first, then a
