@@ -48,7 +48,7 @@ import GRDB
         let m = MockWriter()
         let out = try await Edit.perform(id: 42, title: "New", json: true, store: s, writer: m, private: MockPrivateWriter())
         #expect(out.exitCode == 0)
-        #expect(out.stdout == #"{"status": "updated", "id": 42}"# + "\n")
+        #expect(out.stdout == #"{"status": "updated", "id": 42, "title": "New"}"# + "\n")
     }
 
     // MARK: - Due
@@ -389,7 +389,7 @@ import GRDB
         #expect(out.exitCode == 0)
         #expect(m.calls.count == 1)   // the EventKit update fired
         #expect(mp.calls == [.setFlagged(id: "ABC", flagged: true)])
-        #expect(out.stdout == #"{"status": "updated", "id": 42, "private": [{"status": "updated"}]}"# + "\n")
+        #expect(out.stdout == #"{"status": "updated", "id": 42, "title": "New", "private": [{"status": "updated"}]}"# + "\n")
     }
 
     // MARK: - Resolution refusals
@@ -444,6 +444,59 @@ import GRDB
         let m = MockWriter()
         _ = try await Edit.perform(id: 42, notes: "", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.notes == "")
+    }
+
+    /// A store with reminder pk 42 carrying existing notes.
+    private func withNotedReminder(_ notes: String) throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZNOTES,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (42,'T',?,10,1,0,0,'ABC')", arguments: [notes])
+        }
+    }
+
+    @Test func urlKeepsExistingNotesWhenNotesOmitted() async throws {
+        let (s, dir) = try withNotedReminder("keep me"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(updatedWrite(m)?.write.notes == "keep me\n\nhttps://x")
+    }
+
+    @Test func explicitNotesReplaceBeforeUrlAppend() async throws {
+        let (s, dir) = try withNotedReminder("old body"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, notes: "new body", url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(updatedWrite(m)?.write.notes == "new body\n\nhttps://x")
+    }
+
+    @Test func emptyNotesClearsBeforeUrlAppend() async throws {
+        let (s, dir) = try withNotedReminder("old body"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, notes: "", url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(updatedWrite(m)?.write.notes == "https://x")
+    }
+
+    @Test func urlAlreadyPresentIsNotAppendedAgain() async throws {
+        let (s, dir) = try withNotedReminder("see https://x now"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(updatedWrite(m)?.write.notes == "see https://x now")
+    }
+
+    @Test func urlThatIsOnlyAPrefixOfAnExistingUrlIsAppended() async throws {
+        // Whole-word rule (upstream ff14a7b): https://x is NOT present in "https://x/page".
+        let (s, dir) = try withNotedReminder("https://x/page"); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, url: "https://x", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(updatedWrite(m)?.write.notes == "https://x/page\n\nhttps://x")
+    }
+
+    @Test func noChangesJSONIsStructured() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(out.stdout == #"{"status": "unchanged", "code": "nothing_to_update", "id": 42, "title": "T", "message": "Nothing to update."}"# + "\n")
+        #expect(m.calls.isEmpty)
     }
 
     // MARK: - Absolute-alarm carry / clear

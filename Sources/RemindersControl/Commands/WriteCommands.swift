@@ -499,12 +499,21 @@ struct Edit: AsyncParsableCommand {
         if let resolvedListTitle { write.list = resolvedListTitle; hasChanges = true }
 
         // url merges into notes (notes + "\n\n" + url, or url alone). notes gate is `!= nil`:
-        // an empty notes string still sets notes (mirrors Python `notes_body is not None`).
+        // an empty notes string still sets notes (mirrors Python `notes_body is not None`), so
+        // `--notes ""` clears the body before the url is appended.
         // PUBLIC path only (cmd_edit:5525 `if a.url and not wants_private`): when wantsPrivate the
         // url routes to addPrivateMetadata instead of merging into notes.
         var notesBody = notes
         if let url, !url.isEmpty, !wantsPrivate {
-            notesBody = (notesBody != nil && !notesBody!.isEmpty) ? (notesBody! + "\n\n" + url) : url
+            // An omitted --notes preserves the current body; an explicit value replaces it
+            // (upstream 718924d).
+            if notesBody == nil { notesBody = row.string("ZNOTES") }
+            // Idempotent: a url already in the notes as its own word is not appended again. A
+            // longer url that merely starts with it does not count (upstream ff14a7b).
+            let alreadyPresent = notesBody?.split(whereSeparator: { $0.isWhitespace }).contains(url[...]) ?? false
+            if !alreadyPresent {
+                notesBody = (notesBody?.isEmpty == false) ? (notesBody! + "\n\n" + url) : url
+            }
         }
         if notesBody != nil { write.notes = notesBody; hasChanges = true }
 
@@ -554,11 +563,28 @@ struct Edit: AsyncParsableCommand {
             hasChanges = true
         }
 
+        // The title every --json result echoes: the new one when the edit renames the reminder,
+        // otherwise the title it keeps (upstream 848e111). Matches add/done/undone/delete, so a
+        // caller never has to re-read the reminder to label it.
+        let resultingTitle = (title?.isEmpty == false) ? title! : (row.string("ZTITLE") ?? "")
+
         // 8. has_changes / wants_private gate (cmd_edit:5546,5576):
         //    • has_changes        → EventKit update, then private fan-out (if wantsPrivate).
         //    • !has_changes && wantsPrivate → private-ONLY branch (no EventKit update; JSON indent=2).
         //    • neither            → "Nothing to update." (mirrors the 5630 fallthrough).
         if !hasChanges && !wantsPrivate {
+            // A no-op edit is a real, non-error outcome: under --json it is a structured payload
+            // like every other result, not a bare English line that breaks the caller's parse.
+            if json {
+                let obj: JSONValue = .object([
+                    ("status", .string("unchanged")),
+                    ("code", .string("nothing_to_update")),
+                    ("id", .int(id)),
+                    ("title", .string(resultingTitle)),
+                    ("message", .string("Nothing to update.")),
+                ])
+                return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
+            }
             return .ok("Nothing to update.\n")
         }
 
@@ -577,6 +603,7 @@ struct Edit: AsyncParsableCommand {
                 let obj: JSONValue = .object([
                     ("status", .string("updated")),
                     ("id", .int(id)),
+                    ("title", .string(resultingTitle)),
                     ("private", privateResultsJSON(privateResults)),
                 ])
                 return .ok(obj.serialized(indent: 2, ensureAscii: true) + "\n")
@@ -613,6 +640,7 @@ struct Edit: AsyncParsableCommand {
             var pairs: [(String, JSONValue)] = [
                 ("status", .string("updated")),
                 ("id", .int(id)),
+                ("title", .string(resultingTitle)),
             ]
             if let resolution {
                 pairs.append(("list", .string(resolution.title)))

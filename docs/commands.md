@@ -176,6 +176,10 @@ Date-only `-d` values keep the reminder all-day through the edit (re-setting the
 
 Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list. `--address` is accepted but not supported for location alarms.
 
+`--url` on a public edit appends to the existing notes instead of replacing them; pass `-n/--notes` to replace the body first (`-n ""` clears it). A URL already present in the notes as its own word is not appended a second time, so repeating the same edit is safe.
+
+An edit that changes nothing prints `Nothing to update.` and exits 0; under `--json` that is `{"status":"unchanged","code":"nothing_to_update","id":…,"title":…,"message":"Nothing to update."}`. Every `edit --json` result echoes `title`.
+
 ```bash
 remctl edit 23880 --title "New title"
 remctl edit 23880 -d "next friday" -p medium
