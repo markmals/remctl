@@ -237,7 +237,7 @@ func printPermissionHelperOpened(ansi: Ansi = Ansi(enabled: false)) -> String {
 /// In human mode the command calls this after `launchFullDiskAccessHelper` returns false.
 func printFullDiskAccessGuidance(
     settingsOpened: Bool,
-    rerunCommand: String = "remctl doctor",
+    rerunCommand: String = "\(CLIName.current) doctor",
     ansi: Ansi = Ansi(enabled: false),
     env: [String: String] = ProcessInfo.processInfo.environment,
     runPbcopy: (String) -> Bool = { text in

@@ -370,12 +370,8 @@ struct CompletionCmd: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "completion", abstract: "Print a shell completion script.")
     @Argument(help: "Shell to generate completions for (bash, zsh, fish)") var shell: ShellChoice = .zsh
     func run() throws {
-        let script: String
-        switch shell {
-        case .zsh:  script = CompletionScripts.zsh
-        case .bash: script = CompletionScripts.bash
-        case .fish: script = CompletionScripts.fish
-        }
+        // The script completes whichever name the user invoked (remctl/rctl/reminders).
+        let script = CompletionScripts.script(shell)
         // Use FileHandle to avoid print()'s implicit newline; script already ends with \n.
         FileHandle.standardOutput.write(Data(script.utf8))
     }
@@ -480,10 +476,10 @@ struct Onboard: AsyncParsableCommand {
             return (true, detail, nil)
         } catch let e as WriteError {
             return (false, e.message,
-                    "Re-run `remctl onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
+                    "Re-run `\(CLIName.current) onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
         } catch {
             return (false, "Reminders authorization failed.",
-                    "Re-run `remctl onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
+                    "Re-run `\(CLIName.current) onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
         }
     }
 
@@ -501,7 +497,7 @@ struct Onboard: AsyncParsableCommand {
             proc.waitUntilExit()
         } catch {
             return (false, "Could not run osascript: \(error.localizedDescription)",
-                    "Re-run `remctl onboard` from Terminal after opening Reminders.app.")
+                    "Re-run `\(CLIName.current) onboard` from Terminal after opening Reminders.app.")
         }
         let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -515,7 +511,7 @@ struct Onboard: AsyncParsableCommand {
         }
         let message = !stderr.isEmpty ? stderr : (!stdout.isEmpty ? stdout : "AppleScript automation probe failed.")
         return (false, message,
-                "Re-run `remctl onboard` from the same terminal and approve the Automation prompt if macOS asks. Flagged operations and AppleScript fallback writes rely on this access.")
+                "Re-run `\(CLIName.current) onboard` from the same terminal and approve the Automation prompt if macOS asks. Flagged operations and AppleScript fallback writes rely on this access.")
     }
 
     /// `/usr/bin/open <args>` returning the exit code (the `openSettings` seam).
@@ -623,7 +619,7 @@ struct Permissions: ParsableCommand {
         let ansi = Ansi.resolve(noColorFlag: false)
         let guidance = printFullDiskAccessGuidance(
             settingsOpened: settingsOpened,
-            rerunCommand: "remctl doctor",
+            rerunCommand: "\(CLIName.current) doctor",
             ansi: ansi,
             env: env,
             runPbcopy: runPbcopy
@@ -661,13 +657,17 @@ struct Setup: ParsableCommand {
     struct Outcome { let stdout: String; let stderr: String; let exitCode: Int32 }
 
     /// Port of `cmd_setup` (remctl:7516). Pure of process-level side effects when given
-    /// an injected `env`; does write to the filesystem (config dir + completion file).
+    /// an injected `env`; does write to the filesystem (config dir + completion files).
+    /// `cliName` and `binaryDirectory` are injectable so tests can drive the alias
+    /// handling without a real installation; by default they describe this process.
     @discardableResult
     static func perform(
         shellArg: String,
         doctor: Bool,
         json: Bool,
-        env: [String: String] = ProcessInfo.processInfo.environment
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        cliName: String = CLIName.current,
+        binaryDirectory: URL? = nil
     ) throws -> Outcome {
         let fm = FileManager.default
 
@@ -679,10 +679,16 @@ struct Setup: ParsableCommand {
         // Step 2: resolve shell.
         let selectedShell = resolveSetupShell(shellArg, env: env)
 
-        // Step 3: install completion (unless skip).
+        // Step 3: install completion (unless skip) for the invoked name and for every
+        // alias installed beside the binary, so `rctl`/`reminders` complete too.
         var completionPath: URL? = nil
+        var aliasPaths: [URL] = []
         if selectedShell != "skip" {
-            completionPath = try installCompletion(selectedShell, env: env)
+            let binDir = binaryDirectory ?? currentCLIPath(env: env).deletingLastPathComponent()
+            for name in completionCommandNames(invokedAs: cliName, binaryDirectory: binDir) {
+                let path = try installCompletion(selectedShell, commandName: name, env: env)
+                if name == cliName { completionPath = path } else { aliasPaths.append(path) }
+            }
         }
 
         // Step 4: build result.
@@ -691,6 +697,7 @@ struct Setup: ParsableCommand {
             ("config_dir", .string(configDir.path)),
             ("completion_shell", selectedShell == "skip" ? .null : .string(selectedShell)),
             ("completion_path", completionPath.map { .string($0.path) } ?? .null),
+            ("completion_alias_paths", .array(aliasPaths.map { .string($0.path) })),
         ]
 
         // Step 5: --doctor (smaller shape: only ok + checks, no warnings/failures/context).
@@ -735,6 +742,9 @@ struct Setup: ParsableCommand {
             } else {
                 lines.append("Shell completion: skipped")
             }
+            for path in aliasPaths {
+                lines.append("Alias completion: \(path.path)")
+            }
             if selectedShell == "zsh", let path = completionPath {
                 lines.append("")
                 lines.append(ansi.bold("Enable zsh completions:"))
@@ -744,9 +754,9 @@ struct Setup: ParsableCommand {
             }
             lines.append("")
             lines.append("Next:")
-            lines.append("  1. remctl onboard   # trigger macOS Reminders and Automation prompts")
-            lines.append("  2. remctl permissions full-disk-access   # visual Full Disk Access setup")
-            lines.append("  3. remctl doctor    # verify the CLI")
+            lines.append("  1. \(cliName) onboard   # trigger macOS Reminders and Automation prompts")
+            lines.append("  2. \(cliName) permissions full-disk-access   # visual Full Disk Access setup")
+            lines.append("  3. \(cliName) doctor    # verify the CLI")
             stdout = lines.joined(separator: "\n") + "\n"
 
             // --doctor in human mode: re-run doctor report (may exit 1 on any FAIL).
@@ -763,14 +773,18 @@ struct Setup: ParsableCommand {
 }
 
 /// Port of `install_completion(shell)` (remctl:6976).
-/// Creates parent directories, writes the completion script, returns the target URL.
-/// NO 0600 chmod on the output file.
+/// Creates parent directories, writes the completion script for `commandName`, and
+/// returns the target URL. NO 0600 chmod on the output file.
 @discardableResult
-func installCompletion(_ shell: String, env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
-    let target = try completionTargetPath(shell, env: env)
+func installCompletion(
+    _ shell: String,
+    commandName: String = CLIName.current,
+    env: [String: String] = ProcessInfo.processInfo.environment
+) throws -> URL {
+    let target = try completionTargetPath(shell, commandName: commandName, env: env)
     let parent = target.deletingLastPathComponent()
     try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: nil)
-    let script = try completionScript(for: shell)
+    let script = try completionScript(for: shell, commandName: commandName)
     try script.write(to: target, atomically: true, encoding: .utf8)
     return target
 }

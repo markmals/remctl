@@ -734,13 +734,13 @@ remctl doctor --for-agent --json
 ```
 
 ### `setup`
-Install shell completions/config. `--shell auto|bash|zsh|fish|skip` (default `auto`); `--doctor` also runs a doctor check; `--json`.
+Install shell completions/config. `--shell auto|bash|zsh|fish|skip` (default `auto`); `--doctor` also runs a doctor check; `--json`. Completion files are installed for the invoked name and for every alias (`rctl`, `reminders`) sitting next to the binary; `--json` lists the extra files under `completion_alias_paths`.
 ```bash
 remctl setup --shell auto --doctor
 ```
 
 ### `completion [SHELL]`
-Print a shell completion script for `bash`, `zsh`, or `fish` (default `zsh`).
+Print a shell completion script for `bash`, `zsh`, or `fish` (default `zsh`). The script completes the name it was invoked under, so `rctl completion zsh` completes `rctl`.
 ```bash
 remctl completion zsh
 ```

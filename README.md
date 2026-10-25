@@ -25,6 +25,8 @@ Requires **macOS 14 (Sonoma) or later**. Installs from a prebuilt bottle on Appl
 
 After install, grant the two macOS permissions RemCTL needs (see [macOS Permissions](#macos-permissions)): **Full Disk Access** for the direct database reads, and **Reminders access** for writes.
 
+The formula links two aliases beside the binary, so `rctl today` and `reminders today` run the same CLI as `remctl today` — every command below works under all three names, and help, completions, and error hints echo the name you typed. `reminders` is also the binary name of [keith/reminders-cli](https://github.com/keith/reminders-cli); Homebrew will not link both formulae at once.
+
 ## How It Works
 
 ```text

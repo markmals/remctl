@@ -904,6 +904,21 @@ complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l smart-list-
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l json -d "JSON output"
 
 """#
+
+    /// The literals above are written for `remctl`; every `remctl` token in them is a
+    /// command reference (`#compdef remctl`, `_remctl`, `complete -c remctl`, …), so an
+    /// alias script is the same text with that token swapped (upstream 5cb595a does the
+    /// same substitution in `get_completion_script`).
+    public static func script(_ shell: ShellChoice, commandName: String = CLIName.current) -> String {
+        let script: String
+        switch shell {
+        case .zsh:  script = zsh
+        case .bash: script = bash
+        case .fish: script = fish
+        }
+        guard commandName != CLIName.canonical else { return script }
+        return script.replacingOccurrences(of: CLIName.canonical, with: commandName)
+    }
 }
 
 // ── Shell detection helpers ──────────────────────────────────────────────────
@@ -966,17 +981,18 @@ public func detectShellName(env: [String: String] = ProcessInfo.processInfo.envi
 /// Fish uses the LITERAL path `~/.config` (not $XDG_CONFIG_HOME).
 public func completionTargetPath(
     _ shell: String,
+    commandName: String = CLIName.current,
     env: [String: String] = ProcessInfo.processInfo.environment
 ) throws -> URL {
     let home = env["HOME"].map { URL(fileURLWithPath: $0) }
         ?? FileManager.default.homeDirectoryForCurrentUser
     switch shell {
     case "zsh":
-        return home.appendingPathComponent(".zsh/completions/_remctl")
+        return home.appendingPathComponent(".zsh/completions/_\(commandName)")
     case "bash":
-        return home.appendingPathComponent(".local/share/bash-completion/completions/remctl")
+        return home.appendingPathComponent(".local/share/bash-completion/completions/\(commandName)")
     case "fish":
-        return home.appendingPathComponent(".config/fish/completions/remctl.fish")
+        return home.appendingPathComponent(".config/fish/completions/\(commandName).fish")
     default:
         throw CLIError("Unsupported shell '\(shell)'", code: "unsupported_shell")
     }
@@ -996,11 +1012,27 @@ public func resolveSetupShell(
 
 /// Returns the completion script for `shell` (zsh/bash/fish), or throws a `CLIError`.
 /// Port of `get_completion_script(shell)` (remctl:6951).
-public func completionScript(for shell: String) throws -> String {
+public func completionScript(for shell: String, commandName: String = CLIName.current) throws -> String {
     switch shell {
-    case "zsh":  return CompletionScripts.zsh
-    case "bash": return CompletionScripts.bash
-    case "fish": return CompletionScripts.fish
+    case "zsh":  return CompletionScripts.script(.zsh, commandName: commandName)
+    case "bash": return CompletionScripts.script(.bash, commandName: commandName)
+    case "fish": return CompletionScripts.script(.fish, commandName: commandName)
     default: throw CLIError("Unsupported shell '\(shell)'. Use bash, zsh, or fish.", code: "unsupported_shell")
+    }
+}
+
+/// The command names `setup` should install completion files for: the invoked name
+/// plus every other known alias sitting next to the installed binary. The installer
+/// symlinks `rctl` and `reminders` beside `remctl` (upstream 5cb595a), so an alias
+/// that is present in that directory is reachable on PATH exactly like the binary.
+public func completionCommandNames(
+    invokedAs name: String = CLIName.current,
+    binaryDirectory: URL?,
+    fileManager: FileManager = .default
+) -> [String] {
+    CLIName.all.filter { candidate in
+        if candidate == name { return true }
+        guard let dir = binaryDirectory else { return false }
+        return fileManager.isExecutableFile(atPath: dir.appendingPathComponent(candidate).path)
     }
 }

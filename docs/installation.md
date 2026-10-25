@@ -23,6 +23,20 @@ remctl today
 
 The install does not grant macOS permissions — Apple requires those grants to happen interactively. Run `remctl onboard` next, then verify with `remctl doctor` so the first health report is meaningful.
 
+## Command Names
+
+The formula also links two aliases next to the binary, so the same CLI answers to three names:
+
+```bash
+remctl today
+rctl today
+reminders today
+```
+
+Every command in these docs works under any of the three names, and help, completions, and error hints echo the name you typed.
+
+`reminders` collides with [keith/reminders-cli](https://github.com/keith/reminders-cli), which installs a binary of the same name. Homebrew refuses to link both (`conflicts_with "reminders-cli"`); uninstall that formula first, or invoke RemCTL as `remctl`/`rctl` and keep `reminders-cli` unlinked.
+
 ## First Run
 
 ```bash
@@ -103,14 +117,14 @@ The checks that gate functionality are `platform`, `store_dir`, `database`, and 
 remctl setup
 ```
 
-`remctl setup` installs shell completion. For zsh, setup installs `_remctl` and prints the `fpath` lines that may need to be added to `~/.zshrc`:
+`remctl setup` installs shell completion for every name installed beside the binary — `_remctl`, `_rctl`, and `_reminders` for zsh — and prints the `fpath` lines that may need to be added to `~/.zshrc`:
 
 ```zsh
 fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
-`remctl doctor` reports `completion_fpath` when the installed zsh completion file does not appear in the exported `FPATH` or the usual zsh startup files.
+`remctl doctor` reports `completion_fpath` when the installed zsh completion file does not appear in the exported `FPATH` or the usual zsh startup files. Both `setup` and `doctor` look at the completion file for the name you invoked, so `rctl doctor` checks `_rctl`.
 
 To load completion directly in the current shell:
 
@@ -119,6 +133,8 @@ eval "$(remctl completion zsh)"
 eval "$(remctl completion bash)"
 remctl completion fish | source
 ```
+
+`completion` emits a script for the name it was invoked under: `rctl completion zsh` completes `rctl`, `reminders completion fish` completes `reminders`.
 
 ## For Agents and CI
 

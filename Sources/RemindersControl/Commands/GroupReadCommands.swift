@@ -109,13 +109,14 @@ struct GroupInfo: ParsableCommand {
     /// Port of `group_suggested_commands`.
     static func suggestedCommands(_ title: String) -> [(key: String, command: String)] {
         let quoted = WriteFormatting.shellQuote(title)
+        let cli = CLIName.current
         return [
-            ("show", "remctl show \(quoted)"),
-            ("showTable", "remctl show \(quoted) --format table"),
-            ("addList", "remctl group-edit \(quoted) --add-list LIST"),
-            ("moveList", "remctl group-edit \(quoted) --move-list LIST --before-list SIBLING"),
-            ("createList", "remctl list-create LIST --group \(quoted)"),
-            ("delete", "remctl group-delete \(quoted) --force"),
+            ("show", "\(cli) show \(quoted)"),
+            ("showTable", "\(cli) show \(quoted) --format table"),
+            ("addList", "\(cli) group-edit \(quoted) --add-list LIST"),
+            ("moveList", "\(cli) group-edit \(quoted) --move-list LIST --before-list SIBLING"),
+            ("createList", "\(cli) list-create LIST --group \(quoted)"),
+            ("delete", "\(cli) group-delete \(quoted) --force"),
         ]
     }
 

@@ -5,12 +5,17 @@ import ArgumentParser
 public struct RemindersControl: AsyncParsableCommand {
     public init() {}
 
-    public static let configuration = CommandConfiguration(
-        commandName: "remctl",
-        abstract: "Power-user CLI for Apple Reminders.",
-        version: remctlVersion,
-        subcommands: allSubcommands
-    )
+    /// Computed, not stored: `commandName` follows the name the binary was invoked
+    /// under so usage, help, and ArgumentParser's error hints say `rctl` or
+    /// `reminders` when the user typed those (upstream 5cb595a).
+    public static var configuration: CommandConfiguration {
+        CommandConfiguration(
+            commandName: CLIName.current,
+            abstract: "Power-user CLI for Apple Reminders.",
+            version: remctlVersion,
+            subcommands: allSubcommands
+        )
+    }
 
     /// Entry point. Normalizes argv before delegating to ArgumentParser so the
     /// `list-symbols --html` flag can be value-OPTIONAL — argparse's

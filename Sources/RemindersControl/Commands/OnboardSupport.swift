@@ -67,7 +67,7 @@ extension Onboard {
             status: .fail,
             detail: result.detail,
             fix: result.fix
-                ?? "Re-run `remctl onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
+                ?? "Re-run `\(CLIName.current) onboard` from the same terminal and click Allow when macOS asks for Reminders access.")
     }
 
     /// `applescript_access_check_for_onboarding` (remctl:3604). ok → confirmed
@@ -81,7 +81,7 @@ extension Onboard {
             status: .warn,
             detail: result.detail,
             fix: result.fix
-                ?? "Re-run `remctl onboard` from the same terminal and approve the Automation prompt if macOS asks. Flagged operations and AppleScript fallback writes rely on this access.")
+                ?? "Re-run `\(CLIName.current) onboard` from the same terminal and approve the Automation prompt if macOS asks. Flagged operations and AppleScript fallback writes rely on this access.")
     }
 
     /// `database_access_check_for_onboarding` (remctl:3644). REUSES the
@@ -95,7 +95,7 @@ extension Onboard {
                 name: "database",
                 status: .fail,
                 detail: accessError,
-                fix: fullDiskAccessFixText(rerunCommand: "remctl doctor --for-agent", mentionOnboard: false, env: env))
+                fix: fullDiskAccessFixText(rerunCommand: "\(CLIName.current) doctor --for-agent", mentionOnboard: false, env: env))
         }
         if let dbPath {
             return DoctorCheck(name: "database", status: .ok, detail: dbPath)
@@ -104,7 +104,7 @@ extension Onboard {
             name: "database",
             status: .fail,
             detail: "No Reminders database found.",
-            fix: "Enable iCloud Reminders and open Reminders.app once, then rerun `remctl onboard`.")
+            fix: "Enable iCloud Reminders and open Reminders.app once, then rerun `\(CLIName.current) onboard`.")
     }
 
     // ── State file ────────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ extension Onboard {
                 let settingsOpened = openFullDiskAccessSettings(open: openSettings)
                 out += printFullDiskAccessGuidance(
                     settingsOpened: settingsOpened,
-                    rerunCommand: "remctl doctor",
+                    rerunCommand: "\(CLIName.current) doctor",
                     ansi: ansi,
                     env: env,
                     runPbcopy: copyClipboard) + "\n"

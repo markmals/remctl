@@ -56,6 +56,9 @@ public struct DoctorProbes: Sendable {
     /// `str(find_main_db_path())` or nil when no Data-*.sqlite found.
     public var dbPath: String?
 
+    /// The name the CLI was invoked under (`remctl`, `rctl`, or `reminders`); the
+    /// fix hints and the PATH lookup both follow it.
+    public var cliName: String
     /// `str(current_cli_path())` and whether that path exists / is on $PATH.
     public var cliPath: String
     public var cliExists: Bool
@@ -94,6 +97,7 @@ public struct DoctorProbes: Sendable {
         cliPath: String,
         cliExists: Bool,
         cliOnPath: Bool,
+        cliName: String = CLIName.current,
         eventKitAuthStatus: EKAuthorizationStatus,
         reminderKitProbeResult: String,
         configDirPath: String,
@@ -114,6 +118,7 @@ public struct DoctorProbes: Sendable {
         self.cliPath = cliPath
         self.cliExists = cliExists
         self.cliOnPath = cliOnPath
+        self.cliName = cliName
         self.eventKitAuthStatus = eventKitAuthStatus
         self.reminderKitProbeResult = reminderKitProbeResult
         self.configDirPath = configDirPath
@@ -177,7 +182,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
             name: "database",
             status: hasDB ? .ok : .fail,
             detail: p.dbPath ?? "No Reminders database found",
-            fix: hasDB ? nil : "Enable iCloud Reminders and open Reminders.app once, or run remctl onboard."))
+            fix: hasDB ? nil : "Enable iCloud Reminders and open Reminders.app once, or run \(p.cliName) onboard."))
     }
 
     // 5. cli — status keys off existence; fix keys off PATH-presence (PRESERVED quirk:
@@ -197,7 +202,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
         name: "eventkit",
         status: ekOK ? .ok : .warn,
         detail: eventKitStatusDescription(p.eventKitAuthStatus),
-        fix: ekOK ? nil : "Reminders access is not granted; run remctl onboard to grant EventKit access."))
+        fix: ekOK ? nil : "Reminders access is not granted; run \(p.cliName) onboard to grant EventKit access."))
 
     // 7. reminderkit (RE-FRAME of `private_helper`) — in-process RKPProbe. WARN (never FAIL).
     let rkOK = p.reminderKitProbeResult == "reminderkit-ok"
@@ -214,7 +219,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
         name: "config_dir",
         status: p.configDirExists ? .ok : .warn,
         detail: p.configDirPath,
-        fix: p.configDirExists ? nil : "Run remctl setup to create config files."))
+        fix: p.configDirExists ? nil : "Run \(p.cliName) setup to create config files."))
 
     // 9. completion — supported-shell vs unsupported-shell branches.
     if ["zsh", "bash", "fish"].contains(p.shellName), let target = p.completionTargetPath {
@@ -222,7 +227,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
             name: "completion",
             status: p.completionTargetExists ? .ok : .warn,
             detail: "\(p.shellName): \(target)",
-            fix: p.completionTargetExists ? nil : "Run remctl setup --shell \(p.shellName) to install completion."))
+            fix: p.completionTargetExists ? nil : "Run \(p.cliName) setup --shell \(p.shellName) to install completion."))
         // 9a. completion_fpath (upstream aba7cf5) — zsh-only: an installed completion
         //     that zsh can't load is indistinguishable from a missing one to the user.
         if p.shellName == "zsh", p.completionTargetExists, let loadable = p.completionFpathLoadable {
@@ -243,7 +248,7 @@ public func gatherDoctorChecks(probes p: DoctorProbes) -> [DoctorCheck] {
             name: "completion",
             status: .warn,
             detail: "Unsupported shell '\(p.shellName)'",
-            fix: "Run remctl setup --shell zsh|bash|fish."))
+            fix: "Run \(p.cliName) setup --shell zsh|bash|fish."))
     }
 
     return checks
@@ -614,7 +619,7 @@ public enum DoctorRuntime {
 
         let cli = currentCLIPath(env: env)
         let cliExists = fm.fileExists(atPath: cli.path)
-        let cliOnPath = whichRemctl(env: env) != nil
+        let cliOnPath = whichCLI(env: env) != nil
 
         let shell = detectShellName(env: env)
         let completionURL = try? completionTargetPath(shell, env: env)
@@ -637,6 +642,7 @@ public enum DoctorRuntime {
             cliPath: cli.path,
             cliExists: cliExists,
             cliOnPath: cliOnPath,
+            cliName: CLIName.current,
             eventKitAuthStatus: EKEventStore.authorizationStatus(for: .reminder),
             reminderKitProbeResult: String(cString: RKPProbe()),
             configDirPath: configDir.path,
@@ -645,7 +651,10 @@ public enum DoctorRuntime {
             completionTargetPath: completionURL?.path,
             completionTargetExists: completionExists,
             completionFpathLoadable: fpathLoadable,
-            fullDiskAccessFixText: { fullDiskAccessFixText(rerunCommand: "remctl doctor --for-agent", mentionOnboard: true, env: env) })
+            fullDiskAccessFixText: {
+                fullDiskAccessFixText(
+                    rerunCommand: "\(CLIName.current) doctor --for-agent", mentionOnboard: true, env: env)
+            })
     }
 
     /// Assemble the doctor result dict + compute the exit code. Pure given probes and
@@ -689,22 +698,25 @@ public enum DoctorRuntime {
     }
 }
 
-/// Port of `current_cli_path` (remctl:6990): `which remctl` resolved, else the running
-/// binary path.
+/// Port of `current_cli_path` (remctl:6990, extended by upstream 5cb595a): `which`
+/// the invoked name, then `which remctl`, else the running binary path.
 func currentCLIPath(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-    if let onPath = whichRemctl(env: env) {
+    if let onPath = whichCLI(CLIName.current, env: env) ?? whichCLI(CLIName.canonical, env: env) {
         return URL(fileURLWithPath: onPath).resolvingSymlinksInPath()
     }
-    let exe = Bundle.main.executablePath ?? CommandLine.arguments.first ?? "remctl"
+    let exe = Bundle.main.executablePath ?? CommandLine.arguments.first ?? CLIName.canonical
     return URL(fileURLWithPath: exe).resolvingSymlinksInPath()
 }
 
-/// `shutil.which("remctl")` analogue: scan $PATH for an executable named `remctl`.
-func whichRemctl(env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+/// `shutil.which(name)` analogue: scan $PATH for an executable named `name`.
+func whichCLI(
+    _ name: String = CLIName.current,
+    env: [String: String] = ProcessInfo.processInfo.environment
+) -> String? {
     guard let pathVar = env["PATH"], !pathVar.isEmpty else { return nil }
     let fm = FileManager.default
     for dir in pathVar.split(separator: ":", omittingEmptySubsequences: true).map(String.init) {
-        let candidate = (dir as NSString).appendingPathComponent("remctl")
+        let candidate = (dir as NSString).appendingPathComponent(name)
         if fm.isExecutableFile(atPath: candidate) { return candidate }
     }
     return nil
@@ -777,7 +789,7 @@ func fullDiskAccessTargets(env: [String: String] = ProcessInfo.processInfo.envir
 
 /// Port of `full_disk_access_fix_text` (remctl:3385).
 func fullDiskAccessFixText(
-    rerunCommand: String = "remctl doctor",
+    rerunCommand: String = "\(CLIName.current) doctor",
     mentionOnboard: Bool = false,
     env: [String: String] = ProcessInfo.processInfo.environment
 ) -> String {
@@ -792,13 +804,13 @@ func fullDiskAccessFixText(
         return Bundle.main.executablePath ?? "remctl"
     }()
     let intro = mentionOnboard
-        ? "`remctl onboard` can open a guided permission helper, but macOS still requires you to add the access target manually."
+        ? "`\(CLIName.current) onboard` can open a guided permission helper, but macOS still requires you to add the access target manually."
         : "Full Disk Access is missing for this process context; macOS cannot grant it from the command line."
     var parts = [
         intro,
         "Current execution context: \(effectiveContext) (\(runtime)).",
-        "A green `remctl doctor` in Terminal does not grant access to a separate agent or app runner.",
-        "For the guided flow, run: remctl permissions full-disk-access",
+        "A green `\(CLIName.current) doctor` in Terminal does not grant access to a separate agent or app runner.",
+        "For the guided flow, run: \(CLIName.current) permissions full-disk-access",
         "Open System Settings > Privacy & Security > Full Disk Access and add:",
     ]
     parts.append(contentsOf: targets.map { "  \($0)" })
@@ -818,7 +830,7 @@ func isEventKitAccessError(_ message: String) -> Bool {
 /// Port of `eventkit_access_fix_text` (upstream cd31b51), for the direct (in-process) writer:
 /// Reminders access is granted per process context, so the fix must run where the write ran.
 func eventKitAccessFixText(
-    rerunCommand: String = "remctl doctor --for-agent",
+    rerunCommand: String = "\(CLIName.current) doctor --for-agent",
     env: [String: String] = ProcessInfo.processInfo.environment
 ) -> String {
     let context = doctorExecutionContext(env: env)
@@ -829,7 +841,7 @@ func eventKitAccessFixText(
     return [
         "EventKit writes are blocked in the current process context: \(field("effective_context", default: "this runner")).",
         "Host app: \(field("host_app", default: "the app or terminal launching remctl")).",
-        "Run `remctl onboard` from this same context so macOS can grant Reminders access.",
+        "Run `\(CLIName.current) onboard` from this same context so macOS can grant Reminders access.",
         "Then rerun `\(rerunCommand)` from the same context before writing.",
         "If the same command works in Terminal but fails here, Terminal's permission grant does not carry over to this app or agent runner.",
     ].joined(separator: "\n")

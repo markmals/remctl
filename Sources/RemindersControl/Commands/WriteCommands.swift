@@ -1142,7 +1142,7 @@ struct Done: AsyncParsableCommand {
         if completionISO != nil, let row = store.reminder(pk: id),
            recurrenceFromRow(row, ts: { AppleEpoch.ts($0) }) != nil {
             let message = "--date is not supported for recurring reminders. "
-                + "Use 'remctl done \(id)' without --date to advance the series."
+                + "Use '\(CLIName.current) done \(id)' without --date to advance the series."
             if json {
                 let payload: JSONValue = .object([
                     ("status", .string("error")),

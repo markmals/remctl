@@ -703,9 +703,9 @@ struct ListSymbols: ParsableCommand {
         print(ansi.bold("Official Reminders list symbols (\(rows.count)):"))
         // NOTE: the Python hint reads "... --private --symbol ..."; `--private` is removed in
         // the Swift port, so the hint drops it (documented human-output deviation).
-        print(ansi.dim("Use these with: remctl list-create \"Name\" --symbol <name>"))
+        print(ansi.dim("Use these with: \(CLIName.current) list-create \"Name\" --symbol <name>"))
         print(ansi.dim("The left column is an approximate text fallback, not native Reminders/SF Symbol rendering."))
-        print(ansi.dim("Tip: run `remctl list-symbols --preview` to open the native badge preview in your browser."))
+        print(ansi.dim("Tip: run `\(CLIName.current) list-symbols --preview` to open the native badge preview in your browser."))
         let width = rows.map { $0.name.count }.max() ?? 0
         print("  \(pad(ansi.dim("approx"), 2))  \(pad(ansi.dim("name"), width))  \(ansi.dim("asset"))")
         for row in rows {

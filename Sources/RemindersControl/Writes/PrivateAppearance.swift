@@ -87,7 +87,7 @@ public func validateListAppearanceArgs(
         let normalized = symbol.trimmingCharacters(in: .whitespaces)
         if !officialListSymbolNames.contains(normalized) {
             throw CLIError("unsupported list symbol \(WriteFormatting.pyRepr(normalized)). "
-                + "Run `remctl list-symbols` to see official names, or use --emoji for custom emoji badges.",
+                + "Run `\(CLIName.current) list-symbols` to see official names, or use --emoji for custom emoji badges.",
                            code: "invalid_list_appearance")
         }
     }

@@ -9,9 +9,11 @@ RemCTL is a power-user Apple Reminders CLI — a single Swift binary. It reads t
 
 Install: `brew install markmals/tap/remctl`. Requires macOS 14+.
 
+The binary answers to three names — `remctl`, `rctl`, and `reminders` — which behave identically; help, completions, and error hints use whichever name was typed. `reminders` is also keith/reminders-cli's binary name, so that formula cannot be linked at the same time.
+
 ## Default Workflow
 
-- Use the installed command: `remctl ...`.
+- Use the installed command: `remctl ...` (or `rctl ...` / `reminders ...`).
 - Prefer JSON for automation and verification: `remctl today --json`, `remctl show Work --json`, `remctl info <id> --json`.
 - The private-metadata flags are first-class — there is no opt-in flag. For private reminder metadata, use `add`/`edit` with `--section`, `--subtask`, `--urgent`, `--early-reminder`, `-t/--tags`, `--image`, etc. For list appearance / Groceries / pin state, use `list-create`, `list-edit`, `list-pin`, `list-unpin`. For custom smart lists, use `smart-list-create`/`-edit`/`-delete`. For templates, use `template-create`/`-apply`/`-delete`.
 

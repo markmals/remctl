@@ -128,7 +128,7 @@ enum SubtaskHierarchy {
         }
         if parent.listPk != reminder.listPk {
             throw CommandFailure("invalid_move", "#\(targetParentPk) is in list \(WriteFormatting.pyRepr(parent.listName)). "
-                                 + "Move #\(reminder.id) there first: remctl edit \(reminder.id) -l \(WriteFormatting.shellQuote(parent.listName))")
+                                 + "Move #\(reminder.id) there first: \(CLIName.current) edit \(reminder.id) -l \(WriteFormatting.shellQuote(parent.listName))")
         }
         if reminder.parentPk != targetParentPk && !store.siblingIdentifiers(listPk: reminder.listPk, parentPk: reminder.id).isEmpty {
             throw CommandFailure("invalid_move", "#\(reminder.id) has its own subtasks. Reminders allows one level of subtasks.")
