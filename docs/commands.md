@@ -181,13 +181,15 @@ How RemCTL picks the path from context on a bare `add`:
 - Private targets that can be checked up front (`--section`, `--section-id`, `--assign`) are resolved **before** the reminder is created. If a private step fails after the create, `add` exits 1 reporting the created reminder, the steps that completed, and the failed one, and tells you to finish with `edit` rather than re-running `add` (`--json`: `{"status":"error","code":"private_add_partial",…}` on stderr).
 
 ### `edit <id>`
-Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--set-tags`, `--clear-tags`, `--remove-tag` (repeatable), `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
 
 Date-only `-d` values keep the reminder all-day through the edit (re-setting the same all-day date nudges by a day, not an hour, so the change still syncs).
 
 Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list. `--address` is accepted but not supported for location alarms.
 
 `--url` on a public edit appends to the existing notes instead of replacing them; pass `-n/--notes` to replace the body first (`-n ""` clears it). A URL already present in the notes as its own word is not appended a second time, so repeating the same edit is safe.
+
+`-t/--tags` **adds** synced tags. `--set-tags a,b` replaces the whole synced tag set with exactly `a,b`, `--clear-tags` removes every tag, and repeatable `--remove-tag x` drops the named tags (matched case-insensitively) while keeping the rest. The three replacement flags are mutually exclusive with each other and with `-t/--tags`; a conflicting or empty request is refused before anything is written (`tag_replacement_conflicts_with_tags`, `conflicting_tag_replacement_modes`, `set_tags_requires_tag`, `remove_tag_requires_tag` under `--json`).
 
 An edit that changes nothing prints `Nothing to update.` and exits 0; under `--json` that is `{"status":"unchanged","code":"nothing_to_update","id":…,"title":…,"message":"Nothing to update."}`. Every `edit --json` result echoes `title`.
 
@@ -217,6 +219,9 @@ remctl edit 23880 --recurrence "weekly mon,wed"
 remctl edit 23880 --alarm clear
 remctl edit 23880 --section "Research" --subtask "Follow up"
 remctl edit 23880 --image ~/Desktop/mockup.png --flagged --urgent
+remctl edit 23880 --set-tags remctl,work
+remctl edit 23880 --remove-tag stale --remove-tag old
+remctl edit 23880 --clear-tags
 remctl edit 23880 --early-reminder 1h
 remctl edit 23880 --early-reminder clear
 remctl edit 23880 --location-title "Apple Park" --latitude 37.3349 --longitude -122.0090 --radius 200

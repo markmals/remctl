@@ -5,6 +5,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     enum Call: Equatable {
         case setFlagged(id: String, flagged: Bool)
         case addPrivateMetadata(id: String, urls: [String], tags: [String])
+        case setTags(id: String, tags: [String])
         case assignSection(id: String, sectionId: String)
         case assignSharee(id: String, assigneeId: String, originatorId: String)
         case clearAssignment(id: String)
@@ -56,6 +57,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
 
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult { calls.append(.setFlagged(id: id, flagged: flagged)); return try resultOr("updated") }
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult { calls.append(.addPrivateMetadata(id: id, urls: urls, tags: tags)); return try resultOr("updated") }
+    func setTags(id: String, tags: [String]) async throws -> PrivateResult { calls.append(.setTags(id: id, tags: tags)); return try resultOr("updated") }
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult { calls.append(.assignSection(id: id, sectionId: sectionId)); return try resultOr("updated") }
     func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult { calls.append(.assignSharee(id: id, assigneeId: assigneeId, originatorId: originatorId)); return try resultOr("updated") }
     func clearAssignment(id: String) async throws -> PrivateResult { calls.append(.clearAssignment(id: id)); return try resultOr("updated") }

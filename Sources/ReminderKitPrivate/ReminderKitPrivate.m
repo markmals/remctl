@@ -142,6 +142,7 @@
 
 @interface REMReminderHashtagContextChangeItem : NSObject
 - (id)addHashtagWithType:(NSInteger)type name:(NSString *)name;
+- (void)removeAllHashtags;
 @end
 
 @interface REMReminderFlaggedContextChangeItem : NSObject
@@ -871,6 +872,7 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"add_private_metadata",
                 @"add_url_attachments",
                 @"add_tags",
+                @"set_tags",
                 @"add_subtasks",
                 @"assign_section",
                 @"add_section_and_assign",
@@ -1608,6 +1610,15 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 if (urls.count == 0) { RKP_FAIL(@"At least one URL is required"); }
             } else if ([action isEqualToString:@"add_tags"]) {
                 if (tags.count == 0) { RKP_FAIL(@"At least one tag is required"); }
+            } else if ([action isEqualToString:@"set_tags"]) {
+                // Replacement drops every current hashtag first; the requested names are re-added
+                // below, in the same save, by the shared add-hashtags tail.
+                id hashtagContext = [change hashtagContext];
+                if (!hashtagContext || ![hashtagContext respondsToSelector:@selector(removeAllHashtags)]) {
+                    RKP_FAIL(@"ReminderKit hashtag context does not support tag replacement");
+                }
+                [hashtagContext removeAllHashtags];
+                details[@"tagsReplaced"] = @YES;
             } else if ([action isEqualToString:@"add_subtasks"]) {
                 NSString *subtaskError = nil;
                 NSArray<NSDictionary *> *subtaskSpecs = subtaskSpecArray(cmd, &subtaskError);
@@ -1848,7 +1859,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     addedURLs += 1;
                 }
             }
-            if (([action isEqualToString:@"add_private_metadata"] || [action isEqualToString:@"add_tags"]) && tags.count) {
+            if (([action isEqualToString:@"add_private_metadata"] || [action isEqualToString:@"add_tags"]
+                 || [action isEqualToString:@"set_tags"]) && tags.count) {
                 id hashtagContext = [change hashtagContext];
                 if (!hashtagContext || ![hashtagContext respondsToSelector:@selector(addHashtagWithType:name:)]) {
                     RKP_FAIL(@"ReminderKit hashtag context unavailable");

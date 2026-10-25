@@ -26,6 +26,15 @@ func privateDispatchMissingAction() {
     #expect(response["status"] as? String == "error")
 }
 
+@Test("RKPDispatch dispatches set_tags instead of refusing it")
+func privateDispatchSetTagsIsAllowed() {
+    // Past the allow-list the shared reminder tail rejects the missing id, which proves
+    // set_tags is dispatched — without reaching a save CI cannot perform.
+    let response = RKPDispatch(["action": "set_tags"])
+    #expect(response["status"] as? String == "error")
+    #expect(response["message"] as? String == "id is required")
+}
+
 // RKPLooksLikeWebURL is the host policy the helper applies before saving a rich link.
 // These cases are all numeric literals, so they never touch DNS.
 

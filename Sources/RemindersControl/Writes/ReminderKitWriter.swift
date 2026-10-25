@@ -209,6 +209,11 @@ public final class ReminderKitWriter: PrivateWriter {
         return await dispatchWithRetry(req)
     }
 
+    public func setTags(id: String, tags: [String]) async throws -> PrivateResult {
+        let req: [String: Any] = ["action": "set_tags", "id": id, "tags": tags]
+        return await dispatchWithRetry(req)
+    }
+
     public func assignSection(id: String, sectionId: String) async throws -> PrivateResult {
         let req: [String: Any] = ["action": "assign_section", "id": id, "sectionId": sectionId]
         return await dispatchWithRetry(req)

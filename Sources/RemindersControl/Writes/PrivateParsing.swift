@@ -75,6 +75,19 @@ public enum PrivateParsing {
             .filter { !$0.isEmpty }
     }
 
+    /// Port of `dedupe_tags` (remctl:4429). Normalizes each name like `splitCSV` does, then drops
+    /// case-insensitive duplicates, keeping the first spelling.
+    public static func dedupeTags(_ tags: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for raw in tags {
+            let tag = String(raw.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "#" }))
+            guard !tag.isEmpty, seen.insert(tag.lowercased()).inserted else { continue }
+            result.append(tag)
+        }
+        return result
+    }
+
     // MARK: - normalizeSectionId
 
     /// Port of `normalize_section_id` (remctl:2794).

@@ -411,6 +411,9 @@ struct Edit: AsyncParsableCommand {
 
     // Declared but Phase-3 (private ReminderKit metadata) — stubbed.
     @Option(name: [.short, .long], help: "Comma-separated synced tags") var tags: String?
+    @Option(name: .long, help: "Replace all synced tags with this comma-separated set") var setTags: String?
+    @Flag(name: .long, help: "Remove all synced tags") var clearTags = false
+    @Option(name: .long, help: "Remove one synced tag (repeatable)") var removeTag: [String] = []
     @Flag(name: .long, help: "Categorize in a Groceries list") var grocery = false
     @Option(name: .long, help: "Assign to an existing section") var section: String?
     @Option(name: .long, help: "Assign to a section by stable ID") var sectionId: String?
@@ -435,7 +438,8 @@ struct Edit: AsyncParsableCommand {
                 recurrence: args.recurrence, alarm: args.alarm,
                 locationTitle: args.locationTitle, latitude: args.latitude, longitude: args.longitude,
                 radius: args.radius, proximity: args.proximity,
-                tags: args.tags, grocery: args.grocery, section: args.section, sectionId: args.sectionId,
+                tags: args.tags, setTags: args.setTags, clearTags: args.clearTags, removeTag: args.removeTag,
+                grocery: args.grocery, section: args.section, sectionId: args.sectionId,
                 newSection: args.newSection, subtask: args.subtask, image: args.image,
                 flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder,
                 assign: args.assign, unassign: args.unassign, address: args.address,
@@ -451,7 +455,8 @@ struct Edit: AsyncParsableCommand {
         recurrence: String? = nil, alarm: String? = nil,
         locationTitle: String? = nil, latitude: Double? = nil, longitude: Double? = nil,
         radius: Double = 100.0, proximity: Proximity = .arriving,
-        tags: String? = nil, grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
+        tags: String? = nil, setTags: String? = nil, clearTags: Bool = false, removeTag: [String] = [],
+        grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
         newSection: String? = nil, subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil,
         assign: String? = nil, unassign: Bool = false, address: String? = nil,
@@ -479,16 +484,26 @@ struct Edit: AsyncParsableCommand {
         let subtaskSpecs = try PrivateParsing.parseSubtaskSpecs(subtask)
         let imagePaths = PrivateParsing.normalizeImagePaths(image)
 
+        // 2a. Tag replacement (upstream c0db904): reject conflicting/empty requests, then resolve
+        //     the exact tag set to write. `--remove-tag` subtracts from the reminder's current
+        //     tags, so it is read here, before any write.
+        if let failure = TagReplacement.validate(tags: tags, setTags: setTags, clearTags: clearTags, removeTag: removeTag) {
+            return failure.outcome(json: json)
+        }
+        let replacementTags = TagReplacement.resolve(
+            pk: id, store: store, setTags: setTags, clearTags: clearTags, removeTag: removeTag)
+
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
         // The private-only flags on edit are section/section-id/new-section/flagged/urgent/
         // early-reminder/grocery plus P13's --subtask/--image (both imply-private).
         // On edit, --tags has NO public fallback (cmd_edit:5417 errors without --private), so it
         // always routes through the private writer too — but tags ALONE is not "private-only" in
         // the source's gating set; it implies private because private_changes_from_args includes
-        // it. So when --tags is the only private flag, we still want it private. Fold that in.
+        // it. So when --tags is the only private flag, we still want it private. Fold that in,
+        // along with the tag-replacement flags (private_changes_from_args:5803-5805).
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
-            || assign != nil || unassign
+            || assign != nil || unassign || replacementTags != nil
             || !subtask.isEmpty || !image.isEmpty
 
         // Parse the early-reminder spec up front (validates format; bad → CLIError).
@@ -741,7 +756,8 @@ struct Edit: AsyncParsableCommand {
         // The source emits indent=2 JSON here (cmd_edit:5584) — a deliberate quirk vs the main path.
         if !hasChanges {
             let privateResults = try await applyPrivate(
-                reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
+                reminderCkid: ckid, url: url, tags: tags, replacementTags: replacementTags,
+                section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
                 assign: assign, unassign: unassign, grocery: grocery,
@@ -797,7 +813,8 @@ struct Edit: AsyncParsableCommand {
         var privateResults: [PrivateResult] = []
         if wantsPrivate {
             privateResults = try await applyPrivate(
-                reminderCkid: ckid, url: url, tags: tags, section: section, sectionId: sectionId,
+                reminderCkid: ckid, url: url, tags: tags, replacementTags: replacementTags,
+                section: section, sectionId: sectionId,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
                 assign: assign, unassign: unassign, grocery: grocery,
@@ -901,7 +918,7 @@ struct Edit: AsyncParsableCommand {
     /// Adapter: parse tags (CSV) and forward to the shared `PrivateChanges.apply` fan-out. The
     /// `flagged` collapse for edit is just the boolean as-is (add collapses --flag→true upstream).
     private static func applyPrivate(
-        reminderCkid: String, url: String?, tags: String?,
+        reminderCkid: String, url: String?, tags: String?, replacementTags: [String]?,
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec], images: [String],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
@@ -913,7 +930,7 @@ struct Edit: AsyncParsableCommand {
     ) async throws -> [PrivateResult] {
         try await PrivateChanges.apply(
             reminderCkid: reminderCkid,
-            url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
+            url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [], replacementTags: replacementTags,
             section: section, sectionId: sectionId, newSection: newSection,
             subtasks: subtasks, images: images,
             flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,

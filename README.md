@@ -117,7 +117,7 @@ remctl template-create "Packing Template" --from-list Packing
 
 Private metadata covers the parts of Reminders that EventKit does not:
 
-- **Reminder metadata:** synced web rich links (`--url`), synced tags (`-t/--tags`), sections (`--section`/`--section-id`/`--new-section`, and `section-create`/`section-rename`/`section-delete` for the sections themselves), rich subtasks (`--subtask`), image attachments (`--image`), real flag state (`-f/--flag`, `--flagged`), urgent state (`--urgent`), and Early Reminders (`--early-reminder`).
+- **Reminder metadata:** synced web rich links (`--url`), synced tags (`-t/--tags` to add, `edit --set-tags`/`--clear-tags`/`--remove-tag` to replace or remove), sections (`--section`/`--section-id`/`--new-section`, and `section-create`/`section-rename`/`section-delete` for the sections themselves), rich subtasks (`--subtask`), image attachments (`--image`), real flag state (`-f/--flag`, `--flagged`), urgent state (`--urgent`), and Early Reminders (`--early-reminder`).
 - **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), regular-list pin state, and custom-smart-list pin state (built-in smart-list pinning depends on the host's ReminderKit and fails before saving when it is missing).
 - **Smart lists:** custom smart-list create/edit/delete for the Reminders filters RemCTL has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete. Existing public template links are read-only; RemCTL does not create iCloud sharing links.
@@ -125,6 +125,7 @@ Private metadata covers the parts of Reminders that EventKit does not:
 A few rules keep this safe and predictable:
 
 - Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` always writes the real flag (like `edit --flagged`), so it takes the private path on its own.
+- `-t/--tags` only adds tags. `edit --set-tags a,b` replaces the synced tag set, `edit --clear-tags` empties it, and repeatable `edit --remove-tag x` drops named tags; the three are mutually exclusive with each other and with `-t/--tags`.
 - `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
 - Location alarms are written through EventKit's structured-location path (they persist reliably there); verify in `info --json` under `alarms`.
 - `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts are rejected before writing.

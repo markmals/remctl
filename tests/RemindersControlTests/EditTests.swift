@@ -450,6 +450,114 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
+    // MARK: - Tag replacement (--set-tags / --clear-tags / --remove-tag)
+
+    /// `withReminder()` plus tags Work, Home, Archive on reminder 42.
+    private func withTaggedReminder() throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (42,'T',10,1,0,0,'ABC')")
+            try db.execute(sql: "INSERT INTO ZREMCDHASHTAGLABEL (Z_PK,ZNAME) VALUES (1,'Work'),(2,'Home'),(3,'Archive')")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZREMINDER3,ZHASHTAGLABEL) VALUES (20,42,1),(21,42,2),(22,42,3)")
+        }
+    }
+
+    @Test func setTagsReplacesSyncedTags() async throws {
+        // --set-tags normalizes (`#` stripped) and dedupes case-insensitively (upstream c0db904).
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, setTags: "work,#home,WORK", json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: ["work", "home"])])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func clearTagsRemovesEveryTag() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, clearTags: true, json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: [])])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func removeTagKeepsTheRemainingTags() async throws {
+        // Names are matched case-insensitively against the stored tags; survivors keep their spelling.
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, removeTag: ["#work", "archive"], json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: ["Home"])])
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func removeTagSplitsCommaSeparatedValues() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, removeTag: ["work,home"], json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: ["Archive"])])
+    }
+
+    @Test func tagReplacementRunsBeforeTheOtherPrivateSteps() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, setTags: "work", urgent: true, json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: ["work"]), .setUrgent(id: "ABC", urgent: true)])
+    }
+
+    @Test func tagReplacementRidesAlongWithAFieldEdit() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, title: "New", clearTags: true, json: true, store: s, writer: m, private: mp)
+        #expect(updatedWrite(m)?.write.title == "New")
+        #expect(mp.calls == [.setTags(id: "ABC", tags: [])])
+        #expect(out.stdout == #"{"status": "updated", "id": 42, "title": "New", "private": [{"status": "updated"}]}"# + "\n")
+    }
+
+    @Test func tagReplacementRejectsAdditiveTags() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, tags: "new", setTags: "work", json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: -t/--tags adds synced tags and cannot be combined with --set-tags, --clear-tags, or --remove-tag.\n")
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func conflictingReplacementModesFailAsJSONBeforeAnyWrite() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, setTags: "work", clearTags: true, json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == #"{"status": "error", "code": "conflicting_tag_replacement_modes", "message": "pass only one of --set-tags, --clear-tags, or --remove-tag."}"# + "\n")
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func emptySetTagsIsRefused() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, setTags: " , ", json: true, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains(#""code": "set_tags_requires_tag""#))
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func emptyRemoveTagIsRefused() async throws {
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, removeTag: ["#"], json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --remove-tag requires a non-empty tag.\n")
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func removingAnAbsentTagRewritesTheExistingSet() async throws {
+        // Still one set_tags write: the reminder keeps the tags it has, nothing silently skipped.
+        let (s, dir) = try withTaggedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        _ = try await Edit.perform(id: 42, removeTag: ["nope"], json: false, store: s, writer: m, private: mp)
+        #expect(mp.calls == [.setTags(id: "ABC", tags: ["Work", "Home", "Archive"])])
+    }
+
     @Test func sectionRoutesPrivateOnly() async throws {
         // --section is private-only and resolves against the reminder's current list (ZLIST=10).
         let (s, dir) = try store { db in

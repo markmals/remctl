@@ -26,6 +26,7 @@ EventKit (public) and ReminderKit (private metadata) both run in-process; there 
 | Due date, priority, notes, recurrence, EventKit alarm | `add`/`edit` with `-d`, `-p`, `-n`, `--recurrence`, `--alarm` | `info <id> --json`; recurrence appears as `recurrence` |
 | Move a reminder to another list | `edit <id> -l LIST` or `edit <id> --list-id ID` | `info <id> --json` or `show <destination> --json` |
 | Synced rich URL, synced tags, section, shared-list assignment, subtask, image, real flag, urgent, Early Reminder, location alarm | `add`/`edit` with `--url`, `-t`, `--section`, `--assign`/`--unassign`, `--subtask`, `--image`, `--flagged`, `--urgent`, `--early-reminder`, `--location-*` | `info <id> --json`; UI/device check when sync matters |
+| Replace or remove synced reminder tags | `edit <id> --set-tags a,b`, `edit <id> --clear-tags`, `edit <id> --remove-tag x` | `info <id> --json` under `tags` |
 | List appearance, Groceries metadata, list/smart-list pin | `list-create`, `list-edit`, `list-pin`, `list-unpin` | `lists --json` (color/badge/Groceries/pin); `smart-lists --json` (smart-list appearance/pin) |
 | Create, rename, delete a list's sections | `section-create NAME -l LIST`, `section-rename NAME --new-name NEW -l LIST`, `section-delete NAME -l LIST --force` (or `--section-id`) | `sections --json`; each write already reports `verified: true` |
 | Custom smart list create/edit/delete | `smart-list-create`, `smart-list-edit`, `smart-list-delete` | `smart-lists --json` |
@@ -114,6 +115,9 @@ remctl add "Leave now" -l Work --urgent --json
 remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m --json
 remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}' --json
 remctl edit 23880 --url "https://example.com" -t remctl --json
+remctl edit 23880 --set-tags remctl,work --json
+remctl edit 23880 --remove-tag stale --json
+remctl edit 23880 --clear-tags --json
 remctl edit 23880 --section "Research" --subtask "Follow up" --json
 remctl edit 23880 --flagged --urgent --json
 remctl edit 23880 --early-reminder 1h --json
@@ -139,7 +143,7 @@ remctl template-delete "Packing Template" --force --json
 Private metadata rules:
 
 - `--url` creates a synced web rich link (public `http`/`https` host required) when other private metadata is present; otherwise it appends to notes.
-- `-t/--tags` creates synced tags when private metadata is present or on `edit`; on a bare `add` it writes inline `#hashtag` title tokens.
+- `-t/--tags` creates synced tags when private metadata is present or on `edit`; on a bare `add` it writes inline `#hashtag` title tokens. It is additive: use `edit --set-tags a,b` to replace the whole set, `edit --clear-tags` to empty it, or repeatable `edit --remove-tag x` to drop named tags (case-insensitive). The three replacement flags cannot be combined with each other or with `-t/--tags`, and are refused before any write.
 - `edit -l/--list` and `edit --list-id` move a reminder. A reminder with subtasks (or a move EventKit refuses across accounts) is moved by clone-delete and gets a **new id**: read `id` (new) and `oldId` from `--json` (`method: "clone-delete"`, `subtasksMoved`, `originalDeleted`) and chain the new id afterwards. Such a move cannot be combined with other edit flags — move first, then edit.
 - `--section` resolves by name (single non-empty match wins on duplicates); use `--section-id` for exact assignment. Both are resolved before `add` creates anything. `--new-section` appends to the list's existing section order.
 - `--early-reminder` writes Reminders' Early Reminder due-date delta alert: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; non-clear values require a due date. Verify in `info --json`.

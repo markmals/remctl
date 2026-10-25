@@ -31,6 +31,9 @@ public struct PrivateStepFailure: Error, CustomStringConvertible, Equatable {
 ///   9. add_location_alarm     (latitude/longitude)          — public/bridge path (not here)
 ///  10. categorize_grocery_items (grocery)                   — P14
 ///
+/// `replacementTags` (edit --set-tags/--clear-tags/--remove-tag) emits `set_tags` BEFORE step 1,
+/// matching apply_private_changes:6002.
+///
 /// P12 implements steps 1–3, 6–8. P13 implements steps 4–5 (subtasks + image attachments).
 /// P14 implements step 10 (grocery). The parent's location alarm (step 9) is EventKit-expressible
 /// and rides the public/bridge write path (write.location) in Add/Edit.perform, not this fan-out.
@@ -46,7 +49,7 @@ public enum PrivateChanges {
     /// new/existing due date is known — matching cmd_add:5156 / cmd_edit:5466-5469.
     public static func apply(
         reminderCkid: String,
-        url: String?, tags: [String],
+        url: String?, tags: [String], replacementTags: [String]? = nil,
         section: String?, sectionId: String?, newSection: String?,
         subtasks: [SubtaskSpec] = [], images: [String] = [],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
@@ -71,6 +74,11 @@ public enum PrivateChanges {
             }
             completed.append(action)
             return result
+        }
+
+        // set_tags — the already-resolved replacement set (empty clears every tag).
+        if let replacementTags {
+            results.append(try step("set_tags", await p.setTags(id: reminderCkid, tags: replacementTags)))
         }
 
         // 1. add_private_metadata — urls=[url] if present, tags as-is (already split by caller).

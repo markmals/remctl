@@ -76,6 +76,8 @@ public protocol PrivateWriter {
     // reminder-scoped (keyed by reminder ckIdentifier)
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult
+    /// Replaces the reminder's synced tags with exactly `tags`; an empty array removes them all.
+    func setTags(id: String, tags: [String]) async throws -> PrivateResult
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult
     /// `existingSectionIds` are the target list's current section CKIDs in display order; the new
     /// section is appended to them so creating a section does not wipe the existing ordering.

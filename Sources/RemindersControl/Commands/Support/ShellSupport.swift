@@ -169,6 +169,9 @@ _remctl() {
                 '--list-id[Move to list by stable numeric ID]:id:' \
                 '--url[URL, web rich link with --private]:url:' \
                 '(-t --tags)'{-t,--tags}'[Synced tags with --private]:tags:' \
+                '--set-tags[Replace all synced tags]:tags:' \
+                '--clear-tags[Remove all synced tags]' \
+                '--remove-tag[Remove one synced tag]:tag:' \
                 '(-n --notes)'{-n,--notes}'[Notes]:notes:' \
                 '(-d --due)'{-d,--due}'[Due date or clear]:due:' \
                 '(-p --priority)'{-p,--priority}'[Priority]:priority:(high medium low none)' \
@@ -409,7 +412,7 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --json" -- "$cur") )
@@ -701,6 +704,9 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -l proximity -d "Locati
 complete -c remctl -n "__fish_seen_subcommand_from edit" -s l -l list -d "Move to list" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l list-id -d "Move to list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -s t -l tags -d "Synced tags with --private" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l set-tags -d "Replace all synced tags" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l clear-tags -d "Remove all synced tags"
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l remove-tag -d "Remove one synced tag" -r
 
 """#
 }

@@ -20,7 +20,7 @@ Because there is no `--private` flag, RemCTL picks the path from **which flags a
 
 - **`--url`** — With no other private metadata present, `--url` is appended to the reminder's notes (public, EventKit). When other private metadata is present on the same command, it becomes a **synced web rich link** (private, ReminderKit).
 - **`add --tags` / `add -t`** — On a bare `add` with no other private metadata, tags are written as inline `#hashtag` tokens in the title (public). When private metadata is present, they become **synced Reminders tags** (private).
-- **`edit --tags` / `edit -t`** — Always a synced-tag write (private).
+- **`edit --tags` / `edit -t`** — Always a synced-tag write (private), and always additive. `edit --set-tags`, `edit --clear-tags`, and `edit --remove-tag` rewrite the set instead (private).
 - **`add -f/--flag`** — Always the **real Reminders flag** (private, ReminderKit), exactly like `edit --flagged`. Passing it routes the whole command through the private path.
 - **`edit -l/--list` and `edit --list-id`** — Ordinary EventKit list moves (public). Moving a reminder is not private metadata. If a move is combined with `--section` or `--grocery`, RemCTL validates that private metadata against the destination list.
 
@@ -41,6 +41,9 @@ remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m
 
 remctl edit 23880 --url "https://example.com"
 remctl edit 23880 -t remctl,work
+remctl edit 23880 --set-tags remctl,work
+remctl edit 23880 --remove-tag stale --remove-tag old
+remctl edit 23880 --clear-tags
 remctl edit 23880 --section "Research"
 remctl edit 23880 --section-id DCD255E2-7CF5-4B45-9566-3F9A5D84AFA8
 remctl edit 23880 --new-section "Inbox Zero"
@@ -55,6 +58,8 @@ remctl edit 23880 --early-reminder clear
 ### Rich links and tags
 
 `--url` writes a web rich link attachment when it routes private (see [routing](#public-vs-private-routing-no-flag)). Rich-link URLs — and any URL inside a rich subtask — must resolve to a public `http` or `https` host. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected **before** writing, as are IPv4-mapped IPv6 spellings of those addresses (`::ffff:127.0.0.1`) and literal fake-IP targets in `198.18.0.0/15`, including trailing-dot DNS spellings (`198.18.0.1.`). Host *names* that resolve into the fake-IP range stay allowed, because DNS proxies hand out those placeholders for real public names. `-t/--tags` writes real synced Reminders tags when it routes private.
+
+`-t/--tags` only adds tags. To rewrite the set, pass exactly one of `--set-tags a,b` (the reminder ends up with exactly those tags), `--clear-tags` (no tags left), or repeatable `--remove-tag x` (drops the named tags, case-insensitive, and keeps the rest). All three go through the private `set_tags` action, which removes every hashtag on the reminder and re-adds the requested names in one save. They cannot be combined with each other or with `-t/--tags`, and an empty `--set-tags`/`--remove-tag` value is refused before anything is written.
 
 ### Sections
 
