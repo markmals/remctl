@@ -223,11 +223,9 @@ import GRDB
         let out = try await Add.perform(title: "T", url: "https://x", flag: true, tags: "work,home",
                                         urgent: true, json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 0)
-        // Public proxies are NOT used when wantsPrivate: title keeps no #hashtags, write.flagged nil,
-        // write.url nil.
+        // Public proxies are NOT used when wantsPrivate: title keeps no #hashtags and write.url nil.
         let w = createdWrite(m)
         #expect(w?.title == "T")
-        #expect(w?.flagged == nil)
         #expect(w?.url == nil)
         // Private fan-out emission order: addPrivateMetadata, setFlagged, setUrgent.
         #expect(mp.calls == [
@@ -368,15 +366,14 @@ import GRDB
 
     // MARK: - P12: public/private imply-split
 
-    @Test func flagAloneUsesPublicProxy() async throws {
-        // --flag with NO private-only flag → PUBLIC: EventKit priority-proxy (write.flagged=true),
-        // private writer NOT called.
+    @Test func flagAloneWritesRealFlag() async throws {
+        // --flag implies the private path: the real flag goes through setFlagged, never through a
+        // public EventKit field (upstream c84fbca removed the priority proxy).
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); let mp = MockPrivateWriter()
         let out = try await Add.perform(title: "T", flag: true, json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 0)
-        #expect(createdWrite(m)?.flagged == true)
-        #expect(mp.calls.isEmpty)
+        #expect(mp.calls == [.setFlagged(id: "EK-NEW", flagged: true)])
     }
 
     @Test func tagsAloneAppendsHashtagsToTitle() async throws {
@@ -540,14 +537,12 @@ import GRDB
     }
 
     @Test func subtaskAndImageImplyPrivateFlagRoutesPrivate() async throws {
-        // With --subtask present, a bare --flag now routes through the private writer (setFlagged),
-        // NOT the EventKit priority-proxy (write.flagged stays nil on the create).
+        // --flag routes through the private writer (setFlagged) alongside the subtask fan-out.
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); m.resultID = "EK-NEW"
         let mp = MockPrivateWriter(); mp.subtasksResult = childResult("C1", "t")
         let out = try await Add.perform(title: "T", flag: true, subtask: ["t"], json: false, store: s, writer: m, private: mp)
         #expect(out.exitCode == 0)
-        #expect(createdWrite(m)?.flagged == nil)            // not the public proxy
         // Parent setFlagged appears after the add_subtasks (order: subtasks(4) → setFlagged(6)).
         #expect(mp.calls == [
             .addSubtasks(id: "EK-NEW", subtasks: [SubtaskSpec(title: "t")]),

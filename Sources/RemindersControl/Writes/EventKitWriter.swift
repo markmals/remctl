@@ -202,11 +202,6 @@ public final class EventKitWriter: RemindersWriter {
                 reminder.notes = u
             }
         }
-        // EventKit has no public flagged API; use priority 1 as a proxy (shows flag in Reminders.app)
-        if let f = write.flagged {
-            if f && reminder.priority == 0 { reminder.priority = 1 }
-            else if !f && reminder.priority == 1 { reminder.priority = 0 }
-        }
 
         if let spec = write.recurrence {
             guard let rule = buildRecurrenceRule(spec) else { throw WriteError("Invalid recurrence") }

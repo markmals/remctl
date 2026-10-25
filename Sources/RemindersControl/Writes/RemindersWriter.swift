@@ -55,7 +55,6 @@ public struct ReminderWrite: Equatable {
     public var priority: Int?            // 0/1/5/9
     public var notes: String?
     public var url: String?              // appended to notes (rich URL is Phase 3)
-    public var flagged: Bool?            // EventKit priority-proxy (real flag is Phase 3)
     public var recurrence: RecurrenceWrite?
     public var alarm: AlarmWrite?
     public var location: LocationAlarmWrite?

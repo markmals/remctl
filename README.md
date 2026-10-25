@@ -123,7 +123,7 @@ Private metadata covers the parts of Reminders that EventKit does not:
 
 A few rules keep this safe and predictable:
 
-- Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` alone is EventKit's lossy priority-proxy; with private metadata (or `edit --flagged`) it writes the real flag.
+- Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` always writes the real flag (like `edit --flagged`), so it takes the private path on its own.
 - `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
 - Location alarms are written through EventKit's structured-location path (they persist reliably there); verify in `info --json` under `alarms`.
 - `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected before writing.

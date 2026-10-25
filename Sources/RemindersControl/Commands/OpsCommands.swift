@@ -87,10 +87,8 @@ struct Import: AsyncParsableCommand {
     ///      Swift's decoder text differs, so only the `Failed to read JSON: ` prefix matches.
     ///   2. Error messages quote a non-string value (a recurrence object) as compact JSON where
     ///      Python prints a `dict` repr.
-    ///   3. `flagged: true` items: with P12 the imply-rule routes `--flag` ALONE through the
-    ///      PUBLIC EventKit priority-proxy (no private-only flag is set during import), so such
-    ///      items succeed (and count as `created`) rather than erroring. The private writer is
-    ///      threaded through but never invoked, since import never sets a private-only flag.
+    ///   3. `flagged: true` items: `--flag` implies the private path, so the import sets the real
+    ///      flag through the private writer after EventKit creates the reminder.
     static func perform(
         path: String,
         readFile: (String) -> Data?,
@@ -158,6 +156,7 @@ struct Import: AsyncParsableCommand {
             } else {
                 out += "Created: \(safeDisplay(item.title))\n"
             }
+
         }
 
         if json {

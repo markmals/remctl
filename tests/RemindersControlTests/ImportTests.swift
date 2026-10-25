@@ -231,11 +231,9 @@ import GRDB
         #expect(out.stderr.contains("Item 0: could not parse alarm 'whenever'"))
     }
 
-    @Test func importFlaggedItemUsesPublicProxy() async throws {
-        // P12 consequence: Add's --flag ALONE routes through the PUBLIC EventKit priority-proxy
-        // (no private-only flag is set during import → wantsPrivate is false), so a flagged:true
-        // item is now CREATED (write.flagged == true) rather than erroring. The private writer is
-        // threaded through but never invoked.
+    @Test func importFlaggedItemWritesRealFlag() async throws {
+        // Add's --flag implies the private path, so an imported flagged:true item is created by
+        // EventKit and then flagged for real through the private writer.
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let mp = MockPrivateWriter()
@@ -244,9 +242,8 @@ import GRDB
             readFile: reader(#"[{"title":"X","flagged":true}]"#),
             json: false, store: s, writer: m, private: mp, now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
-        #expect(createCount(m) == 1)               // item created via the public flag-proxy
-        #expect(mp.calls.isEmpty)                  // private writer NOT invoked
-        if case let .create(w)? = m.calls.first { #expect(w.flagged == true) }
+        #expect(createCount(m) == 1)
+        #expect(mp.calls == [.setFlagged(id: "EK-NEW", flagged: true)])
         #expect(out.stdout.hasSuffix("\nImported 1/1 reminders (0 errors)\n"))
     }
 

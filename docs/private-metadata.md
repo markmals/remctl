@@ -21,7 +21,7 @@ Because there is no `--private` flag, RemCTL picks the path from **which flags a
 - **`--url`** — With no other private metadata present, `--url` is appended to the reminder's notes (public, EventKit). When other private metadata is present on the same command, it becomes a **synced web rich link** (private, ReminderKit).
 - **`add --tags` / `add -t`** — On a bare `add` with no other private metadata, tags are written as inline `#hashtag` tokens in the title (public). When private metadata is present, they become **synced Reminders tags** (private).
 - **`edit --tags` / `edit -t`** — Always a synced-tag write (private).
-- **`add -f/--flag` alone** — EventKit's lossy priority-proxy flag (public). With private metadata present — or on `edit --flagged` — it writes the **real Reminders flag** (private).
+- **`add -f/--flag`** — Always the **real Reminders flag** (private, ReminderKit), exactly like `edit --flagged`. Passing it routes the whole command through the private path.
 - **`edit -l/--list` and `edit --list-id`** — Ordinary EventKit list moves (public). Moving a reminder is not private metadata. If a move is combined with `--section` or `--grocery`, RemCTL validates that private metadata against the destination list.
 
 Everything else (`--section`, `--subtask`, `--image`, `--urgent`, `--early-reminder`, list appearance, Groceries, smart lists, templates) is unambiguously private and always routes through ReminderKit.
@@ -80,7 +80,7 @@ Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic fi
 
 ### Flag and urgent
 
-`--flagged`/`-f` and `--urgent` set the real Reminders flag and urgent state (with `--no-flagged`/`--no-urgent` to clear them on `edit`). On a bare `add`, `-f/--flag` alone falls back to EventKit's priority-proxy flag; pair it with other private metadata, or use `edit --flagged`, to write the real flag.
+`--flagged`/`-f` and `--urgent` set the real Reminders flag and urgent state (with `--no-flagged`/`--no-urgent` to clear them on `edit`). `add -f/--flag`, `flag`, and `unflag` all write the real flag through ReminderKit; EventKit has no flagged API, so when that write fails the command exits 1 (`--json`: `{"status":"error","code":"flag_failed",…}` on stderr) instead of silently changing the priority.
 
 ### Early Reminders
 

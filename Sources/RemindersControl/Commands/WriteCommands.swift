@@ -87,12 +87,13 @@ struct Add: AsyncParsableCommand {
         }
 
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
-        // The private-only flags are section/section-id/new-section/urgent/early-reminder/grocery/
-        // assign/unassign plus P13's --subtask/--image (both imply-private — apply_private_changes
-        // runs them on the ckid). When wantsPrivate, --flag/--tags/--url route through the private
-        // writer; otherwise they keep their Phase-2 public behavior (EventKit flag-proxy / title
-        // #hashtags / notes-append).
-        let wantsPrivate = section != nil || sectionId != nil || newSection != nil
+        // The private-only flags are flag/section/section-id/new-section/urgent/early-reminder/
+        // grocery/assign/unassign plus P13's --subtask/--image (both imply-private —
+        // apply_private_changes runs them on the ckid). `--flag` is private-only because the real
+        // flag lives in ZFLAGGED, which only ReminderKit can write (upstream c84fbca). When
+        // wantsPrivate, --tags/--url route through the private writer too; otherwise they keep
+        // their Phase-2 public behavior (title #hashtags / notes-append).
+        let wantsPrivate = flag || section != nil || sectionId != nil || newSection != nil
             || urgent != nil || earlyReminder != nil || grocery
             || assign != nil || unassign
             || !subtask.isEmpty || !image.isEmpty
@@ -196,9 +197,6 @@ struct Add: AsyncParsableCommand {
         // --url: PUBLIC path only appends to notes (cmd_add:5203 `if a.url and not wants_private`).
         // When wantsPrivate, the url routes to addPrivateMetadata (step 7) instead.
         if let url, !url.isEmpty, !wantsPrivate { write.url = url }
-        // --flag: PUBLIC path only uses the EventKit priority-proxy (cmd_add:5202
-        // `if a.flag and not wants_private`). When wantsPrivate it routes to setFlagged (step 7).
-        if flag && !wantsPrivate { write.flagged = true }
         if let parsedRecurrence { write.recurrence = parsedRecurrence }
         if let parsedAlarm { write.alarm = parsedAlarm }
 
@@ -882,9 +880,8 @@ struct FlagCmd: AsyncParsableCommand {
 
     func run() async throws {
         let id = self.id, json = self.json
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
-            try await FlagCmd.performFlag(id: id, flagged: true, json: json,
-                                         store: store, writer: writer, private: priv)
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+            try await FlagCmd.performFlag(id: id, flagged: true, json: json, store: store, private: priv)
         })
     }
 }
@@ -896,9 +893,8 @@ struct Unflag: AsyncParsableCommand {
 
     func run() async throws {
         let id = self.id, json = self.json
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
-            try await FlagCmd.performFlag(id: id, flagged: false, json: json,
-                                         store: store, writer: writer, private: priv)
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+            try await FlagCmd.performFlag(id: id, flagged: false, json: json, store: store, private: priv)
         })
     }
 }
@@ -906,13 +902,12 @@ struct Unflag: AsyncParsableCommand {
 extension FlagCmd {
     /// Shared core for `flag` and `unflag`. Parameterised by `flagged`.
     ///
-    /// Strategy (mirrors cmd_flag / cmd_unflag in the Python CLI):
-    ///   1. PRIMARY: `PrivateWriter.setFlagged` — touches the real ZFLAGGED column.
-    ///   2. FALLBACK: EventKit priority-proxy via `RemindersWriter.update(id:flagged:)`.
-    ///   3. BOTH FAILED → throw the identifier-based-refusal WriteError (exit 1).
+    /// `PrivateWriter.setFlagged` is the ONLY path: it touches the real ZFLAGGED column. EventKit
+    /// has no public flagged API, so the old priority-1 proxy fallback reported success without
+    /// ever flagging anything — upstream c84fbca removed it and fails honestly instead.
     static func performFlag(
         id: Int, flagged: Bool, json: Bool,
-        store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter
+        store: RemindersStore, private priv: PrivateWriter
     ) async throws -> WriteOutcome {
         // Step 1: resolve the reminder row → (title, ckid).
         // resolveReminderForWrite throws:
@@ -921,36 +916,21 @@ extension FlagCmd {
         let (title, ckid) = try WriteDispatch.resolveReminderForWrite(
             store, id: id, op: flagged ? "flag it" : "unflag it")
 
-        // Step 2: PRIMARY — private writer (real ZFLAGGED via ReminderKit).
-        var privateSucceeded = false
+        // Step 2: the real flag write.
+        var failure: String? = nil
         do {
             let r = try await priv.setFlagged(id: ckid, flagged: flagged)
-            if r.status == "updated" { privateSucceeded = true }
+            if r.status != "updated" { failure = r.message ?? "private helper failed" }
+        } catch let e as WriteError {
+            failure = e.message.isEmpty ? "private helper failed" : e.message
         } catch {
-            // Private call threw — fall through to EventKit fallback.
+            failure = "\(error)"
+        }
+        if let failure {
+            return failFlag(id: id, title: title, flagged: flagged, reason: failure, json: json)
         }
 
-        // Step 3: FALLBACK — EventKit priority-proxy (lossy: 0↔1).
-        if !privateSucceeded {
-            var didFallback = false
-            do {
-                var w = ReminderWrite()
-                w.flagged = flagged
-                _ = try await writer.update(id: ckid, w)
-                didFallback = true
-            } catch {
-                // Fallback also failed — both paths failed.
-            }
-            if !didFallback {
-                // Both failed → refuse with the same message as _refuse_unsafe_title_fallback.
-                let shownTitle = safeDisplay(title.isEmpty ? "(untitled)" : title)
-                throw WriteError(
-                    "Identifier-based writes failed. Refusing unsafe title-based fallback for #\(id) " +
-                    "('\(shownTitle)') while trying to \(flagged ? "flag it" : "unflag it").")
-            }
-        }
-
-        // Step 4: success output.
+        // Step 3: success output.
         let verb = flagged ? "flagged" : "unflagged"
         let label = flagged ? "Flagged" : "Unflagged"
         if json {
@@ -962,6 +942,24 @@ extension FlagCmd {
             return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
         }
         return .ok("\(label): \(safeDisplay(title))\n")
+    }
+
+    /// Port of `_fail_flag_applescript` (remctl:11489), adapted: the fork's real-flag path is
+    /// ReminderKit, so the message names that instead of AppleScript. Exit 1, no write happened.
+    private static func failFlag(id: Int, title: String, flagged: Bool, reason: String, json: Bool) -> WriteOutcome {
+        let shownTitle = safeDisplay(title.isEmpty ? "(untitled)" : title)
+        let message = "Could not \(flagged ? "flag" : "unflag") #\(id) ('\(shownTitle)'): \(reason). "
+            + "EventKit cannot set the real flagged state, so there is no fallback."
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("flag_failed")),
+                ("id", .int(id)),
+                ("message", .string(message)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
     }
 }
 

@@ -45,17 +45,11 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()     // result status = "updated" by default
-        let mockWriter  = MockWriter()
 
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: true, json: false,
-            store: s, writer: mockWriter, private: mockPrivate)
+            id: 5, flagged: true, json: false, store: s, private: mockPrivate)
 
-        // Private writer called with correct args.
         #expect(mockPrivate.calls == [.setFlagged(id: "CK5", flagged: true)])
-        // EventKit writer NOT called (primary succeeded).
-        #expect(mockWriter.calls.isEmpty)
-        // Human output.
         #expect(out == WriteOutcome.ok("Flagged: Pay rent\n"))
     }
 
@@ -64,14 +58,11 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()
-        let mockWriter  = MockWriter()
 
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: false, json: false,
-            store: s, writer: mockWriter, private: mockPrivate)
+            id: 5, flagged: false, json: false, store: s, private: mockPrivate)
 
         #expect(mockPrivate.calls == [.setFlagged(id: "CK5", flagged: false)])
-        #expect(mockWriter.calls.isEmpty)
         #expect(out == WriteOutcome.ok("Unflagged: Pay rent\n"))
     }
 
@@ -81,12 +72,8 @@ import GRDB
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let mockPrivate = MockPrivateWriter()
-        let mockWriter  = MockWriter()
-
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: true, json: true,
-            store: s, writer: mockWriter, private: mockPrivate)
+            id: 5, flagged: true, json: true, store: s, private: MockPrivateWriter())
 
         // Compact JSON: status, id (numeric Z_PK), title (raw ZTITLE).
         // serialized(indent:nil, ensureAscii:true) produces {"k": v} with one space after colon.
@@ -98,133 +85,89 @@ import GRDB
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let mockPrivate = MockPrivateWriter()
-        let mockWriter  = MockWriter()
-
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: false, json: true,
-            store: s, writer: mockWriter, private: mockPrivate)
+            id: 5, flagged: false, json: true, store: s, private: MockPrivateWriter())
 
         #expect(out.stdout == #"{"status": "unflagged", "id": 5, "title": "Pay rent"}"# + "\n")
         #expect(out.exitCode == 0)
     }
 
-    // MARK: - Fallback path (private fails → EventKit proxy)
+    // MARK: - Honest failure (no EventKit priority proxy, upstream c84fbca)
 
-    @Test func flagFallsBackToEventKit() async throws {
+    @Test func flagFailsLoudlyWhenPrivateWriteFails() async throws {
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Private writer returns status "error" (not "updated") → triggers fallback.
+        // Private writer returns status "error" (not "updated").
         let mockPrivate = MockPrivateWriter()
         mockPrivate.result = PrivateResult(status: "error", message: "something went wrong")
-        let mockWriter  = MockWriter()
 
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: true, json: false,
-            store: s, writer: mockWriter, private: mockPrivate)
+            id: 5, flagged: true, json: false, store: s, private: mockPrivate)
 
-        // Private was still called.
         #expect(mockPrivate.calls == [.setFlagged(id: "CK5", flagged: true)])
-        // EventKit fallback called with flagged=true.
-        #expect(mockWriter.calls.count == 1)
-        if case let .update(id, w) = mockWriter.calls[0] {
-            #expect(id == "CK5")
-            #expect(w.flagged == true)
-        } else {
-            Issue.record("expected .update call, got \(mockWriter.calls[0])")
-        }
-        // Success output (fallback succeeded).
-        #expect(out == WriteOutcome.ok("Flagged: Pay rent\n"))
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == "Error: Could not flag #5 ('Pay rent'): something went wrong. "
+            + "EventKit cannot set the real flagged state, so there is no fallback.\n")
     }
 
-    @Test func unflagFallsBackToEventKit() async throws {
+    @Test func unflagFailsLoudlyWhenPrivateWriteFails() async throws {
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()
         mockPrivate.result = PrivateResult(status: "error", message: "rk unavailable")
-        let mockWriter  = MockWriter()
 
         let out = try await FlagCmd.performFlag(
-            id: 5, flagged: false, json: false,
-            store: s, writer: mockWriter, private: mockPrivate)
-
-        #expect(mockPrivate.calls == [.setFlagged(id: "CK5", flagged: false)])
-        #expect(mockWriter.calls.count == 1)
-        if case let .update(id, w) = mockWriter.calls[0] {
-            #expect(id == "CK5")
-            #expect(w.flagged == false)
-        } else {
-            Issue.record("expected .update call, got \(mockWriter.calls[0])")
-        }
-        #expect(out == WriteOutcome.ok("Unflagged: Pay rent\n"))
-    }
-
-    // MARK: - Both fail → refusal
-
-    @Test func flagBothFailRefuses() async throws {
-        let (s, dir) = try withPayRent()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        // Private: status "error" (non-updated).
-        let mockPrivate = MockPrivateWriter()
-        mockPrivate.result = PrivateResult(status: "error", message: "rk down")
-        // EventKit: throws.
-        let mockWriter  = MockWriter()
-        mockWriter.throwError = WriteError("ek write failed")
-
-        let out = await WriteDispatch.perform {
-            try await FlagCmd.performFlag(
-                id: 5, flagged: true, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
-        }
+            id: 5, flagged: false, json: false, store: s, private: mockPrivate)
 
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: Identifier-based writes failed. Refusing unsafe title-based fallback for #5 ('Pay rent') while trying to flag it.\n")
         #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains("Could not unflag #5 ('Pay rent'): rk unavailable."))
     }
 
-    @Test func unflagBothFailRefuses() async throws {
+    @Test func flagFailureJSONIsStructured() async throws {
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()
         mockPrivate.result = PrivateResult(status: "error", message: "rk down")
-        let mockWriter  = MockWriter()
-        mockWriter.throwError = WriteError("ek write failed")
 
-        let out = await WriteDispatch.perform {
-            try await FlagCmd.performFlag(
-                id: 5, flagged: false, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
-        }
+        let out = try await FlagCmd.performFlag(
+            id: 5, flagged: true, json: true, store: s, private: mockPrivate)
 
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: Identifier-based writes failed. Refusing unsafe title-based fallback for #5 ('Pay rent') while trying to unflag it.\n")
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == #"{"status": "error", "code": "flag_failed", "id": 5, "message": "Could not flag #5 ('Pay rent'): rk down. EventKit cannot set the real flagged state, so there is no fallback."}"# + "\n")
     }
 
-    // MARK: - Both fail with private throwing
-
-    @Test func flagBothFailWhenPrivateThrows() async throws {
+    @Test func flagFailsWhenPrivateThrows() async throws {
         let (s, dir) = try withPayRent()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Private throws instead of returning error status.
         let mockPrivate = MockPrivateWriter()
         mockPrivate.throwError = WriteError("rk threw")
-        let mockWriter  = MockWriter()
-        mockWriter.throwError = WriteError("ek also threw")
 
-        let out = await WriteDispatch.perform {
-            try await FlagCmd.performFlag(
-                id: 5, flagged: true, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
-        }
+        let out = try await FlagCmd.performFlag(
+            id: 5, flagged: true, json: false, store: s, private: mockPrivate)
 
         #expect(out.exitCode == 1)
-        #expect(out.stderr.contains("Identifier-based writes failed"))
-        #expect(out.stderr.contains("flag it"))
+        #expect(out.stderr.contains("Could not flag #5 ('Pay rent'): rk threw."))
+    }
+
+    @Test func flagFailureWithoutMessageUsesDefault() async throws {
+        let (s, dir) = try withPayRent()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let mockPrivate = MockPrivateWriter()
+        mockPrivate.result = PrivateResult(status: "error")
+
+        let out = try await FlagCmd.performFlag(
+            id: 5, flagged: true, json: false, store: s, private: mockPrivate)
+
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("private helper failed"))
     }
 
     // MARK: - Not found
@@ -234,18 +177,15 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()
-        let mockWriter  = MockWriter()
 
         let out = await WriteDispatch.perform {
             try await FlagCmd.performFlag(
-                id: 999, flagged: true, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
+                id: 999, flagged: true, json: false, store: s, private: mockPrivate)
         }
 
         #expect(out.exitCode == 1)
         #expect(out.stderr == "Error: #999 not found\n")
         #expect(mockPrivate.calls.isEmpty)
-        #expect(mockWriter.calls.isEmpty)
     }
 
     @Test func unflagNotFound() async throws {
@@ -254,8 +194,7 @@ import GRDB
 
         let out = await WriteDispatch.perform {
             try await FlagCmd.performFlag(
-                id: 1, flagged: false, json: false,
-                store: s, writer: MockWriter(), private: MockPrivateWriter())
+                id: 1, flagged: false, json: false, store: s, private: MockPrivateWriter())
         }
 
         #expect(out.exitCode == 1)
@@ -280,21 +219,17 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let mockPrivate = MockPrivateWriter()
-        let mockWriter  = MockWriter()
 
         let out = await WriteDispatch.perform {
             try await FlagCmd.performFlag(
-                id: 7, flagged: true, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
+                id: 7, flagged: true, json: false, store: s, private: mockPrivate)
         }
 
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("no stable identifier"))
         #expect(out.stderr.contains("flag it"))
         #expect(out.stderr.contains("Buy milk"))
-        // Neither writer should be called.
         #expect(mockPrivate.calls.isEmpty)
-        #expect(mockWriter.calls.isEmpty)
     }
 
     @Test func unflagNoIdentifierRefuses() async throws {
@@ -309,8 +244,7 @@ import GRDB
 
         let out = await WriteDispatch.perform {
             try await FlagCmd.performFlag(
-                id: 8, flagged: false, json: false,
-                store: s, writer: MockWriter(), private: MockPrivateWriter())
+                id: 8, flagged: false, json: false, store: s, private: MockPrivateWriter())
         }
 
         #expect(out.exitCode == 1)
@@ -318,9 +252,9 @@ import GRDB
         #expect(out.stderr.contains("unflag it"))
     }
 
-    // MARK: - Untitled reminder in both-fail message
+    // MARK: - Untitled reminder in the failure message
 
-    @Test func flagBothFailUntitledReminder() async throws {
+    @Test func flagFailureShowsUntitledReminder() async throws {
         // Reminder with empty title → should show "(untitled)" in error.
         let (s, dir) = try store { db in
             try db.execute(sql: """
@@ -333,17 +267,12 @@ import GRDB
 
         let mockPrivate = MockPrivateWriter()
         mockPrivate.result = PrivateResult(status: "error")
-        let mockWriter  = MockWriter()
-        mockWriter.throwError = WriteError("ek fail")
 
-        let out = await WriteDispatch.perform {
-            try await FlagCmd.performFlag(
-                id: 3, flagged: true, json: false,
-                store: s, writer: mockWriter, private: mockPrivate)
-        }
+        let out = try await FlagCmd.performFlag(
+            id: 3, flagged: true, json: false, store: s, private: mockPrivate)
 
         #expect(out.exitCode == 1)
         #expect(out.stderr.contains("(untitled)"))
-        #expect(out.stderr.contains("flag it"))
+        #expect(out.stderr.contains("Could not flag #3"))
     }
 }

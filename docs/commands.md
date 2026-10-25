@@ -167,7 +167,7 @@ How RemCTL picks the path from context on a bare `add`:
 
 - `--url` requires a public `http`/`https` host. With no other private metadata it appends to notes; alongside private metadata it becomes a synced web rich link.
 - `-t/--tags` writes inline `#hashtag` title tokens on a bare add, but synced tags when private metadata is present (`edit --tags` is always a synced-tag write).
-- `-f/--flag` alone is EventKit's lossy priority proxy; with private metadata present (or `edit --flagged`) it writes the real flag.
+- `-f/--flag` always writes the real Reminders flag through ReminderKit, so it implies the private path (as `edit --flagged` does). EventKit has no flagged API, so a failed flag write is reported as an error — RemCTL never substitutes a priority change.
 
 ### `edit <id>`
 Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (ordinary EventKit move), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.

@@ -45,11 +45,12 @@ $BIN flag $ID
 
 - ✅ **Flag appears in Reminders.app** → the entitlement-free in-process ReminderKit save WORKS. The
   whole private layer is viable. Proceed.
-- ❌ **`flag` reports success but no flag appears, OR the value is wrong** → `set_flagged` fell back to
-  the EventKit priority-proxy (you'll see a priority change instead of a flag), meaning the private
-  `setFlagged` save did NOT materialize → **the gating assumption is broken.** Stop and report this; it
-  is the single most important result of this run. (Check `remctl info $ID --json` for `flagged` vs
-  `priority`.)
+- ❌ **`flag` reports success but no flag appears, OR the value is wrong** → the private `setFlagged`
+  save reported `updated` without materializing → **the gating assumption is broken.** Stop and report
+  this; it is the single most important result of this run. (Check `remctl info $ID --json` for
+  `flagged`.)
+- ❌ **`Error: Could not flag #<id> …` (exit 1, `code: flag_failed` under `--json`)** → the private
+  save failed and said so. There is no EventKit fallback: EventKit cannot set the real flag.
 - ❌ **An `Error:` mentioning a private-API fault / unrecognized selector** → a selector typo in the
   ported `set_flagged` handler. Report the exact message.
 
