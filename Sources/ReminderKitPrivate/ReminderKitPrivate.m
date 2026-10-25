@@ -1,6 +1,7 @@
 #import "ReminderKitPrivate.h"
 #import <AppKit/AppKit.h>
 #include <arpa/inet.h>
+#include <dlfcn.h>
 #include <netdb.h>
 #include <netinet/in.h>
 
@@ -16,10 +17,21 @@
 @interface REMObjectID : NSObject
 + (id)objectIDWithURL:(NSURL *)url;
 - (NSUUID *)uuid;
+- (NSString *)entityName;
 - (NSURL *)urlRepresentation;
 @end
 
+// The Recently Deleted view is a ReminderKitInternal Swift invocation object. It ships no ObjC
+// class declaration at all, so it is allocated from a runtime-resolved Class.
+@interface NSObject (RKPRecoveryInvocation)
+- (id)initWithFetchResultTokenToDiffAgainst:(id)token;
+- (NSData *)resultData;
+@end
+
 @interface REMStore : NSObject
+- (id)resultFromPerformingSwiftInvocation:(id)invocation parametersData:(NSData *)data storages:(id)storages error:(NSError **)error;
+- (NSArray *)fetchAccountsWithError:(NSError **)error;
+- (id)fetchReminderIncludingMarkedForDeleteWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchReminderWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchListWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchSmartListWithObjectID:(id)objectID error:(NSError **)error;
@@ -65,6 +77,7 @@
 
 @interface REMAccountCapabilities : NSObject
 - (BOOL)supportsCustomSmartLists;
+- (BOOL)supportsRecentlyDeletedList;
 @end
 
 @interface REMSmartListChangeItem : NSObject
@@ -117,6 +130,7 @@
 - (id)urgentAlarmContext;
 - (void)addAlarm:(id)alarm;
 - (void)removeFromParentReminder;
+- (void)setListID:(id)listID;
 @end
 
 @interface REMReminderSubtaskContextChangeItem : NSObject
@@ -191,6 +205,7 @@
 - (void)insertReminderChangeItem:(id)changeItem beforeReminderChangeItem:(id)siblingChangeItem;
 - (void)insertReminderChangeItem:(id)changeItem afterReminderChangeItem:(id)siblingChangeItem;
 - (void)addReminderChangeItem:(id)changeItem;
+- (void)undeleteRemindersWithoutUndoWithIDs:(NSArray *)ids;
 @end
 
 @interface REMManualOrdering : NSObject
@@ -1390,6 +1405,157 @@ static NSString *assignSmartListSection(REMStore *store, REMSaveRequest *save, i
     return nil;
 }
 
+#pragma mark - Recently Deleted (upstream a413c19, 42e6b24, c831b05)
+
+/// One account's recoverable reminders, straight from Apple's Recently Deleted view. The
+/// deleted database flag alone also matches rows Reminders has already purged, so membership
+/// NEVER comes from SQLite. Returns the view's reminder array, or nil with *outError set.
+static NSArray *recentlyDeletedReminders(REMStore *store, REMAccount *account, NSString **outError) {
+    dlopen("/System/Library/PrivateFrameworks/ReminderKitInternal.framework/ReminderKitInternal", RTLD_NOW);
+    Class invocationClass = NSClassFromString(@"REMRemindersListDataView_RecentlyDeletedInvocation");
+    id accountID = [account respondsToSelector:@selector(remObjectID)] ? [account remObjectID] : nil;
+    if (!invocationClass || ![invocationClass instancesRespondToSelector:@selector(initWithFetchResultTokenToDiffAgainst:)]
+        || ![store respondsToSelector:@selector(resultFromPerformingSwiftInvocation:parametersData:storages:error:)]
+        || ![accountID respondsToSelector:@selector(uuid)] || ![accountID respondsToSelector:@selector(entityName)]) {
+        if (outError) *outError = @"Recently Deleted is unavailable on this macOS version";
+        return nil;
+    }
+    NSDictionary *params = @{
+        @"accountID": @{@"uuid": [[accountID uuid] UUIDString], @"entityName": [accountID entityName]},
+        @"deletedAfterDate": [NSDate dateWithTimeIntervalSinceNow:-30 * 24 * 60 * 60],
+        @"remindersPrefetch": @{@"base": @"none"}, @"countCompleted": @YES,
+    };
+    NSError *error = nil;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:params
+                                                              format:NSPropertyListBinaryFormat_v1_0
+                                                             options:0 error:&error];
+    if (!data) {
+        if (outError) *outError = error.localizedDescription ?: @"Could not encode the Recently Deleted query";
+        return nil;
+    }
+    id invocation = [[invocationClass alloc] initWithFetchResultTokenToDiffAgainst:nil];
+    id result = [store resultFromPerformingSwiftInvocation:invocation parametersData:data storages:nil error:&error];
+    if (!result || ![result respondsToSelector:@selector(resultData)]) {
+        if (outError) *outError = error.localizedDescription ?: @"Recently Deleted query failed";
+        return nil;
+    }
+    id decoded = [NSPropertyListSerialization propertyListWithData:[result resultData]
+                                                           options:NSPropertyListImmutable format:NULL error:&error];
+    id model = [decoded isKindOfClass:[NSDictionary class]] ? decoded[@"model"] : nil;
+    id reminders = [model isKindOfClass:[NSDictionary class]] ? model[@"reminders"] : nil;
+    if (![reminders isKindOfClass:[NSArray class]]) {
+        if (outError) *outError = @"Unexpected Recently Deleted response; update RemCTL for this macOS version";
+        return nil;
+    }
+    return reminders;
+}
+
+/// Whether this account exposes the Recently Deleted list at all (local and Exchange ones do not).
+static BOOL accountSupportsRecentlyDeleted(REMAccount *account) {
+    if (![account respondsToSelector:@selector(capabilities)]) return NO;
+    id capabilities = [account capabilities];
+    return [capabilities respondsToSelector:@selector(supportsRecentlyDeletedList)]
+        && [capabilities supportsRecentlyDeletedList];
+}
+
+/// Read-only action: every supported account's recoverable reminders, each with its deleted
+/// subtasks nested under `subtasks`, exactly as Reminders reports them.
+static NSDictionary *recentlyDeleted(void) {
+    REMStore *store = [REMStore new];
+    if (![store respondsToSelector:@selector(fetchAccountsWithError:)]) {
+        RKP_FAIL(@"Recently Deleted is unavailable on this macOS version");
+    }
+    NSError *error = nil;
+    NSArray *accounts = [store fetchAccountsWithError:&error];
+    if (!accounts) { RKP_FAIL(error.localizedDescription ?: @"Could not fetch Reminders accounts"); }
+    NSMutableArray *items = [NSMutableArray array];
+    BOOL queriedAccount = NO;
+    for (REMAccount *account in accounts) {
+        if (!accountSupportsRecentlyDeleted(account)) { continue; }
+        NSString *failure = nil;
+        NSArray *reminders = recentlyDeletedReminders(store, account, &failure);
+        if (!reminders) { RKP_FAIL(failure); }
+        [items addObjectsFromArray:reminders];
+        queriedAccount = YES;
+    }
+    if (!queriedAccount) { RKP_FAIL(@"No account supports Recently Deleted on this Mac"); }
+    return @{@"status": @"ok", @"reminders": items};
+}
+
+/// The recovery-view entry for `reminderID`, or nil when it is not a recoverable TOP-LEVEL item
+/// of that view (a deleted subtask is only recoverable through its parent).
+static NSDictionary *recoverableRoot(NSArray *reminders, NSString *reminderID) {
+    for (NSDictionary *item in reminders) {
+        id oid = [item isKindOfClass:[NSDictionary class]] ? item[@"objectID"] : nil;
+        NSString *uuid = [oid isKindOfClass:[NSDictionary class]] ? oid[@"uuid"] : nil;
+        if ([uuid isKindOfClass:[NSString class]] && [uuid caseInsensitiveCompare:reminderID] == NSOrderedSame) {
+            return item;
+        }
+    }
+    return nil;
+}
+
+/// Undeletes a reminder and its deleted subtasks into `listId`, keeping every identifier.
+static NSDictionary *restoreReminder(NSDictionary *cmd) {
+    NSString *reminderID = cmd[@"reminderId"], *listID = cmd[@"listId"];
+    if (![reminderID isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:reminderID]
+        || ![listID isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:listID]) {
+        RKP_FAIL(@"Valid reminderId and listId are required");
+    }
+    id targetID = [REMObjectID objectIDWithURL:listURL(listID)];
+    if (!targetID) { RKP_FAIL(@"Could not build ReminderKit list object ID"); }
+    NSError *error = nil;
+    REMStore *store = [REMStore new];
+    REMList *list = [store fetchListWithObjectID:targetID error:&error];
+    if (!list) { RKP_FAIL(error.localizedDescription ?: @"Destination list not found"); }
+    REMAccount *account = [list account];
+    if (!accountSupportsRecentlyDeleted(account)) { RKP_FAIL(@"This account does not support Recently Deleted"); }
+    NSString *failure = nil;
+    NSArray *reminders = recentlyDeletedReminders(store, account, &failure);
+    if (!reminders) { RKP_FAIL(failure); }
+    NSDictionary *deletedRoot = recoverableRoot(reminders, reminderID);
+    if (!deletedRoot) {
+        RKP_FAIL(@"Reminder is not a recoverable top-level item in the destination account; restore its parent if it is a subtask");
+    }
+    id objectID = [REMObjectID objectIDWithURL:reminderURL(reminderID)];
+    if (![store respondsToSelector:@selector(fetchReminderIncludingMarkedForDeleteWithObjectID:error:)]) {
+        RKP_FAIL(@"Deleted reminder fetch is unavailable on this macOS version");
+    }
+    id reminder = [store fetchReminderIncludingMarkedForDeleteWithObjectID:objectID error:&error];
+    if (!reminder) { RKP_FAIL(error.localizedDescription ?: @"Deleted reminder is no longer available"); }
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    REMListChangeItem *change = [save updateList:list];
+    if (![change respondsToSelector:@selector(undeleteRemindersWithoutUndoWithIDs:)]) {
+        RKP_FAIL(@"Reminder recovery is unavailable on this macOS version");
+    }
+    [change undeleteRemindersWithoutUndoWithIDs:@[objectID]];
+    // Deleted children can still point at the old list, including a deleted one. Reparent them in
+    // the same save request that recovers the root (upstream 42e6b24).
+    NSMutableArray *pending = [NSMutableArray arrayWithArray:deletedRoot[@"subtasks"] ?: @[]];
+    while (pending.count) {
+        NSDictionary *child = pending.lastObject;
+        [pending removeLastObject];
+        id childOID = [child isKindOfClass:[NSDictionary class]] ? child[@"objectID"] : nil;
+        NSString *childUUID = [childOID isKindOfClass:[NSDictionary class]] ? childOID[@"uuid"] : nil;
+        if (![childUUID isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:childUUID]) {
+            RKP_FAIL(@"Unexpected Recently Deleted subtask identifier");
+        }
+        id childID = [REMObjectID objectIDWithURL:reminderURL(childUUID)];
+        id childReminder = [store fetchReminderIncludingMarkedForDeleteWithObjectID:childID error:&error];
+        if (!childReminder) { RKP_FAIL(error.localizedDescription ?: @"Deleted subtask is no longer available"); }
+        REMReminderChangeItem *childChange = [save updateReminder:childReminder];
+        if (![childChange respondsToSelector:@selector(setListID:)]) {
+            RKP_FAIL(@"Subtask recovery into another list is unavailable");
+        }
+        [childChange setListID:targetID];
+        [pending addObjectsFromArray:child[@"subtasks"] ?: @[]];
+    }
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"Reminder recovery failed");
+    }
+    return @{@"status": @"updated", @"action": @"restore_reminder"};
+}
+
 #pragma mark - Dispatch
 
 NSDictionary *RKPDispatch(NSDictionary *request) {
@@ -1437,6 +1603,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"apply_template",
                 @"delete_template",
                 @"clone_reminder_tree_to_list",
+                @"recently_deleted",
+                @"restore_reminder",
             ]];
             if (![action isKindOfClass:[NSString class]] || ![allowedActions containsObject:action]) {
                 RKP_FAIL(@"Unknown action");
@@ -1452,6 +1620,8 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
             if ([action isEqualToString:@"move_reminder_in_list"]) { return moveReminderInList(cmd); }
             if ([action isEqualToString:@"set_smart_list_manual_order"]) { return setSmartListManualOrder(cmd); }
             if ([action isEqualToString:@"move_reminder_in_hierarchy"]) { return moveReminderInHierarchy(cmd); }
+            if ([action isEqualToString:@"recently_deleted"]) { return recentlyDeleted(); }
+            if ([action isEqualToString:@"restore_reminder"]) { return restoreReminder(cmd); }
 
             if ([action isEqualToString:@"create_list"]) {
                 NSString *name = cmd[@"name"];

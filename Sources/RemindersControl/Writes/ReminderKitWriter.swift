@@ -199,6 +199,16 @@ public final class ReminderKitWriter: PrivateWriter {
         return d
     }
 
+    // MARK: - PrivateWriter — Recently Deleted
+
+    public func recentlyDeleted() async throws -> PrivateResult {
+        dispatch(["action": "recently_deleted"])
+    }
+
+    public func restoreReminder(id: String, listId: String) async throws -> PrivateResult {
+        await dispatchWithRetry(["action": "restore_reminder", "reminderId": id, "listId": listId])
+    }
+
     // MARK: - PrivateWriter — reminder-scoped
 
     public func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult {

@@ -57,6 +57,7 @@ let allSubcommands: [ParsableCommand.Type] =
     readCommands
     + writeCommands
     + reminderMoveCommands
+    + recoveryCommands
     + listCommands
     + sectionCommands
     + groupCommands

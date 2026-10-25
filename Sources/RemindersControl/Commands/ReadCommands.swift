@@ -853,13 +853,18 @@ private func infoDateString(_ appleSeconds: Double, dateOnly: Bool = false) -> S
     return f.string(from: date)
 }
 
-struct Info: ParsableCommand {
+struct Info: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "info", abstract: "Show detailed reminder info.")
     @Argument(help: "Reminder ID") var id: Int
+    @Flag(name: .long, help: "Also look in Recently Deleted; deleted details omit unavailable private metadata")
+    var includeDeleted = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false
     @Flag(name: .long, help: "Disable ANSI color") var noColor = false
 
-    func run() throws {
+    func run() async throws {
+        if includeDeleted, let outcome = await Self.includeDeletedOutcome(id: id, json: json) {
+            WriteDispatch.emit(outcome)
+        }
         Dispatch.runRead(json: json) { store in
             guard let r = store.reminder(pk: id) else {
                 throw CLIError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
@@ -990,6 +995,33 @@ struct Info: ParsableCommand {
             if let ck = r.string("ZCKIDENTIFIER"), !ck.isEmpty {
                 print("  Deep link: \(ansi.dim(Constants.deepLinkReminderPrefix + ck))")
             }
+        }
+    }
+
+    /// Opens the store and the private boundary for the Recently Deleted branch. A store that
+    /// cannot be opened yields nil: the regular read below reports that failure itself.
+    private static func includeDeletedOutcome(id: Int, json: Bool) async -> WriteOutcome? {
+        guard let store = try? RemindersStore.open() else { return nil }
+        return await deletedDetails(id: id, json: json, store: store, private: PrivateWriterFactory.make())
+    }
+
+    /// Port of `cmd_info`'s Recently Deleted branch (upstream a413c19): an id with no live
+    /// reminder may still be recoverable. Returns what to emit — the deleted details, or the
+    /// structured recovery failure — and nil when the id is live or absent from the recovery
+    /// view, so `info` carries on with the regular read.
+    static func deletedDetails(id: Int, json: Bool, store: RemindersStore,
+                               private priv: PrivateWriter) async -> WriteOutcome? {
+        guard store.reminder(pk: id) == nil else { return nil }
+        do {
+            let items = try await RecentlyDeleted.read(store: store, private: priv)
+            guard let item = RecentlyDeleted.find(items, id: id) else { return nil }
+            if json { return .ok(JSONValue.object(item.payload).serialized(indent: 2, ensureAscii: true) + "\n") }
+            return .ok("Recently deleted: #\(id) \(safeDisplay(item.title))\n"
+                       + "Restore with: \(CLIName.current) restore \(item.restoreId) --list LIST\n")
+        } catch let failure as CommandFailure {
+            return failure.outcome(json: json)
+        } catch {
+            return CommandFailure("command_failed", "\(error)").outcome(json: json)
         }
     }
 }

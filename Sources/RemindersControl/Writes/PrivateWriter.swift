@@ -71,8 +71,17 @@ public struct ListAppearance: Sendable, Equatable {
     }
 }
 
-/// The private Reminders boundary. `id` is the reminder's ZCKIDENTIFIER.
+/// The private Reminders boundary. `id` is the reminder's ZCKIDENTIFIER. Everything here is a
+/// write except `recentlyDeleted`, the one read ReminderKit alone can answer.
 public protocol PrivateWriter {
+    /// Apple's Recently Deleted view for every account that has one: `fields["reminders"]` holds
+    /// the recoverable reminders, each with its deleted subtasks under `subtasks`. The deleted
+    /// database flag also marks purged rows, so recoverability NEVER comes from SQLite.
+    func recentlyDeleted() async throws -> PrivateResult
+    /// Undeletes a reminder and its deleted subtasks into `listId` in one save, keeping every
+    /// identifier. `id` must be a recoverable top-level item of that account's recovery view.
+    func restoreReminder(id: String, listId: String) async throws -> PrivateResult
+
     // reminder-scoped (keyed by reminder ckIdentifier)
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult

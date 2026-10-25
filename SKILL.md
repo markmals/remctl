@@ -79,6 +79,9 @@ remctl done 23880 --json
 remctl done 23880 --date "2026-05-27 09:30" --json
 remctl done 23880 23881 --json
 remctl delete 23880 23881 --force --json
+remctl deleted --json
+remctl info 23880 --include-deleted --json
+remctl restore 23880 --list Work --json
 remctl sharees Family --json
 remctl list-info Work --json
 remctl list-info --list-id 153 --json
@@ -98,7 +101,7 @@ remctl list-delete --list-id 123 --force --json
 - List targets resolve exact name → case-insensitive → normalized (e.g. `Weekly 513` for `🗓️ Weekly 513`). If multiple match, RemCTL fails; use `--list-id`. `show`, `search`, `add`, `edit`, `link`, `export`, `list-info`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, and smart-list `--include-list-id` accept numeric targeting; `list-pin`/`list-unpin` also accept `--smart-list-id`. Passing both a name and `--list-id` is an error.
 - `search` matches titles, notes, and saved rich links of active reminders, ignoring case and accents (`cafe` finds `Café`); `%`, `_`, and `\` are literal. Add `--completed` for completed ones, `-l/--list NAME` or `--list-id ID` to scope it to one list. Results are newest first, 100 per page: with `--limit`/`--offset`, `--json` returns `{"query", "items", "count", "total", "offset", "limit", "hasMore", "nextOffset"}` — keep calling with `offset: nextOffset` while `hasMore` is true. Plain `--json` stays an array and warns on stderr when matches were cut off. `--via-eventkit search` takes `--list` but refuses `--list-id` and paging.
 - Note on exit codes: argument-parse errors (unknown flag, bad choice, missing argument) exit with `64` (Swift Argument Parser's `EX_USAGE`), not `2`. In-command validation errors (e.g. an unparseable due date) still exit `1`/`2` as documented per command.
-- `delete`, `list-delete`, `smart-list-delete`, and `template-delete` require `--force` whenever `--json` is set or stdin is not a terminal — without it they exit `1` with `code: confirmation_required` on stderr and write nothing. Always pass `--force` when scripting. A deleted reminder stays in Reminders' Recently Deleted list for up to 30 days on supported accounts, where the user can recover it in Reminders.app.
+- `delete`, `list-delete`, `smart-list-delete`, and `template-delete` require `--force` whenever `--json` is set or stdin is not a terminal — without it they exit `1` with `code: confirmation_required` on stderr and write nothing. Always pass `--force` when scripting. A deleted reminder stays in Reminders' Recently Deleted list for up to 30 days on supported accounts; `deleted` lists those and `restore` recovers one with its original IDs.
 - `import` takes a JSON file path or `-` for piped stdin (max 8 MiB; a terminal is refused). `--dry-run` validates the whole document and prints `{"status": "valid", "count": N, "created": 0}` without creating anything.
 - `done`, `undone`, and `delete` accept several ids (up to 50, listed before the options) as one batch; `--batch` gives a single id the same result shape. Every id is resolved before the first write, repeats are written once, and the call exits `1` unless every id succeeded — read `results` for the per-id `status`/`code`.
 
@@ -116,6 +119,24 @@ remctl edit 23880 --recurrence clear --json    # stop repeating (also none or ne
 ```
 
 Accepted forms: `daily`, `weekly`, `monthly`, `yearly`, `weekly mon,wed,fri`, `monthly 1,15`, each with an optional interval token directly after the frequency (`daily x2`, `weekly x2 thu`, `monthly x3 15`, `monthly x2 4th-fri`, `yearly x2`; N is 1–999), plus monthly Nth-weekday rules: `monthly 4th-fri`, `monthly 1st-mon,3rd-mon`, `monthly last-fri`, and `monthly -1-fri` through `-5-fri` (`last-fri` = `-1-fri`). Nth-weekday tokens are monthly-only, check their ordinal suffix (`4st-fri` fails), and can't be mixed with day-of-month numbers in one rule. For "the last Friday" use `last-fri`, not `5th-fri`: EventKit skips months without a fifth Friday. Invalid recurrence/alarm/priority fail before writing. Recurring reminders include a `recurrence` object in JSON (week pinning appears as `daysOfWeekDetailed[].weekNumber`) and a repeat badge in human/table output such as `↻ monthly 4th Fri`, `↻ every 2 months last Fri`, or `↻ daily, 5 times` (an occurrence count, not the `xN` interval). `--alarm 15m` is an EventKit alarm (verify in `info --json` under `alarms`); `edit ID --alarm clear` removes normal alarms. Early Reminders are separate: `--early-reminder`.
+
+## Recently Deleted
+
+Use `deleted --json` to find recoverable reminders. Follow `nextOffset` while `hasMore` is true;
+pages count parents and nest subtasks. `info ID --include-deleted --json` inspects one deleted id.
+The original list may be unavailable (`list: null`), and deleted details do not include all
+private metadata.
+
+To recover, run `restore RESTOREID --list NAME` (or `--list-id ID`) with the item's `restoreId`
+and a destination list in the same account. This restores the parent and its subtasks with their
+original IDs. Do NOT recreate them with `add`. `verified: true` means the IDs and hierarchy were
+read back; `already_restored` is a no-op for an active ID already in that list and does not verify
+its former subtasks. For `restore_unconfirmed`, inspect the ID and refresh `deleted` before
+retrying — a write may already have happened.
+
+Apple normally keeps deleted reminders for 30 days. Do not promise a deadline or infer
+recoverability from a database deletion flag. RemCTL asks Apple's recovery view and does not
+expose permanent purging. See [recovery details](docs/commands.md#recently-deleted).
 
 ## Private Metadata
 

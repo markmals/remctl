@@ -268,6 +268,38 @@ Template support is **whole-list only**: RemCTL does not append individual remin
 
 Verify templates with `templates --json` and `template-info`, and verify an applied template's new list with `lists --json` and `show <new list> --json`.
 
+## Recently Deleted and recovery
+
+EventKit cannot read Reminders' Recently Deleted list or undelete anything, so `deleted`,
+`info --include-deleted`, and `restore` go through ReminderKit. `deleted` is the only READ that
+does, because the store cannot answer it: `ZMARKEDFORDELETION = 1` also marks rows Reminders has
+purged, so the deleted flag is never evidence that a reminder can come back.
+
+```bash
+remctl deleted --json
+remctl info 23880 --include-deleted --json
+remctl restore 23880 --list Work --json
+```
+
+- `deleted` asks each account whose capabilities expose the Recently Deleted list
+  (`REMRemindersListDataView_RecentlyDeletedInvocation`, run through
+  `REMStore resultFromPerformingSwiftInvocation:`) for the reminders deleted in the last 30 days,
+  then decorates those identifiers with the numeric ids and fields from the tombstone rows. A
+  missing class, selector, or capability fails with `recently_deleted_unavailable`; a view entry
+  with no matching row fails with `recently_deleted_changed`.
+- `restore` undeletes the parent (`REMListChangeItem undeleteRemindersWithoutUndoWithIDs:`) and
+  reparents every deleted subtask into the destination
+  (`REMReminderChangeItem setListID:`) in ONE save request, because a deleted child still points
+  at its old list — which may itself be deleted.
+- Recovery keeps the original identifiers, so `restore` verifies by reading the store back: every
+  id must be live in the destination list, with its original `ZCKIDENTIFIER` and parent, before
+  the command reports `verified: true`. A helper error whose save landed anyway still counts;
+  anything unproven is `restore_unconfirmed`.
+- Reminders owns expiry. RemCTL never purges Recently Deleted, never promises a deadline, and
+  never recreates a reminder as a stand-in for recovering it.
+
+Verify a recovery with `info <id> --json` (the id is unchanged) and `deleted --json`.
+
 ## When a private step fails
 
 A private write that ReminderKit refuses stops the command with the helper's message and exit 1; no later private step runs.

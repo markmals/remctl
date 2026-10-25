@@ -3,6 +3,8 @@ import Foundation
 
 final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     enum Call: Equatable {
+        case recentlyDeleted
+        case restoreReminder(id: String, listId: String)
         case setFlagged(id: String, flagged: Bool)
         case addPrivateMetadata(id: String, urls: [String], tags: [String])
         case setTags(id: String, tags: [String])
@@ -58,12 +60,16 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     var onCall: ((Call) -> Void)?
     /// Per-call reply for the section, group, and ordering actions; nil falls back to `result`.
     var reply: ((Call) -> PrivateResult?)?
+    /// Per-method result for `recentlyDeleted`: the recovery view the command should read.
+    var recentlyDeletedResult = PrivateResult(status: "ok", fields: ["reminders": .array([])])
 
     private func resultOr(_ status: String) throws -> PrivateResult {
         if let e = throwError { throw e }
         return result
     }
 
+    func recentlyDeleted() async throws -> PrivateResult { calls.append(.recentlyDeleted); if let e = throwError { throw e }; return recentlyDeletedResult }
+    func restoreReminder(id: String, listId: String) async throws -> PrivateResult { try record(.restoreReminder(id: id, listId: listId)) }
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult { calls.append(.setFlagged(id: id, flagged: flagged)); return try resultOr("updated") }
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult { calls.append(.addPrivateMetadata(id: id, urls: urls, tags: tags)); return try resultOr("updated") }
     func setTags(id: String, tags: [String]) async throws -> PrivateResult { calls.append(.setTags(id: id, tags: tags)); return try resultOr("updated") }

@@ -64,9 +64,9 @@ func locationCommandsRegistered() {
     #expect(names.contains("location-lookup"))
 }
 
-@Test("Exactly 57 unique subcommands are registered")
+@Test("Exactly 59 unique subcommands are registered")
 func allSubcommandsRegistered() {
     let names = RemindersControl.configuration.subcommands.compactMap { $0.configuration.commandName }
-    #expect(names.count == 57)
-    #expect(Set(names).count == 57, "duplicate command names: \(names)")
+    #expect(names.count == 59)
+    #expect(Set(names).count == 59, "duplicate command names: \(names)")
 }

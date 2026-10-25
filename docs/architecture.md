@@ -17,12 +17,13 @@ remctl  (one Swift binary)
   private: ReminderKit          (in-process, private framework)
            └─ sections, subtasks, synced tags, image attachments, real flag,
               urgent, Early Reminders, list/smart-list appearance, Groceries,
-              custom smart lists, templates
+              custom smart lists, templates, Recently Deleted reads + recovery
   lookup:  CoreLocation         (in-process, network)
            └─ address -> coordinates for location alarms; no permission needed
 ```
 
-Reads go directly to the local Reminders SQLite store for speed and detail.
+Reads go directly to the local Reminders SQLite store for speed and detail, except
+for Recently Deleted, which only Reminders itself can answer.
 Public mutations go through Apple's EventKit. The metadata Apple does not expose
 through EventKit goes through Apple's private ReminderKit framework. RemCTL never
 writes the SQLite store, so iCloud and Reminders stay in charge of sync.
@@ -192,6 +193,12 @@ Private writes cover the parts of Reminders that EventKit does not:
 - **Custom smart lists:** create/edit/delete for the Reminders filters RemCTL
   has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete.
+- **Recently Deleted:** the one private READ. The local store cannot answer which
+  deleted reminders are recoverable (`ZMARKEDFORDELETION = 1` also marks purged
+  rows), so `recently_deleted` asks each capable account's recovery view through
+  `ReminderKitInternal` and the Swift-invocation bridge, and SQLite only decorates
+  the returned identifiers with numeric ids. `restore_reminder` undeletes a parent
+  and reparents its deleted subtasks into the destination list in one save request.
 
 Dispatch is defensive about the private surface: every change-item context it
 touches (section, attachment, hashtag, flagged, urgent, assignment, subtask) is

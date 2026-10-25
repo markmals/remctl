@@ -51,6 +51,7 @@ There are no separate helper executables — the EventKit and ReminderKit logic 
 | See what is due | `today`, `upcoming`, `overdue` |
 | Browse reminders | `lists`, `list-info`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats`, `location-lookup` |
 | Create and edit | `add`, `edit`, `reminder-move`, `done`, `undone`, `delete`, `flag`, `unflag` |
+| Recover reminders | `deleted`, `info --include-deleted`, `restore` |
 | Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `section-create`, `section-rename`, `section-delete`, `groups`, `group-info`, `group-create`, `group-edit`, `group-delete` |
 | Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
 | Share data | `export`, `import`, `link`, `open`, plus `--json` and `--format table` on read commands |
@@ -87,6 +88,8 @@ remctl smart-list-create "Flagged Review" --flagged
 remctl smart-list-create "Priority or Today" --match any --priority high,medium --date today
 remctl smart-list-edit "Priority or Today" --priority high
 remctl smart-list-delete "Flagged Review" --force
+remctl deleted --json
+remctl restore 23880 --list Work --json
 remctl templates --json
 remctl template-create "Packing Template" --from-list Packing --json
 remctl template-apply "Packing Template" --json

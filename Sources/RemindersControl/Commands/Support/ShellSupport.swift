@@ -35,6 +35,8 @@ _remctl() {
         'edit:Edit a reminder'
         'reminder-move:Reorder a reminder, or nest it under another, in a list or custom smart list'
         'delete:Delete a reminder'
+        'deleted:Show Recently Deleted'
+        'restore:Recover a deleted reminder'
         'search:Search reminders'
         'today:Due today + overdue'
         'upcoming:Today through N more days'
@@ -233,6 +235,18 @@ _remctl() {
                 '--batch[Report the batch result shape even for one id]' \
                 '--json[JSON output]' \
                 '*:reminder id:'
+            return
+            ;;
+        deleted)
+            _arguments '--limit[Parents per page]:limit:' '--offset[Parents to skip]:offset:' '--json[JSON output]'
+            return
+            ;;
+        restore)
+            _arguments '(-l --list --list-id)'{-l,--list}'[Destination list]:list:' '--list-id[Destination list ID]:id:' '--json[JSON output]'
+            return
+            ;;
+        info)
+            _arguments '--include-deleted[Also look in Recently Deleted]' '--json[JSON output]' '--no-color[Disable ANSI color]'
             return
             ;;
         sharees)
@@ -507,7 +521,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit reminder-move delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info location-lookup stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit reminder-move delete deleted restore search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info location-lookup stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -527,6 +541,15 @@ _remctl() {
         return
     elif [ "$cmd" = "delete" ]; then
         COMPREPLY=( $(compgen -W "--force --batch --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "deleted" ]; then
+        COMPREPLY=( $(compgen -W "--limit --offset --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "restore" ]; then
+        COMPREPLY=( $(compgen -W "--list -l --list-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "info" ]; then
+        COMPREPLY=( $(compgen -W "--include-deleted --json --no-color" -- "$cur") )
         return
     elif [ "$cmd" = "sharees" ]; then
         COMPREPLY=( $(compgen -W "--list-id --json" -- "$cur") )
@@ -653,6 +676,8 @@ complete -c remctl -n "__fish_use_subcommand" -a undone -d "Uncomplete a reminde
 complete -c remctl -n "__fish_use_subcommand" -a edit -d "Edit a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a reminder-move -d "Reorder a reminder, or nest it under another, in a list or custom smart list"
 complete -c remctl -n "__fish_use_subcommand" -a delete -d "Delete a reminder"
+complete -c remctl -n "__fish_use_subcommand" -a deleted -d "Show Recently Deleted"
+complete -c remctl -n "__fish_use_subcommand" -a restore -d "Recover a deleted reminder"
 complete -c remctl -n "__fish_use_subcommand" -a search -d "Search reminders"
 complete -c remctl -n "__fish_use_subcommand" -a today -d "Due today + overdue"
 complete -c remctl -n "__fish_use_subcommand" -a upcoming -d "Today through N more days"
@@ -861,6 +886,12 @@ complete -c remctl -n "__fish_seen_subcommand_from undone" -l json -d "JSON outp
 complete -c remctl -n "__fish_seen_subcommand_from delete" -l force -d "Skip confirmation prompt"
 complete -c remctl -n "__fish_seen_subcommand_from delete" -l batch -d "Report the batch result shape even for one id"
 complete -c remctl -n "__fish_seen_subcommand_from delete" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from deleted" -l limit -d "Parents per page" -r
+complete -c remctl -n "__fish_seen_subcommand_from deleted" -l offset -d "Parents to skip" -r
+complete -c remctl -n "__fish_seen_subcommand_from deleted restore" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from restore" -s l -l list -d "Destination list" -r
+complete -c remctl -n "__fish_seen_subcommand_from restore" -l list-id -d "Destination list ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from info" -l include-deleted -d "Also look in Recently Deleted"
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l list-id -d "Shared list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from sharees" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from list-info" -l list-id -d "List by stable numeric ID" -r

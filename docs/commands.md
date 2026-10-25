@@ -167,6 +167,7 @@ Detailed reminder info. `--json`, `--no-color`. `info --json` reports `dueDate` 
 remctl info 23880
 remctl info 23880 --json
 ```
+`--include-deleted` also looks in [Recently Deleted](#recently-deleted) when no live reminder has that ID.
 
 ---
 
@@ -197,6 +198,49 @@ remctl search "milk" --via-eventkit
 remctl today --via-eventkit --json
 remctl upcoming 14 --via-eventkit --json
 ```
+
+---
+
+## Recently Deleted
+
+```bash
+remctl deleted --json
+remctl deleted --limit 50 --offset 50 --json
+remctl info 23880 --include-deleted --json
+remctl restore 23880 --list Work --json
+remctl restore 23880 --list-id 153 --json
+```
+
+### `deleted [--limit N] [--offset N]`
+Asks Apple's Recently Deleted view for the recoverable reminders of the last 30 days. It does not
+treat every deleted database row as recoverable: the deleted flag also marks rows Reminders has
+already purged. This needs a supported account and macOS version; an unavailable query fails with
+`recently_deleted_unavailable` instead of falling back to old deletion records.
+
+`--json` always returns `{items, count, total, offset, limit, hasMore, nextOffset}`. Pages count
+parents, with their deleted subtasks nested under `subtasks`. Each item has `deleted: true`,
+`recoverable: true`, and `restoreId`, the numeric parent ID to recover. `list` can be null because
+deletion clears the original list. RemCTL does not infer a deletion date or recovery deadline from
+the last modification time.
+
+### `info <id> --include-deleted`
+Checks active reminders first, then Recently Deleted. Deleted details contain the saved title,
+notes, dates, identity, and subtask hierarchy; they are not a complete export of private metadata.
+Other reads still exclude deleted reminders.
+
+### `restore <id> --list NAME|--list-id ID`
+Restores one parent and its subtasks through ReminderKit, then checks every ID and parent
+relationship before reporting `verified: true`. The destination list is required and must be in
+the same account as the deleted reminder. A subtask must be recovered through its `restoreId`
+(`restore_parent_required`), which brings the whole tree back. The command preserves identity
+rather than creating a replacement. If that ID is already active in the requested list it returns
+`already_restored` without writing or claiming that former subtasks were recovered; it never moves
+an active reminder to another list (`reminder_not_deleted`).
+
+For `restore_unconfirmed`, inspect `info ID --include-deleted --json` and `deleted` before
+retrying: a write may already have happened. RemCTL does not permanently purge Recently Deleted.
+Apple can expire or remove items between a read and a restore.
+[Apple's recovery documentation](https://support.apple.com/guide/reminders/remna83c9566/mac).
 
 ---
 
@@ -323,6 +367,7 @@ remctl delete 23880
 remctl delete 23880 --force
 remctl delete 23880 23881 --force --json
 ```
+Recover one with [`restore`](#restore-id---list-name--list-id-id).
 
 ### Batches of ids (`done`, `undone`, `delete`)
 Pass several ids — up to 50, listed before the options — to run one batch; `--batch` gives a single id the same result shape. More than 50 ids is refused (`batch_too_large`) without reading or writing anything.
