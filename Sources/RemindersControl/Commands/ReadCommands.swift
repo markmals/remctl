@@ -72,9 +72,10 @@ struct Today: AsyncParsableCommand {
 }
 
 struct Upcoming: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "upcoming", abstract: "List upcoming reminders.")
+    static let configuration = CommandConfiguration(
+        commandName: "upcoming", abstract: "List reminders due from today through N more days (default 7).")
     @OptionGroup var opts: ReadDisplayOptions
-    @Argument(help: "Number of days to look ahead") var days: Int = 7
+    @Argument(help: "Days to look ahead beyond today; the window always starts today (1 = today and tomorrow, 7 = today plus the next week)") var days: Int = 7
     @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
 
     func run() async throws {

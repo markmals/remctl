@@ -806,3 +806,31 @@ func fullDiskAccessFixText(
     parts.append("Then relaunch the app or terminal that will run remctl and rerun `\(rerunCommand)` from that same context.")
     return parts.joined(separator: "\n")
 }
+
+/// Port of `bridge_failure_is_access_error` (upstream cd31b51): an EventKit write that failed
+/// because this process context lacks Reminders access.
+func isEventKitAccessError(_ message: String) -> Bool {
+    let text = message.lowercased()
+    return ["eventkit access error", "reminders access not granted", "not authorized",
+            "authorization", "not permitted", "mach error 4099"].contains { text.contains($0) }
+}
+
+/// Port of `eventkit_access_fix_text` (upstream cd31b51), for the direct (in-process) writer:
+/// Reminders access is granted per process context, so the fix must run where the write ran.
+func eventKitAccessFixText(
+    rerunCommand: String = "remctl doctor --for-agent",
+    env: [String: String] = ProcessInfo.processInfo.environment
+) -> String {
+    let context = doctorExecutionContext(env: env)
+    func field(_ key: String, default fallback: String) -> String {
+        if case let .string(value)? = context[key], !value.isEmpty { return value }
+        return fallback
+    }
+    return [
+        "EventKit writes are blocked in the current process context: \(field("effective_context", default: "this runner")).",
+        "Host app: \(field("host_app", default: "the app or terminal launching remctl")).",
+        "Run `remctl onboard` from this same context so macOS can grant Reminders access.",
+        "Then rerun `\(rerunCommand)` from the same context before writing.",
+        "If the same command works in Terminal but fails here, Terminal's permission grant does not carry over to this app or agent runner.",
+    ].joined(separator: "\n")
+}

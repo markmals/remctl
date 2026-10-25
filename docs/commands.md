@@ -29,7 +29,7 @@ remctl today --via-eventkit --json
 ```
 
 ### `upcoming [DAYS]`
-Reminders due in the next `DAYS` days (default 7; accepts 1–3650). Zero/negative ranges fail before opening the database.
+Reminders due from today through `DAYS` more days (default 7; accepts 1–3650): the window always starts today, so `upcoming 1` covers today and tomorrow and `upcoming 7` today plus the next week. Zero/negative ranges fail before opening the database.
 ```bash
 remctl upcoming
 remctl upcoming 14
@@ -236,7 +236,7 @@ remctl undone 23880
 ```
 
 ### `delete <id> [--force]`
-Delete a reminder; `--force` skips the confirmation prompt (and is required with `--json` or a non-interactive stdin). `--json`.
+Delete a reminder; `--force` skips the confirmation prompt (and is required with `--json` or a non-interactive stdin). `--json`. Supported accounts keep the deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders.app can recover it.
 ```bash
 remctl delete 23880
 remctl delete 23880 --force
@@ -547,7 +547,7 @@ Example `info --json` shape:
 
 ## Setup and Diagnostics
 
-RemCTL needs two macOS permission grants: **Reminders access** (EventKit + ReminderKit writes, prompted on first write or via `onboard`) and **Full Disk Access** (direct database reads). macOS TCC is scoped to the process context — a green Terminal does not imply a green agent runner; grant Full Disk Access to the target reported by `doctor --for-agent`.
+RemCTL needs two macOS permission grants: **Reminders access** (EventKit + ReminderKit writes, prompted on first write or via `onboard`) and **Full Disk Access** (direct database reads). macOS TCC is scoped to the process context — a green Terminal does not imply a green agent runner; grant Full Disk Access to the target reported by `doctor --for-agent`. When a write fails because this context has no Reminders access, the error names the context and says to run `remctl onboard`, then `remctl doctor --for-agent`, from that same context.
 
 ### `onboard`
 First-run onboarding: triggers the Reminders access prompt and guides Full Disk Access. `--json`, `--no-color`.

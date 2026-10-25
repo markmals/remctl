@@ -33,9 +33,15 @@ public enum WriteDispatch {
     /// Run an async write core, mapping thrown WriteError / RemindersDBUnavailable / other to a WriteOutcome.
     public static func perform(_ body: () async throws -> WriteOutcome) async -> WriteOutcome {
         do { return try await body() }
-        catch let e as WriteError { return .error(e.message, code: e.exitCode) }
+        catch let e as WriteError { return .error(withAccessHint(e.message), code: e.exitCode) }
         catch let e as RemindersDBUnavailable { return .error(e.message) }
         catch { return .error("\(error)") }
+    }
+
+    /// A write refused for lack of Reminders access names the same-context fix
+    /// (upstream cd31b51 `fail_bridge_write`).
+    static func withAccessHint(_ message: String) -> String {
+        isEventKitAccessError(message) ? message + "\n" + eventKitAccessFixText() : message
     }
 
     /// Opens the read store + the production writer and runs `body`, mapping any thrown error to a

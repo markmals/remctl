@@ -72,4 +72,17 @@ import GRDB
         let out = await WriteDispatch.perform { .ok("Done\n") }
         #expect(out == WriteOutcome.ok("Done\n"))
     }
+    @Test(arguments: ["Reminders access not granted", "EventKit access error: The operation couldn't be completed.",
+                      "Failed to create list 'X': Reminders access not granted"])
+    func accessDeniedWriteNamesTheSameContextFix(_ message: String) async {
+        let out = await WriteDispatch.perform { throw WriteError(message) }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.hasPrefix("Error: \(message)\n"))
+        #expect(out.stderr.contains("remctl onboard"))
+        #expect(out.stderr.contains("remctl doctor --for-agent"))
+    }
+    @Test func otherWriteErrorsCarryNoAccessHint() async {
+        let out = await WriteDispatch.perform { throw WriteError("Save failed: The calendar is read-only.") }
+        #expect(out.stderr == "Error: Save failed: The calendar is read-only.\n")
+    }
 }

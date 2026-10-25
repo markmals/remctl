@@ -1102,7 +1102,9 @@ struct Undone: AsyncParsableCommand {
 }
 
 struct Delete: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "delete", abstract: "Delete a reminder.")
+    static let configuration = CommandConfiguration(
+        commandName: "delete", abstract: "Delete a reminder.",
+        discussion: "Supported accounts keep a deleted reminder in Reminders' Recently Deleted list for up to 30 days, where Reminders can recover it. A terminal session asks first; --json and piped stdin need --force.")
     @Argument(help: "Reminder ID") var id: Int
     @Flag(name: .long, help: "Skip the confirmation prompt") var force = false
     @Flag(name: .long, help: "Output machine-readable JSON") var json = false

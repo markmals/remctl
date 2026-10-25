@@ -31,7 +31,7 @@ _remctl() {
         'delete:Delete a reminder'
         'search:Search reminders'
         'today:Due today + overdue'
-        'upcoming:Next N days'
+        'upcoming:Today through N more days'
         'overdue:All overdue reminders'
         'flagged:Flagged reminders'
         'urgent:Urgent reminders'
@@ -514,7 +514,7 @@ complete -c remctl -n "__fish_use_subcommand" -a edit -d "Edit a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a delete -d "Delete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a search -d "Search reminders"
 complete -c remctl -n "__fish_use_subcommand" -a today -d "Due today + overdue"
-complete -c remctl -n "__fish_use_subcommand" -a upcoming -d "Next N days"
+complete -c remctl -n "__fish_use_subcommand" -a upcoming -d "Today through N more days"
 complete -c remctl -n "__fish_use_subcommand" -a overdue -d "All overdue reminders"
 complete -c remctl -n "__fish_use_subcommand" -a flagged -d "Flagged reminders"
 complete -c remctl -n "__fish_use_subcommand" -a urgent -d "Urgent reminders"
