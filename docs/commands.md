@@ -11,7 +11,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 - **`--json`** works on every command. For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command, so both `remctl --format table show Work` and `remctl show Work --format table` are valid. `export --format json|csv` selects a file format, not a display style.
 - **`NO_COLOR=1`** (or `--no-color`) disables ANSI color.
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
-- **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching.
+- **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching. `import` validates the whole file the same way (structured `invalid_import`) before its first write.
 
 ---
 
@@ -431,7 +431,11 @@ remctl export --format csv > all-reminders.csv
 ```
 
 ### `import <file>`
-Import reminders from a JSON file containing an array of reminder objects. `--json` emits a one-line `created`/`errors`/`total` summary.
+Import reminders from a JSON file containing an array of reminder objects. Each object may carry `title` (required), `list`, `notes`, `due`/`dueDate`, `priority`, `url`, `recurrence` (string spec or exported object), `alarm`, and `flagged`.
+
+The **whole document is validated first**: if any item has a non-string field, an unparseable due date, recurrence or alarm, an unknown priority, or a non-boolean `flagged`, nothing is created and the command exits 1 — with `--json`, a structured `invalid_import` error on stderr listing every bad item by index.
+
+Once validation passes, items are created one by one. `--json` prints a one-line summary on stdout (`status` `completed`/`partial`, `created`, `createdIds`, indexed `errors`, `total`) and per-item progress on stderr; any item that fails to write makes the status `partial` and the exit code 1.
 ```bash
 remctl import shopping.json
 remctl import shopping.json --json

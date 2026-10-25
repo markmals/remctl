@@ -53,27 +53,91 @@ import GRDB
             json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
         #expect(createCount(m) == 2)
-        // aa.json=false per item: the human add lines are STILL in the buffer before the JSON summary.
-        #expect(out.stdout.contains("Created: Buy milk\n"))
-        #expect(out.stdout.contains("Created: Walk dog\n"))
-        // Compact one-line JSON summary as the final line.
-        #expect(out.stdout.hasSuffix(#"{"created": 2, "errors": 0, "total": 2}"# + "\n"))
-        // No human "Imported" summary in JSON mode.
+        // stdout is ONE parseable summary line; per-item progress goes to stderr.
+        #expect(out.stdout == #"{"status": "completed", "created": 2, "createdIds": ["EK-NEW", "EK-NEW"], "errors": [], "total": 2}"# + "\n")
+        #expect(out.stderr.contains("imported index=0 id=EK-NEW\n"))
+        #expect(out.stderr.contains("imported index=1 id=EK-NEW\n"))
         #expect(!out.stdout.contains("Imported"))
     }
 
-    @Test func importSkipNoTitle() async throws {
+    @Test func importRejectsDocumentWithTitlelessItemBeforeWriting() async throws {
+        // A bad item ANYWHERE in the document blocks the whole import: nothing is created.
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"A"},{},{"title":"C"}]"#),
             json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == """
+            Error: Import validation failed; no reminders were created.
+              Item 1: item requires a non-empty string title
+
+            """)
+    }
+
+    @Test func importValidationErrorJsonPayload() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"Good"},{"title":"Bad","due":"notadate"},{"title":"Worse","list":7}]"#),
+            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == #"{"status": "error", "code": "invalid_import", "message": "Import validation failed; no reminders were created.", "created": 0, "createdIds": [], "errors": [{"index": 1, "message": "could not parse due date 'notadate'"}, {"index": 2, "message": "list must be a string"}], "total": 3}"# + "\n")
+    }
+
+    @Test func importReportsPartialWhenAWriteFails() async throws {
+        // Validation passes, then the writer fails at runtime: created ids are reported,
+        // the failure is indexed, and the exit code is non-zero.
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        m.throwError = WriteError("List not found: Work")
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"A"}]"#),
+            json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout == #"{"status": "partial", "created": 0, "createdIds": [], "errors": [{"index": 0, "title": "A", "message": "Error: List not found: Work"}], "total": 1}"# + "\n")
+    }
+
+    @Test func importAcceptsExportedRecurrenceObject() async throws {
+        // An `export`-shaped recurrence object survives the round trip instead of being dropped.
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let recurrence = #"{"frequency":"weekly","interval":2,"daysOfWeekDetailed":[{"weekNumber":0,"dayOfTheWeek":2}],"daysOfWeek":[2]}"#
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"Standup","recurrence":\#(recurrence)}]"#),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 0)
-        #expect(createCount(m) == 2)               // middle item skipped
-        #expect(out.stderr.contains("Warning: Skipping item without title"))
-        // total counts ALL elements (incl. the skipped one); note literal "1 errors" (not singular).
-        #expect(out.stdout.hasSuffix("\nImported 2/3 reminders (1 errors)\n"))
+        guard case let .create(w)? = m.calls.first else { Issue.record("no create"); return }
+        #expect(w.recurrence == RecurrenceWrite(frequency: "weekly", interval: 2, daysOfWeek: [2], weekNumbers: [0]))
+    }
+
+    @Test func importRejectsInvalidRecurrenceObject() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"Standup","recurrence":{}}]"#),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stderr.contains("Item 0: could not parse recurrence {}"))
+        // A null recurrence is simply absent.
+        let m2 = MockWriter()
+        let out2 = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"Standup","recurrence":null}]"#),
+            json: false, store: s, writer: m2, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out2.exitCode == 0)
+        guard case let .create(w)? = m2.calls.first else { Issue.record("no create"); return }
+        #expect(w.recurrence == nil)
     }
 
     @Test func importDueWins() async throws {
@@ -118,18 +182,53 @@ import GRDB
         #expect(w.priority == 1)
     }
 
-    @Test func importPriorityIntFails() async throws {
-        // An int priority (1) is stringified to "1" → Add's priority parse fails → item errors.
+    @Test func importPriorityMustBeAString() async throws {
+        // An int priority is a document error, caught before anything is written.
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"P","priority":1}]"#),
             json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
-        #expect(out.exitCode == 0)                 // import main path always exits 0
-        #expect(createCount(m) == 0)               // not created
-        #expect(out.stdout.hasSuffix("\nImported 0/1 reminders (1 errors)\n"))
-        #expect(out.stderr.contains("priority must be high, medium, low, or none."))
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stderr.contains("Item 0: priority must be a string"))
+    }
+
+    @Test func importRejectsUnknownPriorityName() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"P","priority":"urgent"}]"#),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stderr.contains("Item 0: priority must be high, medium, low, or none"))
+    }
+
+    @Test func importRejectsNonBooleanFlagged() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"P","flagged":"yes"}]"#),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stderr.contains("Item 0: flagged must be a boolean"))
+    }
+
+    @Test func importRejectsUnparseableAlarm() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await Import.perform(
+            path: "x.json",
+            readFile: reader(#"[{"title":"P","alarm":"whenever"}]"#),
+            json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stderr.contains("Item 0: could not parse alarm 'whenever'"))
     }
 
     @Test func importFlaggedItemUsesPublicProxy() async throws {
@@ -151,20 +250,18 @@ import GRDB
         #expect(out.stdout.hasSuffix("\nImported 1/1 reminders (0 errors)\n"))
     }
 
-    @Test func importItemBadDueContinues() async throws {
-        // One good item + one with a bad due: the good one is created, the bad one errors,
-        // and the loop never aborts (import exit 0).
+    @Test func importBadDueInLaterItemWritesNothing() async throws {
+        // The good FIRST item must not be created when a later item fails validation.
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[{"title":"Good"},{"title":"Bad","due":"notadate"}]"#),
             json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
-        #expect(out.exitCode == 0)
-        #expect(createCount(m) == 1)
-        #expect(out.stdout.contains("Created: Good\n"))
-        #expect(out.stdout.hasSuffix("\nImported 1/2 reminders (1 errors)\n"))
-        #expect(out.stderr.contains("could not parse due date"))
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains("Item 1: could not parse due date 'notadate'"))
     }
 
     @Test func importFileNotFound() async throws {
@@ -195,23 +292,18 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
-    @Test func importNonObjectElementsSkipped() async throws {
-        // Non-object array elements (int, string, null) are treated as title-less: each emits
-        // "Warning: Skipping item without title" and increments errors. The one valid object-with-title
-        // ("Good") is still created. Array: [1, "x", null, {"title":"Good"}] → 1 created, 3 errors.
+    @Test func importNonObjectElementsAreDocumentErrors() async throws {
+        // Non-object array elements are reported per index and block the whole import, so the
+        // one valid object ("Good") is NOT created either.
         let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
         let out = await Import.perform(
             path: "x.json",
             readFile: reader(#"[1, "x", null, {"title":"Good"}]"#),
             json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
-        #expect(out.exitCode == 0)
-        #expect(createCount(m) == 1)
-        #expect(out.stdout.hasSuffix("\nImported 1/4 reminders (3 errors)\n"))
-        // Each of the 3 non-object elements emits its own warning line.
-        let warningCount = out.stderr.components(separatedBy: "Warning: Skipping item without title").count - 1
-        #expect(warningCount == 3)
-        #expect(out.stderr.contains("Warning: Skipping item without title"))
+        #expect(out.exitCode == 1)
+        #expect(m.calls.isEmpty)
+        for index in 0...2 { #expect(out.stderr.contains("Item \(index): item must be an object")) }
     }
 
     @Test func importBadJson() async throws {

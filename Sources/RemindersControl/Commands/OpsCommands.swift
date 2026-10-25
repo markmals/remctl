@@ -74,19 +74,22 @@ struct Import: AsyncParsableCommand {
         })
     }
 
-    /// Testable core (no print/exit). Mirrors `cmd_import`: replays each JSON item through
-    /// `Add.perform` (the `add` code path), accumulating created/errors counts. `readFile`
-    /// is injected so tests can supply canned bytes (or nil for "not found") without touching
-    /// the real filesystem; `now`/`calendar` flow into per-item due parsing.
+    /// Testable core (no print/exit). Mirrors `cmd_import` (upstream a579db5): the WHOLE document
+    /// is validated before the first write, so one bad item can never leave the earlier ones
+    /// half-created. Valid items then replay through `Add.perform` (the `add` code path, always in
+    /// JSON mode so the created identifier can be captured); a runtime failure mid-import reports
+    /// `status: "partial"` with the created ids and indexed errors, and exits 1. `readFile` is
+    /// injected so tests can supply canned bytes (or nil for "not found") without touching the real
+    /// filesystem; `now`/`calendar` flow into per-item due parsing.
     ///
     /// Divergences from Python (documented for parity reviewers):
     ///   1. JSON decode error: Python interpolates the `json.JSONDecodeError`/`IOError` text;
     ///      Swift's decoder text differs, so only the `Failed to read JSON: ` prefix matches.
-    ///   2. Non-object array elements: Python would crash on `item.get(...)` for a non-dict;
-    ///      this port treats them as title-less (Warning + errors += 1) rather than crashing.
+    ///   2. Error messages quote a non-string value (a recurrence object) as compact JSON where
+    ///      Python prints a `dict` repr.
     ///   3. `flagged: true` items: with P12 the imply-rule routes `--flag` ALONE through the
     ///      PUBLIC EventKit priority-proxy (no private-only flag is set during import), so such
-    ///      items now succeed (and count as `created`) rather than erroring. The private writer is
+    ///      items succeed (and count as `created`) rather than erroring. The private writer is
     ///      threaded through but never invoked, since import never sets a private-only flag.
     static func perform(
         path: String,
@@ -107,72 +110,184 @@ struct Import: AsyncParsableCommand {
         }
 
         let total = items.count
-        var created = 0
-        var errors = 0
-        var out = ""
-        var err = ""
-
-        for element in items {
-            // Non-object elements are treated as title-less (divergence #2).
-            guard case let .object(pairs) = element else {
-                err += "Warning: Skipping item without title\n"
-                errors += 1
-                continue
+        var pending: [ImportItem] = []
+        var validationErrors: [(index: Int, message: String)] = []
+        for (index, element) in items.enumerated() {
+            switch validate(element, now: now, calendar: calendar) {
+            case let .valid(item):     pending.append(item)
+            case let .invalid(message): validationErrors.append((index, message))
             }
-            func field(_ key: String) -> JSONValue? { pairs.first(where: { $0.0 == key })?.1 }
-            func str(_ key: String) -> String? { if case let .string(s)? = field(key) { return s }; return nil }
-
-            // title: a non-empty String. Falsy (missing/null/empty/non-string) → skip.
-            guard let title = str("title"), !title.isEmpty else {
-                err += "Warning: Skipping item without title\n"
-                errors += 1
-                continue
-            }
-
-            // due wins over dueDate when both are present.
-            let due = str("due") ?? str("dueDate")
-
-            // priority: string forwarded as-is; int stringified (→ Add's priority parse fails);
-            // anything else dropped.
-            var priority: String? = nil
-            switch field("priority") {
-            case let .string(s)?: priority = s
-            case let .int(n)?: priority = String(n)
-            default: break
-            }
-
-            // flagged → Add's --flag (a Phase-3 stub; true makes Add error — divergence #3).
-            var flag = false
-            if case let .bool(b)? = field("flagged") { flag = b }
-
-            // Replay through the add core with json:false ALWAYS (even when import's --json is set);
-            // tags are deliberately dropped (tags: nil). WriteDispatch.perform maps any thrown
-            // WriteError/phase3 to a non-zero WriteOutcome so item failures never abort the loop.
-            let outcome = await WriteDispatch.perform {
-                try await Add.perform(
-                    title: title, list: str("list"), notes: str("notes"),
-                    due: due, priority: priority,
-                    recurrence: str("recurrence"), alarm: str("alarm"),
-                    url: str("url"), flag: flag, tags: nil,
-                    json: false, store: store, writer: writer, private: priv, now: now, calendar: calendar)
-            }
-            out += outcome.stdout
-            err += outcome.stderr
-            if outcome.exitCode == 0 { created += 1 } else { errors += 1 }
+        }
+        guard validationErrors.isEmpty else {
+            return validationFailure(validationErrors, total: total, json: json)
         }
 
-        // Summary. Import ALWAYS exits 0 on the main path (cmd_import has no final sys.exit).
+        var out = "", err = ""
+        var created = 0
+        var createdIds: [JSONValue] = []
+        var errors: [JSONValue] = []
+
+        for (index, item) in pending.enumerated() {
+            // Items run with json:true so the created id is machine-readable; the item's own
+            // output never reaches the caller — import prints its own progress instead.
+            let outcome = await WriteDispatch.perform {
+                try await Add.perform(
+                    title: item.title, list: item.list, notes: item.notes,
+                    due: item.due, priority: item.priority,
+                    recurrence: item.recurrence, alarm: item.alarm,
+                    url: item.url, flag: item.flag, tags: nil,
+                    json: true, store: store, writer: writer, private: priv, now: now, calendar: calendar)
+            }
+            guard outcome.exitCode == 0,
+                  case let .object(pairs)? = OrderedJSON.parse(Data(outcome.stdout.utf8)) else {
+                let message = [outcome.stderr, outcome.stdout]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty }) ?? "add exited \(outcome.exitCode)"
+                errors.append(.object([
+                    ("index", .int(index)), ("title", .string(item.title)), ("message", .string(message)),
+                ]))
+                if !json { err += "Error: Failed to import \(safeDisplay(item.title)): \(message)\n" }
+                continue
+            }
+            created += 1
+            let identifier = createdIdentifier(pairs)
+            if let identifier { createdIds.append(identifier.value) }
+            if json {
+                // Progress on stderr keeps stdout a single parseable summary line.
+                err += "imported index=\(index) id=\(safeDisplay(identifier?.text ?? "unknown").prefix(128))\n"
+            } else {
+                out += "Created: \(safeDisplay(item.title))\n"
+            }
+        }
+
         if json {
             let summary: JSONValue = .object([
+                ("status", .string(errors.isEmpty ? "completed" : "partial")),
                 ("created", .int(created)),
-                ("errors", .int(errors)),
+                ("createdIds", .array(createdIds)),
+                ("errors", .array(errors)),
                 ("total", .int(total)),
             ])
             out += summary.serialized(indent: nil, ensureAscii: true) + "\n"
         } else {
-            out += "\nImported \(created)/\(total) reminders (\(errors) errors)\n"
+            out += "\nImported \(created)/\(total) reminders (\(errors.count) errors)\n"
         }
-        return WriteOutcome(stdout: out, stderr: err, exitCode: 0)
+        return WriteOutcome(stdout: out, stderr: err, exitCode: errors.isEmpty ? 0 : 1)
+    }
+
+    /// One validated row of the import document, normalized into `Add.perform` arguments.
+    private struct ImportItem {
+        var title: String
+        var list: String?
+        var notes: String?
+        var due: String?
+        var priority: String?
+        var url: String?
+        var recurrence: String?
+        var alarm: String?
+        var flag: Bool
+    }
+
+    private enum ItemValidation {
+        case valid(ImportItem)
+        case invalid(String)
+    }
+
+    /// Validate one array element against the same rules `add` applies, without writing anything.
+    private static func validate(_ element: JSONValue, now: Date, calendar: Calendar) -> ItemValidation {
+        guard case let .object(pairs) = element else { return .invalid("item must be an object") }
+        func field(_ key: String) -> JSONValue? { pairs.first(where: { $0.0 == key })?.1 }
+        func str(_ key: String) -> String? { if case let .string(s)? = field(key) { return s }; return nil }
+
+        guard let title = str("title"), !title.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return .invalid("item requires a non-empty string title")
+        }
+        for key in ["list", "notes", "due", "dueDate", "priority", "url", "alarm"] {
+            guard let value = field(key), value != .null else { continue }
+            guard case .string = value else { return .invalid("\(key) must be a string") }
+        }
+
+        // `due` wins over `dueDate`; an empty string falls through to the other key.
+        let due = [str("due"), str("dueDate")].compactMap { $0 }.first(where: { !$0.isEmpty })
+        if let due, WriteParsing.parseDue(due, now: now, calendar: calendar) == nil {
+            return .invalid("could not parse due date \(WriteFormatting.pyRepr(due))")
+        }
+
+        // A string spec OR an exported recurrence object; objects travel on as JSON text, which
+        // `Add.perform` re-parses through the same normalizer.
+        var recurrence: String? = nil
+        if let value = field("recurrence"), value != .null {
+            guard WriteParsing.parseRecurrence(value, calendar: calendar) != nil else {
+                return .invalid("could not parse recurrence \(valueRepr(value))")
+            }
+            recurrence = recurrenceSpecText(value)
+        }
+
+        if let alarm = str("alarm"), !alarm.isEmpty,
+           WriteParsing.parseAlarmSpec(alarm, allowClear: false, calendar: calendar) == nil {
+            return .invalid("could not parse alarm \(WriteFormatting.pyRepr(alarm))")
+        }
+        if let priority = str("priority"), !priority.isEmpty,
+           WriteParsing.parsePriority(priority, allowAliases: true) == nil {
+            return .invalid("priority must be high, medium, low, or none")
+        }
+        var flag = false
+        if let flagged = field("flagged") {
+            guard case let .bool(value) = flagged else { return .invalid("flagged must be a boolean") }
+            flag = value
+        }
+
+        return .valid(ImportItem(
+            title: title, list: str("list"), notes: str("notes"), due: due,
+            priority: str("priority"), url: str("url"), recurrence: recurrence,
+            alarm: str("alarm"), flag: flag))
+    }
+
+    /// Nothing has been written: report every bad item at once and refuse the whole document.
+    private static func validationFailure(
+        _ errors: [(index: Int, message: String)], total: Int, json: Bool
+    ) -> WriteOutcome {
+        let message = "Import validation failed; no reminders were created."
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("invalid_import")),
+                ("message", .string(message)),
+                ("created", .int(0)),
+                ("createdIds", .array([])),
+                ("errors", .array(errors.map {
+                    .object([("index", .int($0.index)), ("message", .string($0.message))])
+                })),
+                ("total", .int(total)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        var text = "Error: \(message)\n"
+        for error in errors { text += "  Item \(error.index): \(error.message)\n" }
+        return WriteOutcome(stderr: text, exitCode: 1)
+    }
+
+    /// The created reminder's identifier from an `add --json` payload: the numeric id once the row
+    /// is visible in the read store, else the EventKit identifier.
+    private static func createdIdentifier(_ pairs: [(String, JSONValue)]) -> (value: JSONValue, text: String)? {
+        func field(_ key: String) -> JSONValue? { pairs.first(where: { $0.0 == key })?.1 }
+        if case let .int(numericId)? = field("numericId"), numericId != 0 {
+            return (.int(numericId), String(numericId))
+        }
+        if case let .string(id)? = field("id"), !id.isEmpty { return (.string(id), id) }
+        return nil
+    }
+
+    /// Recurrence as `Add.perform` takes it: the original string, or the object's JSON text.
+    private static func recurrenceSpecText(_ value: JSONValue) -> String {
+        if case let .string(spec) = value { return spec }
+        return value.serialized(indent: nil, ensureAscii: true)
+    }
+
+    /// Quote a rejected value for an error message (divergence #2).
+    private static func valueRepr(_ value: JSONValue) -> String {
+        if case let .string(text) = value { return WriteFormatting.pyRepr(text) }
+        return value.serialized(indent: nil, ensureAscii: true)
     }
 
     /// Decode the file bytes to an order-preserving JSONValue (nil on malformed JSON).
