@@ -56,4 +56,30 @@ import GRDB
         #expect(r.stdout.contains("Work:\n  - Inbox\n  - Later"))
         #expect(r.stdout.contains("\n3 sections\n"))
     }
+
+    /// A deleted list can leave sections with no live list; Reminders hides them, and
+    /// `sections` used to group them under "?" while `stats` counted them (upstream 69478cb).
+    @Test func skipsSectionsOfDeletedAndMissingLists() throws {
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'Groceries',0),(2,3,'Old',1);
+            INSERT INTO ZREMCDBASESECTION (Z_PK,ZDISPLAYNAME,ZLIST,ZMARKEDFORDELETION) VALUES
+              (10,'Produce',1,0),
+              (11,'Gone',1,1),
+              (12,'Of a deleted list',2,0),
+              (13,'Orphan',NULL,0),
+              (14,'Dangling',99,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["sections", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let d = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any]
+        #expect(d?.count == 1)
+        #expect((d?["Groceries"] as? [String]) == ["Produce"])
+        let stats = try CLIRunner.run(["stats", "--json"], storeDir: dir)
+        let s = try JSONSerialization.jsonObject(with: Data(stats.stdout.utf8)) as? [String: Any]
+        #expect(s?["sections"] as? Int == 1)
+    }
 }

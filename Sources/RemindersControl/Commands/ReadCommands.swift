@@ -508,7 +508,7 @@ struct Stats: ParsableCommand {
             let urgent = counts.urgent
             let overdue = counts.overdue
             let lists = store.statListCount()
-            let sections = store.statSectionCount()
+            let sections = store.liveSectionCount()
             if opts.json {
                 let pairs: [(String, JSONValue)] = [
                     ("total", .int(total)),

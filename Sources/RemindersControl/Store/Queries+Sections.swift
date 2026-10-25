@@ -1,17 +1,27 @@
 import GRDB
 import Foundation
 
+/// Sections whose list still exists and is not deleted, ordered by list name then Z_PK.
+private let liveSectionsSQL = """
+SELECT s.Z_PK, s.ZDISPLAYNAME, s.ZLIST, s.ZCKIDENTIFIER, l.ZNAME as list_name
+FROM ZREMCDBASESECTION s
+JOIN ZREMCDBASELIST l ON s.ZLIST = l.Z_PK
+WHERE s.ZMARKEDFORDELETION = 0 AND l.ZMARKEDFORDELETION = 0
+ORDER BY l.ZNAME, s.Z_PK
+"""
+
 extension RemindersStore {
-    /// All sections ordered by list name then Z_PK, with list_name joined in.
+    /// All sections of a LIVE list, ordered by list name then Z_PK, with list_name joined in.
+    /// Deleting a list can leave its sections behind with no list at all; Reminders hides them,
+    /// and so does RemCTL. Smart-list and template sections have no ZLIST and are read through
+    /// their own commands.
     public func sectionsAll() -> [Row] {
-        let sql = """
-        SELECT s.Z_PK, s.ZDISPLAYNAME, s.ZLIST, s.ZCKIDENTIFIER, l.ZNAME as list_name
-        FROM ZREMCDBASESECTION s
-        LEFT JOIN ZREMCDBASELIST l ON s.ZLIST = l.Z_PK
-        WHERE s.ZMARKEDFORDELETION = 0
-        ORDER BY l.ZNAME, s.Z_PK
-        """
-        return (try? queue.read { try Row.fetchAll($0, sql: sql) }) ?? []
+        return (try? queue.read { try Row.fetchAll($0, sql: liveSectionsSQL) }) ?? []
+    }
+
+    /// Count of the same live sections (`stats`' Sections line).
+    public func liveSectionCount() -> Int {
+        (try? queue.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM (\(liveSectionsSQL))") ?? 0 }) ?? 0
     }
 
     /// q_sections for a specific list (remctl:1306): sections not deleted, ORDER BY Z_PK.

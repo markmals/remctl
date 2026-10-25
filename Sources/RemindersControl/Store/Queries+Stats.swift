@@ -36,9 +36,6 @@ extension RemindersStore {
     public func statListCount() -> Int {
         count("SELECT COUNT(*) FROM ZREMCDBASELIST WHERE ZMARKEDFORDELETION = 0 AND Z_ENT = 3 AND ZNAME IS NOT NULL AND ZNAME != ''")
     }
-    public func statSectionCount() -> Int {
-        count("SELECT COUNT(*) FROM ZREMCDBASESECTION WHERE ZMARKEDFORDELETION = 0")
-    }
     private func count(_ sql: String) -> Int {
         (try? queue.read { try Int.fetchOne($0, sql: sql) ?? 0 }) ?? 0
     }
