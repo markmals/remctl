@@ -78,6 +78,8 @@ Subtask due dates, priority, recurrence, and alarms use the same validators as p
 
 EventKit cannot move a reminder that owns subtasks, so `edit -l/--list` clones the parent and its subtasks into the destination through ReminderKit, waits for the clone to appear in the store, and only then deletes the original. The moved reminder gets a **new numeric id** (`--json`: `id`, `oldId`, `method: "clone-delete"`, `subtasksMoved`, `originalDeleted`), and the move cannot be combined with other edit flags. If the clone cannot be verified, nothing is deleted.
 
+Repeated `--subtask` values are created in the order you pass them, after any subtasks the parent already has. The result reports where the batch landed in `subtaskPlacement`: `afterExisting`, `first` (the parent had none), `unconfirmed` (the existing order could not be read, so the batch keeps its order but starts first), or `unordered` (the host's ReminderKit has no subtask ordering API).
+
 ### Attachments
 
 Only **images** attach (`--image`, or `image`/`images` on a subtask). Generic file and PDF attachments are intentionally rejected because Reminders does not reliably display them. Rich-link and image edits are **additive**: RemCTL adds synced rich links and images but never removes or replaces existing ones.
