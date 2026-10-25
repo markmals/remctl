@@ -1384,6 +1384,10 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     if (!subtaskContext) {
                         RKP_FAIL(@"Cloned parent reminder does not support subtasks");
                     }
+                    // Copies land first like new subtasks, so chain each after the previous one to
+                    // keep childIds' display order (upstream 3eb076b).
+                    BOOL canOrderCopies = [subtaskContext respondsToSelector:@selector(insertReminderChangeItem:afterReminderChangeItem:)];
+                    id previousCopy = nil;
                     for (NSString *childID in childIDs) {
                         id childObjectID = [REMObjectID objectIDWithURL:reminderURL(childID)];
                         if (!childObjectID) {
@@ -1397,6 +1401,10 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                         if (!copiedChild) {
                             RKP_FAIL([NSString stringWithFormat:@"Could not clone child reminder: %@", childID]);
                         }
+                        if (previousCopy && canOrderCopies) {
+                            [subtaskContext insertReminderChangeItem:copiedChild afterReminderChangeItem:previousCopy];
+                        }
+                        previousCopy = copiedChild;
                         id childObjectIDOut = [copiedChild remObjectID];
                         NSString *childUUID = childObjectIDOut && [childObjectIDOut respondsToSelector:@selector(uuid)] ? [[childObjectIDOut uuid] UUIDString] : @"";
                         NSString *childURL = childObjectIDOut && [childObjectIDOut respondsToSelector:@selector(urlRepresentation)] ? [[childObjectIDOut urlRepresentation] absoluteString] : @"";
