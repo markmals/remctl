@@ -18,7 +18,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case cloneReminderTree(id: String, listId: String, childIds: [String])
         case setListAppearance(listId: String, appearance: ListAppearance)
         case setListPinned(listId: String, pinned: Bool)
-        case setSmartListPinned(smartListId: String, pinned: Bool)
+        case setSmartListPinned(smartListId: String, pinned: Bool, isCustom: Bool)
         case createList(name: String, appearance: ListAppearance)
         case createSmartList(name: String, filterData: Data, appearance: ListAppearance)
         case updateSmartList(smartListId: String, filterData: Data?, appearance: ListAppearance)
@@ -60,7 +60,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func cloneReminderTree(id: String, listId: String, childIds: [String]) async throws -> PrivateResult { calls.append(.cloneReminderTree(id: id, listId: listId, childIds: childIds)); if let e = throwError { throw e }; return cloneResult ?? result }
     func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.setListAppearance(listId: listId, appearance: appearance)); return try resultOr("updated") }
     func setListPinned(listId: String, pinned: Bool) async throws -> PrivateResult { calls.append(.setListPinned(listId: listId, pinned: pinned)); return try resultOr("updated") }
-    func setSmartListPinned(smartListId: String, pinned: Bool) async throws -> PrivateResult { calls.append(.setSmartListPinned(smartListId: smartListId, pinned: pinned)); return try resultOr("updated") }
+    func setSmartListPinned(smartListId: String, pinned: Bool, isCustom: Bool) async throws -> PrivateResult { calls.append(.setSmartListPinned(smartListId: smartListId, pinned: pinned, isCustom: isCustom)); return try resultOr("updated") }
     func createList(name: String, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.createList(name: name, appearance: appearance)); return try resultOr("created") }
     func createSmartList(name: String, filterData: Data, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.createSmartList(name: name, filterData: filterData, appearance: appearance)); return try resultOr("created") }
     func updateSmartList(smartListId: String, filterData: Data?, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.updateSmartList(smartListId: smartListId, filterData: filterData, appearance: appearance)); return try resultOr("updated") }

@@ -92,7 +92,9 @@ public protocol PrivateWriter {
     // list / smart-list / template scoped
     func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult
     func setListPinned(listId: String, pinned: Bool) async throws -> PrivateResult
-    func setSmartListPinned(smartListId: String, pinned: Bool) async throws -> PrivateResult
+    /// `isCustom` tells the helper which ReminderKit fetch to use: custom smart lists and built-in
+    /// smart lists have distinct object IDs, so the wrong fetch returns ReminderKit error -3000.
+    func setSmartListPinned(smartListId: String, pinned: Bool, isCustom: Bool) async throws -> PrivateResult
     func createList(name: String, appearance: ListAppearance) async throws -> PrivateResult
     func createSmartList(name: String, filterData: Data, appearance: ListAppearance) async throws -> PrivateResult
     func updateSmartList(smartListId: String, filterData: Data?, appearance: ListAppearance) async throws -> PrivateResult

@@ -189,8 +189,8 @@ final class PrivateWriterTests: XCTestCase {
 
     func testSetSmartListPinnedRecordsCall() async throws {
         let mock = MockPrivateWriter()
-        _ = try await mock.setSmartListPinned(smartListId: "SL1", pinned: false)
-        XCTAssertEqual(mock.calls, [.setSmartListPinned(smartListId: "SL1", pinned: false)])
+        _ = try await mock.setSmartListPinned(smartListId: "SL1", pinned: false, isCustom: true)
+        XCTAssertEqual(mock.calls, [.setSmartListPinned(smartListId: "SL1", pinned: false, isCustom: true)])
     }
 
     func testCreateListRecordsCall() async throws {

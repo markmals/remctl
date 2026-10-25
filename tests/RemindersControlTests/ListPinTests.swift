@@ -104,7 +104,7 @@ import GRDB
             name: "Flagged", listId: nil, smartListId: nil,
             pinned: true, json: false, store: s, private: mock)
 
-        #expect(mock.calls == [.setSmartListPinned(smartListId: "S20", pinned: true)])
+        #expect(mock.calls == [.setSmartListPinned(smartListId: "S20", pinned: true, isCustom: false)])
         #expect(out == WriteOutcome.ok("Pinned smart list: Flagged\n"))
     }
 
@@ -118,8 +118,22 @@ import GRDB
             name: nil, listId: nil, smartListId: 20,
             pinned: true, json: false, store: s, private: mock)
 
-        #expect(mock.calls == [.setSmartListPinned(smartListId: "S20", pinned: true)])
+        #expect(mock.calls == [.setSmartListPinned(smartListId: "S20", pinned: true, isCustom: false)])
         #expect(out == WriteOutcome.ok("Pinned smart list: Flagged\n"))
+    }
+
+    // MARK: - Custom smart lists ask for the custom ReminderKit fetch
+
+    @Test func pinCustomSmartListSendsCustomHint() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mock = MockPrivateWriter()
+
+        let out = try await ListPin.performPin(
+            name: nil, listId: nil, smartListId: 40,
+            pinned: true, json: false, store: s, private: mock)
+
+        #expect(mock.calls == [.setSmartListPinned(smartListId: "S40", pinned: true, isCustom: true)])
+        #expect(out == WriteOutcome.ok("Pinned smart list: Dup\n"))
     }
 
     // MARK: - Unpin smart list with JSON output

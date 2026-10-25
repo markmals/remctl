@@ -73,6 +73,15 @@ extension RemindersStore {
         return ckid
     }
 
+    /// Whether a smart list is a custom (user-authored) one rather than a built-in Reminders smart
+    /// list. The two kinds need different ReminderKit fetches when pinning (upstream 76a95ce).
+    public func smartListIsCustom(pk: Int) -> Bool {
+        let row = try? queue.read { try Row.fetchOne($0, sql:
+            "SELECT ZSMARTLISTTYPE FROM ZREMCDBASELIST WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0",
+            arguments: [pk]) }
+        return row?.string("ZSMARTLISTTYPE") == Constants.customSmartListType
+    }
+
     /// q_custom_smart_list_exact_name_count (remctl:507): live custom smart lists with this
     /// EXACT name (case-sensitive). Used to reject duplicate smart-list-create.
     public func customSmartListExactNameCount(name: String) -> Int {

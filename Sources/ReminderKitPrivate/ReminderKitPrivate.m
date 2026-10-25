@@ -167,6 +167,7 @@
 - (id)sectionsContextChangeItem;
 - (id)appearanceContext;
 - (id)groceryContextChangeItem;
+- (void)autoCategorizeRemindersWithReminderIDs:(NSArray *)reminderIDs;
 - (void)setColor:(id)color;
 - (void)setIsPinned:(BOOL)pinned;
 - (void)setName:(NSString *)name;
@@ -190,7 +191,7 @@
 @end
 
 @interface REMColor : NSObject
-- (instancetype)initWithRed:(double)red green:(double)green blue:(double)blue alpha:(double)alpha colorSpace:(NSInteger)colorSpace daSymbolicColorName:(NSString *)daSymbolicColorName daHexString:(NSString *)daHexString ckSymbolicColorName:(NSString *)ckSymbolicColorName;
+- (instancetype)initWithRed:(double)red green:(double)green blue:(double)blue alpha:(double)alpha colorSpace:(NSUInteger)colorSpace daSymbolicColorName:(NSString *)daSymbolicColorName daHexString:(NSString *)daHexString ckSymbolicColorName:(NSString *)ckSymbolicColorName;
 @end
 
 @interface REMListSectionChangeItem : NSObject
@@ -1199,11 +1200,28 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 }
                 REMStore *store = [REMStore new];
                 id smartList = nil;
-                if ([store respondsToSelector:@selector(fetchSmartListWithObjectID:error:)]) {
-                    smartList = [store fetchSmartListWithObjectID:objectID error:&error];
-                }
-                if (!smartList) {
-                    smartList = [store fetchCustomSmartListWithObjectID:objectID error:&error];
+                id isCustomValue = cmd[@"isCustom"];
+                if ([isCustomValue isKindOfClass:[NSNumber class]]) {
+                    if ([isCustomValue boolValue]) {
+                        if (![store respondsToSelector:@selector(fetchCustomSmartListWithObjectID:error:)]) {
+                            RKP_FAIL(@"Custom smart-list pinning is unsupported on this macOS version");
+                        }
+                        smartList = [store fetchCustomSmartListWithObjectID:objectID error:&error];
+                    } else {
+                        if (![store respondsToSelector:@selector(fetchSmartListWithObjectID:error:)]) {
+                            RKP_FAIL(@"Built-in smart-list pinning is unsupported on this macOS version");
+                        }
+                        smartList = [store fetchSmartListWithObjectID:objectID error:&error];
+                    }
+                } else {
+                    // Callers that predate the smart-list kind hint keep the legacy fetch order.
+                    if ([store respondsToSelector:@selector(fetchSmartListWithObjectID:error:)]) {
+                        smartList = [store fetchSmartListWithObjectID:objectID error:&error];
+                    }
+                    if (!smartList && [store respondsToSelector:@selector(fetchCustomSmartListWithObjectID:error:)]) {
+                        error = nil;
+                        smartList = [store fetchCustomSmartListWithObjectID:objectID error:&error];
+                    }
                 }
                 if (!smartList) {
                     RKP_FAIL(error.localizedDescription ?: @"Smart list not found");
@@ -1258,10 +1276,11 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     RKP_FAIL(@"ReminderKit list change item does not support grocery categorization");
                 }
                 id groceryContext = [change groceryContextChangeItem];
-                if (!groceryContext || ![groceryContext respondsToSelector:@selector(categorizeGroceryItemsWithReminderIDs:)]) {
+                if (!groceryContext) {
                     RKP_FAIL(@"ReminderKit grocery context does not support item categorization");
                 }
                 NSMutableArray *uuids = [NSMutableArray array];
+                NSMutableArray *reminderObjectIDs = [NSMutableArray array];
                 for (NSString *reminderID in reminderIDs) {
                     NSURL *reminderObjectURL = reminderURL(reminderID);
                     id reminderObjectID = [REMObjectID objectIDWithURL:reminderObjectURL];
@@ -1269,9 +1288,22 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                         RKP_FAIL([NSString stringWithFormat:@"Could not build ReminderKit reminder object ID: %@", reminderID]);
                     }
                     [uuids addObject:[reminderObjectID uuid]];
+                    [reminderObjectIDs addObject:reminderObjectID];
                 }
+                NSString *categorizationSelector = nil;
                 @try {
-                    [(REMListGroceryContextChangeItem *)groceryContext categorizeGroceryItemsWithReminderIDs:uuids];
+                    if ([groceryContext respondsToSelector:@selector(categorizeGroceryItemsWithReminderIDs:)]) {
+                        // Preserve Tahoe's shipped UUID contract. The REMObjectID alternative
+                        // tombstones the disposable list, reminder, and section on macOS 26.2.
+                        [(REMListGroceryContextChangeItem *)groceryContext categorizeGroceryItemsWithReminderIDs:uuids];
+                        categorizationSelector = @"categorizeGroceryItemsWithReminderIDs:";
+                    } else if ([change respondsToSelector:@selector(autoCategorizeRemindersWithReminderIDs:)]) {
+                        // Golden Gate moved this operation from the grocery context to the list change.
+                        [change autoCategorizeRemindersWithReminderIDs:reminderObjectIDs];
+                        categorizationSelector = @"autoCategorizeRemindersWithReminderIDs:";
+                    } else {
+                        RKP_FAIL(@"ReminderKit grocery context does not support item categorization on this macOS version");
+                    }
                 } @catch (NSException *exception) {
                     RKP_FAIL([NSString stringWithFormat:@"ReminderKit grocery categorization failed: %@", exception.reason ?: exception.name]);
                 }

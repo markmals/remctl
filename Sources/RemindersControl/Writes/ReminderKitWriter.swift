@@ -302,8 +302,11 @@ public final class ReminderKitWriter: PrivateWriter {
         return await dispatchWithRetry(req)
     }
 
-    public func setSmartListPinned(smartListId: String, pinned: Bool) async throws -> PrivateResult {
-        let req: [String: Any] = ["action": "set_smart_list_pinned", "smartListId": smartListId, "pinned": pinned]
+    public func setSmartListPinned(smartListId: String, pinned: Bool, isCustom: Bool) async throws -> PrivateResult {
+        let req: [String: Any] = [
+            "action": "set_smart_list_pinned", "smartListId": smartListId,
+            "pinned": pinned, "isCustom": isCustom,
+        ]
         return await dispatchWithRetry(req)
     }
 

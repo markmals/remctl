@@ -391,7 +391,8 @@ struct ListPin: AsyncParsableCommand {
         let result: PrivateResult
         do {
             result = try await (targetKind == "smart-list"
-                ? priv.setSmartListPinned(smartListId: ckid, pinned: pinned)
+                ? priv.setSmartListPinned(
+                    smartListId: ckid, pinned: pinned, isCustom: store.smartListIsCustom(pk: targetId))
                 : priv.setListPinned(listId: ckid, pinned: pinned))
         } catch let e as WriteError {
             return .error(e.message)

@@ -117,7 +117,7 @@ remctl template-create "Packing Template" --from-list Packing
 Private metadata covers the parts of Reminders that EventKit does not:
 
 - **Reminder metadata:** synced web rich links (`--url`), synced tags (`-t/--tags`), sections (`--section`/`--section-id`/`--new-section`), rich subtasks (`--subtask`), image attachments (`--image`), real flag state (`-f/--flag`, `--flagged`), urgent state (`--urgent`), and Early Reminders (`--early-reminder`).
-- **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), and list/smart-list pin state.
+- **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), regular-list pin state, and custom-smart-list pin state (built-in smart-list pinning depends on the host's ReminderKit and fails before saving when it is missing).
 - **Smart lists:** custom smart-list create/edit/delete for the Reminders filters RemCTL has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete. Existing public template links are read-only; RemCTL does not create iCloud sharing links.
 

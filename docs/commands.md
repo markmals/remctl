@@ -309,7 +309,7 @@ remctl list-edit --list-id 144 --emoji 📌
 ```
 
 ### `list-pin [NAME]` / `list-unpin [NAME]`
-Toggle the Reminders.app sidebar pin for a regular list (`--list-id`) or a smart list (`--smart-list-id`). If a name matches both a regular and a smart list, RemCTL fails and asks for an explicit ID. Verify smart-list pinning with `smart-lists --json`.
+Toggle the Reminders.app sidebar pin for a regular list (`--list-id`) or a smart list (`--smart-list-id`). If a name matches both a regular and a smart list, RemCTL fails and asks for an explicit ID. Verify smart-list pinning with `smart-lists --json`. Custom and built-in smart lists use different ReminderKit fetches and RemCTL says which kind it is targeting: on macOS versions whose store does not expose the built-in (generic) fetch, built-in pinning fails before saving; custom smart-list pinning is unaffected.
 ```bash
 remctl list-pin "Project X"
 remctl list-pin --smart-list-id 4
