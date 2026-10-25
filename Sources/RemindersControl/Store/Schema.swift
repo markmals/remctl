@@ -40,6 +40,9 @@ extension RemindersStore {
     }
 
     /// 10 correlated subqueries on ZREMCDOBJECT (REMCDRecurrenceRule, FK ZREMINDER4). Aliases are read by the serializer.
+    /// The unary `+` on the deleted-flag and entity tests keeps SQLite on the ZREMINDER4 index:
+    /// Reminders indexes ZMARKEDFORDELETION, and SQLite otherwise picks that index and scans
+    /// every object row for each of the ten columns of every listed reminder (upstream #54).
     var recurrenceCols: String {
         let ent = recurrenceRuleEntity
         let pairs: [(String, String)] = [
@@ -50,7 +53,7 @@ extension RemindersStore {
             ("ZWEEKSOFTHEYEAR", "recurrence_weeks_of_year"), ("ZSETPOSITIONS", "recurrence_set_positions"),
         ]
         return pairs.map { col, alias in
-            "(SELECT rr.\(col) FROM ZREMCDOBJECT rr WHERE rr.ZREMINDER4 = r.Z_PK AND rr.ZMARKEDFORDELETION = 0 AND rr.Z_ENT = \(ent) ORDER BY rr.Z_PK LIMIT 1) AS \(alias)"
+            "(SELECT rr.\(col) FROM ZREMCDOBJECT rr WHERE rr.ZREMINDER4 = r.Z_PK AND +rr.ZMARKEDFORDELETION = 0 AND +rr.Z_ENT = \(ent) ORDER BY rr.Z_PK LIMIT 1) AS \(alias)"
         }.joined(separator: ", ")
     }
 

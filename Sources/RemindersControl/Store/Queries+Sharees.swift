@@ -15,7 +15,7 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql:
             "SELECT Z_PK, ZCKIDENTIFIER, ZDISPLAYNAME, ZFIRSTNAME, ZLASTNAME, ZADDRESS1, "
             + "ZSTATUS, ZACCESSLEVEL FROM ZREMCDOBJECT "
-            + "WHERE Z_ENT = \(ent) AND ZMARKEDFORDELETION = 0 AND ZLIST = ? "
+            + "WHERE +Z_ENT = \(ent) AND +ZMARKEDFORDELETION = 0 AND ZLIST = ? "
             + "ORDER BY Z_PK",
             arguments: [listPk]) }) ?? []
     }
@@ -50,7 +50,7 @@ extension RemindersStore {
             + "FROM ZREMCDOBJECT a "
             + "LEFT JOIN ZREMCDOBJECT assignee ON a.ZASSIGNEE = assignee.Z_PK "
             + "LEFT JOIN ZREMCDOBJECT originator ON a.ZORIGINATOR = originator.Z_PK "
-            + "WHERE a.Z_ENT = \(ent) AND a.ZMARKEDFORDELETION = 0 AND a.ZREMINDER1 = ? "
+            + "WHERE +a.Z_ENT = \(ent) AND +a.ZMARKEDFORDELETION = 0 AND a.ZREMINDER1 = ? "
             + "ORDER BY a.ZASSIGNEDDATE DESC, a.Z_PK DESC LIMIT 1",
             arguments: [reminderPk]) }) ?? nil
     }

@@ -5,9 +5,11 @@ import Foundation
 /// isn't deleted, it belongs to an account, and its list still exists and isn't deleted
 /// either. Deleting a list can leave its reminder rows behind without the deleted flag.
 /// Assumes the `r` (reminder) / `l` (joined list) aliases every reminder query uses.
+/// The unary `+` keeps the deleted-flag tests off their own index so SQLite can use the
+/// keyed index for the lookup instead (upstream #54).
 let liveReminderSQL =
-    "r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL "
-    + "AND l.Z_PK IS NOT NULL AND l.ZMARKEDFORDELETION = 0"
+    "+r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL "
+    + "AND l.Z_PK IS NOT NULL AND +l.ZMARKEDFORDELETION = 0"
 
 extension RemindersStore {
     /// q_reminders: WHERE base + optional list/parent/topLevel + completed filter; ORDER BY r.Z_PK LIMIT n.
@@ -39,7 +41,7 @@ extension RemindersStore {
     }
 
     public func subtaskCount(pk: Int) -> Int {
-        (try? queue.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM ZREMCDREMINDER WHERE ZPARENTREMINDER = ? AND ZMARKEDFORDELETION = 0 AND ZCOMPLETED = 0", arguments: [pk]) }) ?? 0
+        (try? queue.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM ZREMCDREMINDER WHERE ZPARENTREMINDER = ? AND +ZMARKEDFORDELETION = 0 AND ZCOMPLETED = 0", arguments: [pk]) }) ?? 0
     }
 
     /// Port of `early_reminder_identifiers_for_reminder` (remctl:2522).
