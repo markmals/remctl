@@ -60,6 +60,30 @@ surface cleanly for list views, in tens of milliseconds:
 The store file is TCC-protected, so this path requires **Full Disk Access** for
 the process context running `remctl` (see [Permissions](#permissions)).
 
+### Attachment Files and Path Verification
+
+Attachment rows (`ZREMCDSAVEDATTACHMENT` for saved attachments, `ZREMCDOBJECT` for synced
+file objects) record a filename, UTI, pixel dimensions and a `ZSHA512SUM` of the file's
+contents. The files themselves live beside the store, in the group container:
+
+```text
+~/Library/Group Containers/group.com.apple.reminders/Container_v1/Files/Account-*/Attachments/<ZSHA512SUM><ext>
+```
+
+`Runtime/AttachmentFiles.swift` maps a row to its file by trying candidate extensions (the
+filename's suffix, the UTI's extension, then `.png`/`.jpg`/`.jpeg`/`.heic`) and trusting a
+candidate only when its SHA-512 matches the stored sum — that verified path is what JSON
+reports as `attachments[].path` alongside `resolved`, `uti`, `width` and `height`. Rows with
+no sum, no local file, or bytes that no longer match serialize as `path: null` with
+`resolved: false` instead of guessing; files over 16 MB are never hashed. Hashes are
+memoized per `(path, mtime, size)` and the `Account-*/Attachments` listing is read once, so
+a large listing hashes each blob at most once.
+
+Attachment rows and the 🔗/🌄 badge flags are batch-loaded per listing
+(`Store/Queries+Attachments.swift`, `Store/Queries+Indicators.swift`): one query per backing
+table for the whole page, with the schema-drift columns (`ZSHA512SUM`, `ZUTI`, `ZWIDTH`,
+`ZHEIGHT`) selected as NULL when an older Reminders schema lacks them.
+
 ## The Public-Write Path — EventKit
 
 Ordinary mutations go through Apple's EventKit, in-process. `EventKitWriter`

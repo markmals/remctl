@@ -110,6 +110,7 @@ public func serializeReminder(
     section: String? = nil,
     subtaskCounts: [Int: Int] = [:],
     hashtags: [Int: [String]] = [:],
+    attachments: [Int: [JSONValue]] = [:],
     richLink: (() -> String?)? = nil,
     calendar: Calendar = .current,
     hasAbsoluteAlarm: (() -> Bool)? = nil,
@@ -152,6 +153,7 @@ public func serializeReminder(
     if let cd = row.double("ZCOMPLETIONDATE"), cd != 0, let iso = ts(cd) { o.append(("completionDate", .string(iso))) }
     if let parent = row.int("ZPARENTREMINDER"), parent != 0 { o.append(("parentID", .int(parent))) }
     if !tags.isEmpty { o.append(("tags", .array(tags.map { .string($0) }))) }
+    if let atts = attachments[pk], !atts.isEmpty { o.append(("attachments", .array(atts))) }
     if let rec = recurrenceFromRow(row, ts: ts) { o.append(("recurrence", .object(rec))) }
     var early = dueDateDeltaAlertsFromRow(row, ts: ts)
     if early.isEmpty, let earlyFallback, let ck = row.string("ZCKIDENTIFIER"), !ck.isEmpty {
@@ -167,12 +169,15 @@ public func serializeReminder(
     return o
 }
 
-/// Batch serialize. Preloads subtaskCounts + hashtags; binds rich-link url fallback to the store.
+/// Batch serialize. Preloads subtaskCounts + hashtags + attachments; binds rich-link url
+/// fallback to the store.
 /// memberships maps a reminder's ZCKIDENTIFIER -> section display name (empty if none).
 public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
                                memberships: [String: String] = [:]) -> [[(String, JSONValue)]] {
     let pks = rows.compactMap { $0.int("Z_PK") }
     let (subtaskCounts, hashtags) = store.preloadExtras(pks)
+    let attachments = attachmentJSONByReminder(store.preloadAttachments(pks),
+                                               resolve: store.resolveAttachmentPath)
     let earlyRows = store.dueDateDeltaAlertRowsByReminder()
     let earlyFallback: (String) -> [[(String, JSONValue)]] = { ck in
         dueDateDeltaAlertRowsToJSON(UUID(uuidString: ck).flatMap { earlyRows[$0.uuidString] } ?? [])
@@ -181,7 +186,7 @@ public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
         let section = row.string("ZCKIDENTIFIER").flatMap { memberships[$0] }
         let pk = row.int("Z_PK") ?? 0
         var o = serializeReminder(row, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
-            section: section, subtaskCounts: subtaskCounts, hashtags: hashtags,
+            section: section, subtaskCounts: subtaskCounts, hashtags: hashtags, attachments: attachments,
             richLink: { store.richLink(pk: pk) },
             hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: pk) },
             earlyFallback: earlyFallback)

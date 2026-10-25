@@ -232,10 +232,10 @@ import GRDB
         }
         defer { try? FileManager.default.removeItem(at: dir) }
         let rows = s.attachments(pk: 42)
-        // ORDER BY ZFILENAME -> a.pdf, b.png
-        #expect(rows.map { $0.string("ZFILENAME")! } == ["a.pdf","b.png"])
-        #expect(rows[0].string("ZATTACHMENTTYPERAWVALUE") == "file")
-        #expect(rows[1].string("ZATTACHMENTTYPERAWVALUE") == "image")  // derived from ZWIDTH/ZHEIGHT
+        // sorted by filename -> a.pdf, b.png
+        #expect(rows.map { $0.filename! } == ["a.pdf","b.png"])
+        #expect(rows[0].type == "file")
+        #expect(rows[1].type == "image")  // derived from ZWIDTH/ZHEIGHT
     }
     @Test func alarmsRelativeTriggerJoin() throws {
         let (s, dir) = try store { db in

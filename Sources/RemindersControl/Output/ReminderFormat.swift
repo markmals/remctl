@@ -256,10 +256,12 @@ private func stateMarkers(_ row: ReminderRow, ansi: Ansi) -> String {
 /// Port of `fmt`. Human-readable single-reminder line (plus verbose detail lines).
 /// `earlyFallback` reads Early Reminders from `ZREMCDDUEDATEDELTAALERT` for a store whose
 /// envelope blob is absent or stale (upstream 088fab4); it takes the reminder's ckid.
+/// `badges` ends the line with 🔗/🌄 markers; they stay out of every machine-readable output.
 public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ansi,
                 now: Date = Date(), verbose: Bool = false, indent: String = "",
                 rgb: ListColorResolver? = nil, assigneeName: String? = nil,
-                earlyFallback: ((String) -> [[(String, JSONValue)]])? = nil) -> String {
+                earlyFallback: ((String) -> [[(String, JSONValue)]])? = nil,
+                badges: ReminderBadges = ReminderBadges()) -> String {
     let completed = itemCompleted(row)
     let status = completed ? ansi.green("[x]") : ansi.dim("[ ]")
 
@@ -294,7 +296,9 @@ public func fmt(_ row: ReminderRow, tags: [String], subtaskCount: Int, ansi: Ans
         subStr = ansi.dim(subStr)
     }
 
-    var parts = ["\(indent)\(status) \(idStr)\(priStr)\(markerStr) \(title)\(dueStr)\(recurStr)\(assignStr)\(tagStr)\(subStr)"]
+    // Badges close the line, after tags and the subtask count, and keep their color on a
+    // completed reminder (upstream fmt badge_str).
+    var parts = ["\(indent)\(status) \(idStr)\(priStr)\(markerStr) \(title)\(dueStr)\(recurStr)\(assignStr)\(tagStr)\(subStr)\(badges.suffix)"]
 
     if verbose {
         if let listName, !listName.isEmpty {

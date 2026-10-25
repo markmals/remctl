@@ -39,6 +39,8 @@ High-value guardrails:
 - Location alarms (`--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`) are written through EventKit structured-location alarms; verify in `info --json` under `alarms`.
 - Synced rich URLs require public `http`/`https` hosts; loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts fail before writing. With no other private metadata present, `--url` is just a notes append and `add --tags` writes inline title hashtags.
 - Human output strips terminal control characters; use JSON when exact raw values matter.
+- Reminder JSON carries `attachments` only when the reminder has some. Read `attachments[].path` when `resolved` is `true` — it is the SHA-512-verified file and is safe to open; `resolved: false` means the file is not on this Mac, which is not an error.
+- Plain human list output may end reminder lines with trailing `🔗` (rich link) and/or `🌄` (image attachment) badges. Those badges are never in JSON — read the `attachments` and `url` JSON fields instead.
 - Invalid due dates, recurrence, alarms, priorities, and location payloads fail before writing. `upcoming DAYS` accepts 1–3650 and always starts today: `upcoming 1` is today and tomorrow, `upcoming 7` today plus the next week.
 - Verify smart-list pinning with `smart-lists --json`, not `lists --json`. Built-in smart-list pinning depends on the host's ReminderKit and fails before saving when unsupported; custom smart lists always pin.
 - If `add` fails after creating the reminder (`code: "private_add_partial"`), finish the missing private step with `edit <numericId>` — never re-run `add`, which would duplicate.

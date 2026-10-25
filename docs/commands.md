@@ -567,6 +567,7 @@ RemCTL output serves both humans and agents:
 
 - reminder IDs print as `#ID`, colored with the reminder's list color when readable
 - `⚑` flagged, `⏰` urgent, `↻` recurrence badge (e.g. `↻ weekly Mon, Wed`, `↻ monthly last Fri`), `🥕` Groceries
+- `🔗` rich link and `🌄` image attachment close a human one-liner ([List Badges](#list-badges))
 - priority markers: `!!!` high, `!!` medium, `!` low
 - table output keeps a dedicated `Repeat` column when any row recurs, and `show`/`search` with `--completed` replace the `Due` column with a `Completed` timestamp
 - human output strips terminal control characters from Reminders text; every read command supports `--json`
@@ -596,6 +597,47 @@ Example `info --json` shape:
   "recurrence": { "frequency": "weekly", "interval": 1, "daysOfWeek": [2, 4, 6] }
 }
 ```
+
+## Attachments in JSON
+
+`info --json` and list-command JSON (`show`, `today`, `upcoming`, `overdue`, `flagged`, `urgent`, `search`, and `export --format json`) include an `attachments` array on any reminder that has attachments; the key is omitted when a reminder has none. `info --json` also reports each subtask's attachments.
+
+Each entry has this shape:
+
+```json
+{
+  "filename": "mockup.png",
+  "type": "image",
+  "path": "/Users/you/Library/Group Containers/group.com.apple.reminders/Container_v1/Files/Account-ABCD/Attachments/<sha512>.png",
+  "resolved": true,
+  "uti": "public.png",
+  "width": 1200,
+  "height": 800
+}
+```
+
+`path` is the SHA-512-verified on-disk file inside Reminders' group container: RemCTL hashes the candidate file and reports it only when the digest matches the attachment's stored sum, so a vision-capable agent can open it directly. For legacy attachments that were never downloaded to this Mac — and for files whose bytes no longer match — `path` is `null` and `resolved` is `false`; treat those as unavailable rather than an error. Files larger than 16 MB are never hashed, so they stay unresolved. `width`/`height` are `null` for rows that carry no pixel dimensions.
+
+Attachments are batch-loaded per listing (one query per attachment table, no per-reminder queries), and path verification is memoized per process.
+
+## List Badges
+
+Plain human list output can end a reminder's one-line summary with up to two trailing emoji badges:
+
+- `🔗` — the reminder has at least one rich link (a `ZREMCDOBJECT` URL row, or a saved attachment typed `url`).
+- `🌄` — the reminder has at least one image attachment.
+
+When both apply they print in that order, space-separated, at the end of the line after tags and any `[N subtasks]` count:
+
+```text
+[ ] #30165 Try Halo app on iOS again 🌄
+[ ] #30174 Read the new MacStories piece 🔗
+[ ] #30180 Review layout mockups 🔗 🌄
+```
+
+The badges appear in `show` (including a list group's child lists), `search`, `today`, `upcoming`, `overdue`, `flagged`, `urgent`, and on subtask lines in `subtasks` and `info`. Completed reminders keep their badges. They are loaded in batch alongside the other list metadata, so they add no per-reminder queries.
+
+Badges are a plain human output affordance only: they are never present in `--json`, CSV export, `--format table`, or `--via-eventkit` payloads. Agents should read the `attachments` and `url` JSON fields instead.
 
 ---
 

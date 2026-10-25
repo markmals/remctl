@@ -40,16 +40,6 @@ extension RemindersStore {
             arguments: [pk]) }) ?? []
     }
 
-    /// q_attachments — UNION ALL of saved attachments + ZREMCDOBJECT image/file rows, ORDER BY ZFILENAME.
-    public func attachments(pk: Int) -> [Row] {
-        let sql = "SELECT ZFILENAME, ZUTI, ZATTACHMENTTYPERAWVALUE FROM ZREMCDSAVEDATTACHMENT WHERE ZREMINDER = ? AND +ZMARKEDFORDELETION = 0 " +
-            "UNION ALL " +
-            "SELECT ZFILENAME, ZUTI, CASE WHEN ZWIDTH IS NOT NULL OR ZHEIGHT IS NOT NULL THEN 'image' ELSE 'file' END AS ZATTACHMENTTYPERAWVALUE " +
-            "FROM ZREMCDOBJECT WHERE ZREMINDER2 = ? AND ZFILENAME IS NOT NULL AND ZFILENAME != '' AND +ZMARKEDFORDELETION = 0 " +
-            "ORDER BY ZFILENAME"
-        return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk, pk]) }) ?? []
-    }
-
     /// q_alarms — alarm objects (REMCDAlarm) LEFT JOIN their trigger object, ORDER BY a.Z_PK.
     public func alarms(pk: Int) -> [Row] {
         let ent = alarmEntity

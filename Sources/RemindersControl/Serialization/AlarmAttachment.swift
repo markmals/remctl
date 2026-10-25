@@ -1,13 +1,32 @@
 import Foundation
 
-/// Port of attachment_rows_to_json: [{filename, type}] (ordered keys).
-public func attachmentRowsToJSON(_ rows: [ReminderRow]) -> [JSONValue] {
+/// Port of attachment_rows_to_json: [{filename, type, path, resolved, uti, width, height}]
+/// (ordered keys). `resolve` maps a row to its verified on-disk file, or nil.
+public func attachmentRowsToJSON(_ rows: [AttachmentRow], resolve: (AttachmentRow) -> String?) -> [JSONValue] {
     rows.map { row in
-        .object([
-            ("filename", row.string("ZFILENAME").map { .string($0) } ?? .null),
-            ("type", row.string("ZATTACHMENTTYPERAWVALUE").map { .string($0) } ?? .null),
+        let path = resolve(row)
+        return .object([
+            ("filename", row.filename.map { .string($0) } ?? .null),
+            ("type", row.type.map { .string($0) } ?? .null),
+            ("path", path.map { .string($0) } ?? .null),
+            ("resolved", .bool(path != nil)),
+            ("uti", row.uti.map { .string($0) } ?? .null),
+            ("width", pixelDimension(row.width)),
+            ("height", pixelDimension(row.height)),
         ])
     }
+}
+
+/// Pixel counts are whole numbers; the store types them as REAL.
+private func pixelDimension(_ value: Double?) -> JSONValue {
+    guard let value else { return .null }
+    return value == value.rounded() ? .int(Int(value)) : .double(value)
+}
+
+/// The same payload for a page of reminders, keyed by reminder Z_PK (preload_attachments).
+public func attachmentJSONByReminder(_ grouped: [Int: [AttachmentRow]],
+                                     resolve: (AttachmentRow) -> String?) -> [Int: [JSONValue]] {
+    grouped.mapValues { attachmentRowsToJSON($0, resolve: resolve) }
 }
 
 /// Port of _relative_alarm_label.

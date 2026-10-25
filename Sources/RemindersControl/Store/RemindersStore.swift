@@ -6,6 +6,10 @@ public final class RemindersStore {
     public let path: URL
     private var columnCache: [String: Set<String>] = [:]
     private var entityCache: [String: Int] = [:]
+    /// Verifies attachment blobs in the Files/ container next to the opened store.
+    /// One per store, so its hash memo and directory listing are reused for the whole run.
+    public private(set) lazy var attachmentResolver =
+        AttachmentFileResolver(storeDir: path.deletingLastPathComponent())
 
     private init(queue: DatabaseQueue, path: URL) { self.queue = queue; self.path = path }
 

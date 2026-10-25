@@ -47,6 +47,7 @@ struct Today: AsyncParsableCommand {
                 print("Nothing due today (\(fmt.string(from: now)))")
                 return
             }
+            let badges = store.preloadIndicators(pks)
             let sodTs = AppleEpoch.toTs(DateWindows.startOfDay(now))
             let overdue = rows.filter { (rowShownDate($0) ?? 0) < sodTs }
             let overduePKs = Set(overdue.compactMap { $0.int("Z_PK") })
@@ -56,7 +57,7 @@ struct Today: AsyncParsableCommand {
                 print(ansi.red("Overdue (\(overdue.count)):"))
                 for r in overdue {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), badges: badges[pk] ?? ReminderBadges()))
                 }
                 print("")
             }
@@ -64,7 +65,7 @@ struct Today: AsyncParsableCommand {
                 print(ansi.bold("Due Today (\(due.count)):"))
                 for r in due {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), badges: badges[pk] ?? ReminderBadges()))
                 }
             }
             print("\n\(rows.count) total")
@@ -112,6 +113,7 @@ struct Upcoming: AsyncParsableCommand {
                 return
             }
             print(ansi.bold("Upcoming (\(days) days):"))
+            let badges = store.preloadIndicators(pks)
 
             let cal = Calendar.current
             let today = cal.startOfDay(for: now)
@@ -148,7 +150,7 @@ struct Upcoming: AsyncParsableCommand {
                 print("\n  \(ansi.bold(grp.label)):")
                 for r in grp.items {
                     let pk = r.int("Z_PK") ?? 0
-                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "    ", assigneeName: store.assignmentAssignee(pk: pk)))
+                    print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, indent: "    ", assigneeName: store.assignmentAssignee(pk: pk), badges: badges[pk] ?? ReminderBadges()))
                 }
             }
             print("\n\(rows.count) upcoming")
@@ -181,9 +183,10 @@ struct Overdue: ParsableCommand {
                 return
             }
             print(ansi.red(ansi.bold("Overdue (\(rows.count)):")))
+            let badges = store.preloadIndicators(pks)
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts, badges: badges[pk] ?? ReminderBadges()))
             }
             print("\n\(rows.count) overdue")
         }
@@ -309,9 +312,10 @@ struct Search: AsyncParsableCommand {
                 return
             }
             print("Search: \(ansi.bold(safeDisplay(query)))\(scope)")
+            let badges = store.preloadIndicators(pks)
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts, badges: badges[pk] ?? ReminderBadges()))
             }
             if rows.count == total {
                 print("\n\(total) result\(total == 1 ? "" : "s")")
@@ -348,9 +352,10 @@ struct Flagged: ParsableCommand {
                 return
             }
             print(ansi.bold("Flagged:"))
+            let badges = store.preloadIndicators(pks)
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts, badges: badges[pk] ?? ReminderBadges()))
             }
             let n = rows.count
             print("\n\(n) flagged")
@@ -383,9 +388,10 @@ struct Urgent: ParsableCommand {
                 return
             }
             print(ansi.bold("Urgent:"))
+            let badges = store.preloadIndicators(pks)
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
-                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
+                print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts, badges: badges[pk] ?? ReminderBadges()))
             }
             let n = rows.count
             print("\n\(n) urgent")
@@ -443,6 +449,8 @@ struct Subtasks: ParsableCommand {
                     priorityNames: Constants.priorityName,
                     subtaskCounts: [id: store.subtaskCount(pk: id)],
                     hashtags: [id: store.hashtags(pk: id)],
+                    attachments: attachmentJSONByReminder(store.preloadAttachments([id]),
+                                                          resolve: store.resolveAttachmentPath),
                     richLink: { store.richLink(pk: id) }
                 )
                 if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
@@ -458,9 +466,10 @@ struct Subtasks: ParsableCommand {
                 print("  No subtasks")
             } else {
                 let ansi = Ansi.resolve(noColorFlag: false)
+                let badges = store.preloadIndicators(subPks)
                 for s in subs {
                     let pk = s.int("Z_PK") ?? 0
-                    print(fmt(s, tags: ht[pk] ?? [], subtaskCount: sc[pk] ?? 0, ansi: ansi, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk)))
+                    print(fmt(s, tags: ht[pk] ?? [], subtaskCount: sc[pk] ?? 0, ansi: ansi, indent: "  ", assigneeName: store.assignmentAssignee(pk: pk), badges: badges[pk] ?? ReminderBadges()))
                 }
                 let n = subs.count
                 print("\n\(n) subtask\(n == 1 ? "" : "s")")
@@ -702,7 +711,9 @@ struct Show: AsyncParsableCommand {
                                      sectionsByList: [Int: [Row]], membershipsByList: [Int: [String: String]])
     {
         let ansi = opts.ansi()
-        let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })
+        let pks = items.compactMap { $0.int("Z_PK") }
+        let (sc, ht) = store.preloadExtras(pks)
+        let badges: [Int: ReminderBadges] = opts.useTable ? [:] : store.preloadIndicators(pks)
         func render(_ rows: [Row]) {
             if rows.isEmpty { return }
             if opts.useTable {
@@ -713,7 +724,7 @@ struct Show: AsyncParsableCommand {
             for r in rows {
                 let p = r.int("Z_PK") ?? 0
                 print(fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose,
-                          indent: "    ", assigneeName: store.assignmentAssignee(pk: p)))
+                          indent: "    ", assigneeName: store.assignmentAssignee(pk: p), badges: badges[p] ?? ReminderBadges()))
             }
         }
         print("\(ansi.bold(colorListName(title, ansi: ansi))) \(ansi.dim("(group)")):")
@@ -796,10 +807,12 @@ struct Show: AsyncParsableCommand {
                                dateColumn: completed ? .completed : .due))
                 return
             }
-            let (sc, ht) = store.preloadExtras(items.compactMap { $0.int("Z_PK") })
+            let pks = items.compactMap { $0.int("Z_PK") }
+            let (sc, ht) = store.preloadExtras(pks)
+            let badges = store.preloadIndicators(pks)
             func line(_ r: Row, indent: String) -> String {
                 let p = r.int("Z_PK") ?? 0
-                return fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose, indent: indent, assigneeName: store.assignmentAssignee(pk: p))
+                return fmt(r, tags: ht[p] ?? [], subtaskCount: sc[p] ?? 0, ansi: ansi, verbose: opts.verbose, indent: indent, assigneeName: store.assignmentAssignee(pk: p), badges: badges[p] ?? ReminderBadges())
             }
             var heading = colorListName(target.title, ansi: ansi)
             if isGroceries { heading += " \(Constants.groceryListMarker)" }
@@ -861,24 +874,24 @@ struct Info: ParsableCommand {
             }
 
             if json {
+                let attachments = attachmentJSONByReminder(store.preloadAttachments([id]),
+                                                           resolve: store.resolveAttachmentPath)
                 var d = serializeReminder(r, ts: { AppleEpoch.ts($0) }, priorityNames: Constants.priorityName,
                                           section: sec, subtaskCounts: [id: store.subtaskCount(pk: id)],
-                                          hashtags: [id: tags], richLink: { store.richLink(pk: id) },
+                                          hashtags: [id: tags], attachments: attachments,
+                                          richLink: { store.richLink(pk: id) },
                                           hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: id) },
                                           earlyFallback: store.earlyReminderAlerts)
                 if let assignment = assignmentToDict(store.assignment(reminderPk: id)) {
                     d.append(("assignment", assignment))
                 }
-                let atts = attachmentRowsToJSON(store.attachments(pk: id))
-                if !atts.isEmpty { d.append(("attachments", .array(atts))) }
                 let alarms = alarmRowsToJSON(store.alarms(pk: id))
                 if !alarms.isEmpty { d.append(("alarms", .array(alarms))) }
                 if !subs.isEmpty {
+                    // serializeReminders already carries each subtask's attachments.
                     var subObjs = serializeReminders(subs, store: store)
                     for i in subObjs.indices {
                         let spk = subs[i].int("Z_PK") ?? 0
-                        let sa = attachmentRowsToJSON(store.attachments(pk: spk))
-                        if !sa.isEmpty { subObjs[i].append(("attachments", .array(sa))) }
                         let sal = alarmRowsToJSON(store.alarms(pk: spk))
                         if !sal.isEmpty { subObjs[i].append(("alarms", .array(sal))) }
                     }
@@ -953,18 +966,20 @@ struct Info: ParsableCommand {
             }
             if !subs.isEmpty {
                 print("  Subtasks (\(subs.count)):")
-                let (sc, ht) = store.preloadExtras(subs.compactMap { $0.int("Z_PK") })
+                let subPks = subs.compactMap { $0.int("Z_PK") }
+                let (sc, ht) = store.preloadExtras(subPks)
+                let badges = store.preloadIndicators(subPks)
                 for s in subs {
                     let spk = s.int("Z_PK") ?? 0
-                    print(fmt(s, tags: ht[spk] ?? [], subtaskCount: sc[spk] ?? 0, ansi: ansi, indent: "    ", assigneeName: store.assignmentAssignee(pk: spk)))
+                    print(fmt(s, tags: ht[spk] ?? [], subtaskCount: sc[spk] ?? 0, ansi: ansi, indent: "    ", assigneeName: store.assignmentAssignee(pk: spk), badges: badges[spk] ?? ReminderBadges()))
                 }
             }
             let atts = store.attachments(pk: id)
             if !atts.isEmpty {
                 print("  Attachments (\(atts.count)):")
                 for a in atts {
-                    let fn = a.string("ZFILENAME").flatMap { $0.isEmpty ? nil : $0 } ?? "untitled"
-                    let ty = a.string("ZATTACHMENTTYPERAWVALUE").flatMap { $0.isEmpty ? nil : $0 } ?? "?"
+                    let fn = a.filename.flatMap { $0.isEmpty ? nil : $0 } ?? "untitled"
+                    let ty = a.type.flatMap { $0.isEmpty ? nil : $0 } ?? "?"
                     print("    - \(safeDisplay(fn)) (\(safeDisplay(ty)))")
                 }
             }
