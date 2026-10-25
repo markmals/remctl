@@ -28,12 +28,18 @@ public func timedDueRaw(_ row: ReminderRow, calendar: Calendar = .current,
     return floating
 }
 
-/// The instant whose local clock reading equals `raw`'s UTC clock reading.
-private func wallClockReading(_ raw: Double, calendar: Calendar) -> Double {
+/// Built once: a batch read converts every timed row, and constructing a Calendar per row
+/// dominated `export` on a large store.
+private let utcCalendar: Calendar = {
     var utc = Calendar(identifier: .gregorian)
     utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    return utc
+}()
+
+/// The instant whose local clock reading equals `raw`'s UTC clock reading.
+private func wallClockReading(_ raw: Double, calendar: Calendar) -> Double {
     let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
-    let wall = utc.dateComponents(fields, from: Date(timeIntervalSince1970: raw + AppleEpoch.offset))
+    let wall = utcCalendar.dateComponents(fields, from: Date(timeIntervalSince1970: raw + AppleEpoch.offset))
     guard let local = calendar.date(from: wall) else { return raw }
     return AppleEpoch.toTs(local)
 }

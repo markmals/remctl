@@ -173,6 +173,10 @@ public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
                                memberships: [String: String] = [:]) -> [[(String, JSONValue)]] {
     let pks = rows.compactMap { $0.int("Z_PK") }
     let (subtaskCounts, hashtags) = store.preloadExtras(pks)
+    let earlyRows = store.dueDateDeltaAlertRowsByReminder()
+    let earlyFallback: (String) -> [[(String, JSONValue)]] = { ck in
+        dueDateDeltaAlertRowsToJSON(UUID(uuidString: ck).flatMap { earlyRows[$0.uuidString] } ?? [])
+    }
     return rows.map { row in
         let section = row.string("ZCKIDENTIFIER").flatMap { memberships[$0] }
         let pk = row.int("Z_PK") ?? 0
@@ -180,7 +184,7 @@ public func serializeReminders(_ rows: [ReminderRow], store: RemindersStore,
             section: section, subtaskCounts: subtaskCounts, hashtags: hashtags,
             richLink: { store.richLink(pk: pk) },
             hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: pk) },
-            earlyFallback: store.earlyReminderAlerts)
+            earlyFallback: earlyFallback)
         // to_dict appends "assignment" after the base payload (upstream 683c362).
         if let assignment = assignmentToDict(store.assignment(reminderPk: pk)) {
             o.append(("assignment", assignment))

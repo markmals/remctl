@@ -33,6 +33,19 @@ extension RemindersStore {
     public func earlyReminderAlerts(_ reminderCkid: String) -> [[(String, JSONValue)]] {
         dueDateDeltaAlertRowsToJSON(dueDateDeltaAlertRows(reminderCkid: reminderCkid))
     }
+
+    /// Every fallback Early Reminder row keyed by the reminder's uppercased UUID, so a batch
+    /// read costs one query instead of one per reminder. The table holds one row per Early
+    /// Reminder, so reading it whole stays small.
+    public func dueDateDeltaAlertRowsByReminder() -> [String: [Row]] {
+        let sql = "SELECT ZREMINDERIDENTIFIER, ZIDENTIFIER, ZDUEDATEDELTAUNIT, ZDUEDATEDELTACOUNT, " +
+            "ZMINIMUMSUPPORTEDAPPVERSION, ZCREATIONDATE, ZACKNOWLEDGEDDATE " +
+            "FROM ZREMCDDUEDATEDELTAALERT ORDER BY COALESCE(ZSORTORDER, 0), Z_PK"
+        let rows = (try? queue.read { db in
+            try db.tableExists("ZREMCDDUEDATEDELTAALERT") ? Row.fetchAll(db, sql: sql) : []
+        }) ?? []
+        return Dictionary(grouping: rows) { uuidFromBlob($0.data("ZREMINDERIDENTIFIER"))?.uppercased() ?? "" }
+    }
 }
 
 /// Port of `due_date_delta_alert_rows_to_json` (upstream 088fab4). Same shape as the
