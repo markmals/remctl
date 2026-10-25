@@ -181,6 +181,8 @@ Rich-link and image edits are **additive** — RemCTL adds, never removes or rep
 
 An edit that changes nothing prints `Nothing to update.` and exits 0; under `--json` that is `{"status":"unchanged","code":"nothing_to_update","id":…,"title":…,"message":"Nothing to update."}`. Every `edit --json` result echoes `title`.
 
+Location alarms are range-checked before the first write: `--latitude` -90 to 90, `--longitude` -180 to 180, `--radius` 1 to 100000 meters (`invalid_location_radius` under `--json`).
+
 ```bash
 remctl edit 23880 --title "New title"
 remctl edit 23880 -d "next friday" -p medium

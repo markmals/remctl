@@ -521,6 +521,18 @@ struct Edit: AsyncParsableCommand {
             throw WriteError("Location alarms require latitude and longitude")
         }
 
+        // Coordinate and radius ranges (validate_private_args, remctl:9068). Checked before the
+        // first write: an out-of-range region only fails inside EventKit, after other fields landed.
+        if let latitude, !(latitude.isFinite && (-90.0...90.0).contains(latitude)) {
+            throw WriteError("--latitude must be between -90 and 90.")
+        }
+        if let longitude, !(longitude.isFinite && (-180.0...180.0).contains(longitude)) {
+            throw WriteError("--longitude must be between -180 and 180.")
+        }
+        if latitude != nil, !(radius.isFinite && (1.0...locationMaxRadius).contains(radius)) {
+            return failInvalidLocationRadius(json: json)
+        }
+
         // --address is only meaningful alongside a location alarm, and the location-alarm path is
         // EventKit-expressible (no private street-address support yet). Mirrors validate_private_args
         // (remctl:2483-2491): when --latitude/--longitude are present, an --address is rejected (exit 1).
@@ -723,6 +735,23 @@ struct Edit: AsyncParsableCommand {
                 ("code", .string("repeating_reminder_requires_due_date")),
                 ("message", .string(message)),
                 ("id", .int(id)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
+    }
+
+    /// Largest region radius EventKit stores (`LOCATION_MAX_RADIUS`, remctl:4844).
+    private static let locationMaxRadius = 100_000.0
+
+    /// Port of `fail_location(a, "invalid_location_radius", …)` (remctl:4860). Exit 1, no write.
+    private static func failInvalidLocationRadius(json: Bool) -> WriteOutcome {
+        let message = "--radius must be between 1 and \(Int(locationMaxRadius)) meters."
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("invalid_location_radius")),
+                ("message", .string(message)),
             ])
             return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
         }

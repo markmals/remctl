@@ -341,6 +341,66 @@ import GRDB
         #expect(m.calls.isEmpty)
     }
 
+    @Test func latitudeOutOfRangeRefused() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, title: "New", latitude: 91, longitude: 0, json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --latitude must be between -90 and 90.\n")
+        #expect(m.calls.isEmpty)   // refused before the title write
+    }
+
+    @Test func nonFiniteLatitudeRefused() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, latitude: .nan, longitude: 0, json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --latitude must be between -90 and 90.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func longitudeOutOfRangeRefused() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, latitude: 0, longitude: -180.5, json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --longitude must be between -180 and 180.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func radiusOutOfRangeRefused() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, latitude: 0, longitude: 0, radius: 0.5, json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: --radius must be between 1 and 100000 meters.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func radiusTooLargeRefusedJSON() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, latitude: 0, longitude: 0, radius: 100_001, json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == #"{"status": "error", "code": "invalid_location_radius", "message": "--radius must be between 1 and 100000 meters."}"# + "\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func radiusAtTheLimitsAccepted() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, latitude: -90, longitude: 180, radius: 100_000, json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(updatedWrite(m)?.write.location?.radius == 100_000)
+    }
+
     // MARK: - Private-only edits (P12)
 
     @Test func flaggedRoutesPrivateOnly() async throws {
