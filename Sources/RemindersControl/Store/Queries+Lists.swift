@@ -44,7 +44,7 @@ extension RemindersStore {
     /// Port of `list_resolution_from_rows`: 3-tier name match (exact → casefold → normalized)
     /// over one set of candidate rows. `nil` means no tier matched, so the caller can try the
     /// list groups next.
-    private func resolution(from rows: [Row], name: String) -> ListResolution? {
+    func resolution(from rows: [Row], name: String) -> ListResolution? {
         func found(_ r: Row) -> ListResolution {
             .found(id: r.int("Z_PK") ?? 0, title: r.string("ZNAME") ?? "", objectUUID: r.string("ZCKIDENTIFIER"))
         }

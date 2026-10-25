@@ -42,6 +42,8 @@
 - (id)_copyReminder:(id)reminder toReminderSubtaskContextChangeItem:(id)context;
 - (id)addReminderWithTitle:(NSString *)title toReminderSubtaskContextChangeItem:(id)context;
 - (id)addListWithName:(NSString *)name toAccountChangeItem:(id)accountChangeItem listObjectID:(id)objectID;
+- (id)addGroupWithName:(NSString *)name toAccountGroupContextChangeItem:(id)context;
+- (id)addGroupWithName:(NSString *)name toAccountGroupContextChangeItem:(id)context groupObjectID:(id)objectID;
 - (id)addListSectionWithDisplayName:(NSString *)name toListSectionContextChangeItem:(id)context;
 - (id)addCustomSmartListWithName:(NSString *)name toAccountChangeItem:(id)accountChangeItem smartListObjectID:(id)objectID;
 - (id)addTemplateWithName:(NSString *)name configuration:(id)configuration toAccountChangeItem:(id)accountChangeItem;
@@ -57,6 +59,7 @@
 @interface REMAccountChangeItem : NSObject
 - (void)addListChangeItem:(id)listChangeItem;
 - (void)addSmartListChangeItem:(id)smartListChangeItem;
+- (id)groupContext;
 @end
 
 @interface REMAccountCapabilities : NSObject
@@ -160,7 +163,9 @@
 @end
 
 @interface REMList : NSObject
+- (id)account;
 - (id)remObjectID;
+- (BOOL)isGroup;
 - (NSOrderedSet *)reminderIDsOrdering;
 @end
 
@@ -174,6 +179,8 @@
 - (void)setIsPinned:(BOOL)pinned;
 - (void)setName:(NSString *)name;
 - (void)setParentOwnerID:(id)objectID;
+- (void)setParentSubContainerID:(id)objectID;
+- (void)removeFromParentWithAccountChangeItem:(id)accountChangeItem;
 @end
 
 @interface REMListGroceryContextChangeItem : NSObject
@@ -858,6 +865,149 @@ static NSDictionary *deleteSection(NSDictionary *cmd) {
     return @{@"status": @"deleted", @"action": @"delete_section", @"sectionId": sectionID};
 }
 
+#pragma mark - List groups (upstream e013fb9)
+
+/// Whether ReminderKit says `list` is a group. Hosts that do not expose it leave the check to the
+/// caller, which resolved the target from the store.
+static BOOL listKnownToBeGroup(id list, BOOL expected) {
+    if (![list respondsToSelector:@selector(isGroup)]) return expected;
+    return [list isGroup];
+}
+
+static id fetchListWithID(REMStore *store, NSString *listID, NSString *label, NSString **outError) {
+    id objectID = [REMObjectID objectIDWithURL:listURL(listID)];
+    if (!objectID) {
+        *outError = [NSString stringWithFormat:@"Could not build ReminderKit %@ object ID", label];
+        return nil;
+    }
+    NSError *error = nil;
+    id list = [store fetchListWithObjectID:objectID error:&error];
+    if (!list) {
+        *outError = error.localizedDescription ?: [NSString stringWithFormat:@"%@ not found", label];
+    }
+    return list;
+}
+
+static id accountOfLists(REMStore *store, NSArray *lists, NSError **error) {
+    for (id list in lists) {
+        id account = [list respondsToSelector:@selector(account)] ? [list account] : nil;
+        if (account) return account;
+    }
+    return fetchWritableCloudKitAccount(store, error);
+}
+
+static NSDictionary *createGroup(NSDictionary *cmd) {
+    NSString *name = cmd[@"name"];
+    if (![name isKindOfClass:[NSString class]] || name.length == 0) { RKP_FAIL(@"name is required"); }
+    NSError *error = nil;
+    REMStore *store = [REMStore new];
+    REMAccount *account = fetchWritableCloudKitAccount(store, &error);
+    if (!account) { RKP_FAIL(error.localizedDescription ?: @"No active iCloud Reminders account found"); }
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    id accountChange = [save updateAccount:account];
+    if (!accountChange) { RKP_FAIL(@"Could not create ReminderKit account change item"); }
+    if (![accountChange respondsToSelector:@selector(groupContext)]) {
+        RKP_FAIL(@"ReminderKit account change item does not support list groups");
+    }
+    id groupContext = [accountChange groupContext];
+    if (!groupContext) { RKP_FAIL(@"Could not create ReminderKit group context"); }
+    REMListChangeItem *change = nil;
+    if ([save respondsToSelector:@selector(addGroupWithName:toAccountGroupContextChangeItem:groupObjectID:)]) {
+        change = [save addGroupWithName:name toAccountGroupContextChangeItem:groupContext groupObjectID:nil];
+    } else if ([save respondsToSelector:@selector(addGroupWithName:toAccountGroupContextChangeItem:)]) {
+        change = [save addGroupWithName:name toAccountGroupContextChangeItem:groupContext];
+    } else {
+        RKP_FAIL(@"ReminderKit group creation is unavailable on this macOS version");
+    }
+    if (!change) { RKP_FAIL(@"Could not create ReminderKit group change item"); }
+    if ([change respondsToSelector:@selector(setParentOwnerID:)]) {
+        [change setParentOwnerID:[account remObjectID]];
+    }
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit group save failed");
+    }
+    id objectID = [change respondsToSelector:@selector(remObjectID)] ? [change remObjectID] : nil;
+    return @{
+        @"status": @"created",
+        @"action": @"create_group",
+        @"name": name,
+        @"id": objectUUIDString(objectID),
+        @"url": objectURLString(objectID),
+    };
+}
+
+/// Moves a list into a group, or to the top level when no groupId is given. Only the list's
+/// container changes; the list keeps its identity and reminders.
+static NSDictionary *setListParentGroup(NSDictionary *cmd) {
+    NSString *listID = cmd[@"listId"];
+    if (![listID isKindOfClass:[NSString class]] || listID.length == 0) { RKP_FAIL(@"listId is required"); }
+    id groupValue = cmd[@"groupId"];
+    if (groupValue && ![groupValue isKindOfClass:[NSString class]]) { RKP_FAIL(@"groupId must be a list group ID"); }
+    NSString *groupID = [(NSString *)groupValue length] > 0 ? groupValue : nil;
+    REMStore *store = [REMStore new];
+    NSString *fetchError = nil;
+    id list = fetchListWithID(store, listID, @"List", &fetchError);
+    if (!list) { RKP_FAIL(fetchError); }
+    if (listKnownToBeGroup(list, NO)) { RKP_FAIL(@"A list group cannot be placed inside a group"); }
+    id group = nil;
+    id groupObjectID = nil;
+    if (groupID) {
+        group = fetchListWithID(store, groupID, @"Group", &fetchError);
+        if (!group) { RKP_FAIL(fetchError); }
+        if (!listKnownToBeGroup(group, YES)) { RKP_FAIL(@"The target is a list, not a list group"); }
+        groupObjectID = [REMObjectID objectIDWithURL:listURL(groupID)];
+    }
+    NSError *error = nil;
+    id account = accountOfLists(store, group ? @[list, group] : @[list], &error);
+    if (!account) { RKP_FAIL(error.localizedDescription ?: @"No active iCloud Reminders account found"); }
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    REMListChangeItem *change = [save updateList:list];
+    if (!change) { RKP_FAIL(@"Could not create ReminderKit list change item"); }
+    if (![change respondsToSelector:@selector(setParentSubContainerID:)]) {
+        RKP_FAIL(@"ReminderKit list change item does not support group membership");
+    }
+    if ([change respondsToSelector:@selector(setParentOwnerID:)]) {
+        [change setParentOwnerID:[account remObjectID]];
+    }
+    [change setParentSubContainerID:groupObjectID];
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit list group membership save failed");
+    }
+    return @{
+        @"status": @"updated",
+        @"action": @"set_list_parent_group",
+        @"listId": listID,
+        @"groupId": groupID ?: [NSNull null],
+    };
+}
+
+static NSDictionary *deleteGroup(NSDictionary *cmd) {
+    NSString *groupID = cmd[@"groupId"];
+    if (![groupID isKindOfClass:[NSString class]] || groupID.length == 0) { RKP_FAIL(@"groupId is required"); }
+    REMStore *store = [REMStore new];
+    NSString *fetchError = nil;
+    id group = fetchListWithID(store, groupID, @"Group", &fetchError);
+    if (!group) { RKP_FAIL(fetchError); }
+    // Deleting a regular list here would take its reminders with it.
+    if (!listKnownToBeGroup(group, YES)) { RKP_FAIL(@"Refusing to delete a regular list as a list group"); }
+    NSError *error = nil;
+    id account = accountOfLists(store, @[group], &error);
+    if (!account) { RKP_FAIL(error.localizedDescription ?: @"No active iCloud Reminders account found"); }
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    id accountChange = [save updateAccount:account];
+    if (!accountChange) { RKP_FAIL(@"Could not create ReminderKit account change item"); }
+    REMListChangeItem *change = [save updateList:group];
+    if (!change) { RKP_FAIL(@"Could not create ReminderKit group change item"); }
+    if (![change respondsToSelector:@selector(removeFromParentWithAccountChangeItem:)]) {
+        RKP_FAIL(@"ReminderKit group change item does not support deletion");
+    }
+    [change removeFromParentWithAccountChangeItem:accountChange];
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit group delete failed");
+    }
+    return @{@"status": @"deleted", @"action": @"delete_group", @"groupId": groupID};
+}
+
 #pragma mark - Dispatch
 
 NSDictionary *RKPDispatch(NSDictionary *request) {
@@ -887,6 +1037,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"create_section",
                 @"rename_section",
                 @"delete_section",
+                @"create_group",
+                @"set_list_parent_group",
+                @"delete_group",
                 @"set_list_appearance",
                 @"set_list_pinned",
                 @"set_smart_list_pinned",
@@ -907,6 +1060,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
             if ([action isEqualToString:@"create_section"]) { return createSection(cmd); }
             if ([action isEqualToString:@"rename_section"]) { return renameSection(cmd); }
             if ([action isEqualToString:@"delete_section"]) { return deleteSection(cmd); }
+            if ([action isEqualToString:@"create_group"]) { return createGroup(cmd); }
+            if ([action isEqualToString:@"set_list_parent_group"]) { return setListParentGroup(cmd); }
+            if ([action isEqualToString:@"delete_group"]) { return deleteGroup(cmd); }
 
             if ([action isEqualToString:@"create_list"]) {
                 NSString *name = cmd[@"name"];

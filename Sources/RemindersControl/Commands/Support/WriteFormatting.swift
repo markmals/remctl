@@ -14,6 +14,14 @@ enum WriteFormatting {
         return "'\(escaped)'"
     }
 
+    /// Python `shlex.quote()`, for the follow-up commands RemCTL prints for copy-and-paste.
+    static func shellQuote(_ s: String) -> String {
+        let safe = CharacterSet(charactersIn: "@%+=:,./-_")
+            .union(CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"))
+        if !s.isEmpty && s.unicodeScalars.allSatisfy(safe.contains) { return s }
+        return "'" + s.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
     /// Determine which match tier `resolveListRef` used, to reproduce the `method` field that
     /// the Python `resolve_list_ref` returns (Swift's `ListResolution.found` does not carry it).
     /// `--list-id` always resolves by id. For a name, recompute the comparison against the

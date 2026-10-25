@@ -30,6 +30,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case createSection(listId: String, name: String, existingSectionIds: [String])
         case renameSection(sectionId: String, name: String)
         case deleteSection(sectionId: String)
+        case createGroup(name: String)
+        case setListParentGroup(listId: String, groupId: String?)
+        case deleteGroup(groupId: String)
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
@@ -49,6 +52,8 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     /// Runs after each call is recorded, so a test can apply the write to its fixture store and
     /// let the command's readback verification see it.
     var onCall: ((Call) -> Void)?
+    /// Per-call reply for the section, group, and ordering actions; nil falls back to `result`.
+    var reply: ((Call) -> PrivateResult?)?
 
     private func resultOr(_ status: String) throws -> PrivateResult {
         if let e = throwError { throw e }
@@ -69,10 +74,10 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func addLocationAlarm(id: String, location: PrivateLocation) async throws -> PrivateResult { calls.append(.addLocationAlarm(id: id, location: location)); return try resultOr("updated") }
     func categorizeGroceryItems(listId: String, reminderIds: [String]) async throws -> PrivateResult { calls.append(.categorizeGroceryItems(listId: listId, reminderIds: reminderIds)); if let e = throwError { throw e }; return groceryResult ?? result }
     func cloneReminderTree(id: String, listId: String, childIds: [String]) async throws -> PrivateResult { calls.append(.cloneReminderTree(id: id, listId: listId, childIds: childIds)); if let e = throwError { throw e }; return cloneResult ?? result }
-    func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.setListAppearance(listId: listId, appearance: appearance)); return try resultOr("updated") }
+    func setListAppearance(listId: String, appearance: ListAppearance) async throws -> PrivateResult { try record(.setListAppearance(listId: listId, appearance: appearance)) }
     func setListPinned(listId: String, pinned: Bool) async throws -> PrivateResult { calls.append(.setListPinned(listId: listId, pinned: pinned)); return try resultOr("updated") }
     func setSmartListPinned(smartListId: String, pinned: Bool, isCustom: Bool) async throws -> PrivateResult { calls.append(.setSmartListPinned(smartListId: smartListId, pinned: pinned, isCustom: isCustom)); return try resultOr("updated") }
-    func createList(name: String, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.createList(name: name, appearance: appearance)); return try resultOr("created") }
+    func createList(name: String, appearance: ListAppearance) async throws -> PrivateResult { try record(.createList(name: name, appearance: appearance)) }
     func createSmartList(name: String, filterData: Data, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.createSmartList(name: name, filterData: filterData, appearance: appearance)); return try resultOr("created") }
     func updateSmartList(smartListId: String, filterData: Data?, appearance: ListAppearance) async throws -> PrivateResult { calls.append(.updateSmartList(smartListId: smartListId, filterData: filterData, appearance: appearance)); return try resultOr("updated") }
     func deleteSmartList(smartListId: String) async throws -> PrivateResult { calls.append(.deleteSmartList(smartListId: smartListId)); return try resultOr("deleted") }
@@ -82,11 +87,14 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func createSection(listId: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult { try record(.createSection(listId: listId, name: name, existingSectionIds: existingSectionIds)) }
     func renameSection(sectionId: String, name: String) async throws -> PrivateResult { try record(.renameSection(sectionId: sectionId, name: name)) }
     func deleteSection(sectionId: String) async throws -> PrivateResult { try record(.deleteSection(sectionId: sectionId)) }
+    func createGroup(name: String) async throws -> PrivateResult { try record(.createGroup(name: name)) }
+    func setListParentGroup(listId: String, groupId: String?) async throws -> PrivateResult { try record(.setListParentGroup(listId: listId, groupId: groupId)) }
+    func deleteGroup(groupId: String) async throws -> PrivateResult { try record(.deleteGroup(groupId: groupId)) }
 
     private func record(_ call: Call) throws -> PrivateResult {
         calls.append(call)
         if let e = throwError { throw e }
         onCall?(call)
-        return result
+        return reply?(call) ?? result
     }
 }

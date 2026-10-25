@@ -27,6 +27,7 @@ public final class ReminderKitWriter: PrivateWriter {
         "set_urgent",
         "set_early_reminder",
         "rename_section",
+        "set_list_parent_group",
     ]
 
     // MARK: - Transient-error detection
@@ -386,5 +387,21 @@ public final class ReminderKitWriter: PrivateWriter {
 
     public func deleteSection(sectionId: String) async throws -> PrivateResult {
         await dispatchWithRetry(["action": "delete_section", "sectionId": sectionId])
+    }
+
+    // MARK: - PrivateWriter — list groups
+
+    public func createGroup(name: String) async throws -> PrivateResult {
+        await dispatchWithRetry(["action": "create_group", "name": name])
+    }
+
+    public func setListParentGroup(listId: String, groupId: String?) async throws -> PrivateResult {
+        var req: [String: Any] = ["action": "set_list_parent_group", "listId": listId]
+        if let groupId { req["groupId"] = groupId }
+        return await dispatchWithRetry(req)
+    }
+
+    public func deleteGroup(groupId: String) async throws -> PrivateResult {
+        await dispatchWithRetry(["action": "delete_group", "groupId": groupId])
     }
 }

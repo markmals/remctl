@@ -112,4 +112,9 @@ public protocol PrivateWriter {
     func createSection(listId: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult
     func renameSection(sectionId: String, name: String) async throws -> PrivateResult
     func deleteSection(sectionId: String) async throws -> PrivateResult
+    // list groups (keyed by list / group ckIdentifier)
+    func createGroup(name: String) async throws -> PrivateResult
+    /// Moves a list into `groupId`, or to the top level when it is nil. Only the container changes.
+    func setListParentGroup(listId: String, groupId: String?) async throws -> PrivateResult
+    func deleteGroup(groupId: String) async throws -> PrivateResult
 }

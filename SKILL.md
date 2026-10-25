@@ -29,6 +29,7 @@ EventKit (public) and ReminderKit (private metadata) both run in-process; there 
 | Replace or remove synced reminder tags | `edit <id> --set-tags a,b`, `edit <id> --clear-tags`, `edit <id> --remove-tag x` | `info <id> --json` under `tags` |
 | List appearance, Groceries metadata, list/smart-list pin | `list-create`, `list-edit`, `list-pin`, `list-unpin` | `lists --json` (color/badge/Groceries/pin); `smart-lists --json` (smart-list appearance/pin) |
 | Create, rename, delete a list's sections | `section-create NAME -l LIST`, `section-rename NAME --new-name NEW -l LIST`, `section-delete NAME -l LIST --force` (or `--section-id`) | `sections --json`; each write already reports `verified: true` |
+| List groups: inspect, create, rename, add/remove/reorder child lists, delete, create a list inside one | `groups`, `group-info`, `group-create NAME --add-list LIST`, `group-edit NAME --new-name/--add-list/--remove-list/--move-list LIST --before-list/--after-list/--first/--last`, `group-delete NAME --force`, `list-create NAME --group GROUP` | `groups --json` / `group-info --json`; writes report `verified: true`. Lists keep their reminders when they move. |
 | Custom smart list create/edit/delete | `smart-list-create`, `smart-list-edit`, `smart-list-delete` | `smart-lists --json` |
 | Saved Reminders templates | `templates`, `template-info`, `template-create`, `template-apply`, `template-delete` | `templates --json`, `template-info`, then `show <new list> --json` after apply |
 

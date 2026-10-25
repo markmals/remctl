@@ -13,7 +13,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
 - **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching. `import` validates the whole file the same way (structured `invalid_import`) before its first write.
 - **Refusals Reminders would reject:** a relative alarm (`15m`, `1h`, `1d`) needs a due date to count back from, so `add`/`edit` refuse one when the reminder would have none (`relative_alarm_requires_due_date`), and `edit -d clear` on a repeating reminder is refused before any write (`repeating_reminder_requires_due_date`) unless the same edit also passes `--recurrence clear`. Both exit `1` and emit the structured code on stderr under `--json`.
-- **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `section-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
+- **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `section-delete`, `group-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
 
 ---
 
@@ -330,7 +330,7 @@ remctl lists --json
 ```
 
 ### `list-create <name>`
-Create a list. Appearance: `--color NAME` (named colors `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `brown`, `gray`, `cyan`, `teal` use EventKit; an unrecognized name is an error, not a silently colorless list). A `--symbol` or `--emoji` uses the ReminderKit appearance path. Groceries: `--groceries` with `--grocery-locale en_US`. New lists are created in the iCloud Reminders account; without one, `list-create` fails instead of writing to a local or third-party account.
+Create a list. Appearance: `--color NAME` (named colors `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `brown`, `gray`, `cyan`, `teal` use EventKit; an unrecognized name is an error, not a silently colorless list). A `--symbol` or `--emoji` uses the ReminderKit appearance path. Groceries: `--groceries` with `--grocery-locale en_US`. `--group NAME` or `--group-id ID` creates the list inside a list group: the group is resolved before anything is written, the list is created through ReminderKit and then moved into the group, and both are read back from the store (`verified: true`, with the new list's `id`, `objectUUID`, `group`, and `membership`). New lists are created in the iCloud Reminders account; without one, `list-create` fails instead of writing to a local or third-party account.
 
 After the write, `list-create` polls the local store for the new row (eight tries, 0.25 s apart) and reports its numeric `id` — in JSON, and as an `ID:` line in human output. If the row is not visible yet, the list still exists: JSON then carries `warnings: ["list_id_unavailable: …"]` instead of `id`, and `lists` will show it.
 ```bash
@@ -338,6 +338,31 @@ remctl list-create "Project X" --color blue
 remctl list-create "Research" --color orange --symbol education3
 remctl list-create "Cold Ideas" --color cyan --emoji 🥶
 remctl list-create "Groceries" --groceries --grocery-locale en_US
+remctl list-create "Drafts" --group Writing --json
+```
+
+### `groups` / `group-info [NAME] [--group-id ID]`
+`groups` lists the list groups with their child lists (in Reminders' child order) and active/completed/total reminder counts. `--format json|table|plain`, `--no-color`. `group-info` shows one group by name or `--group-id`: its id, object UUID, counts, child lists, and `suggestedCommands` for the writes below. `--json`.
+```bash
+remctl groups --format table
+remctl group-info Writing --json
+```
+
+### `group-create <name>` / `group-edit [NAME]` / `group-delete [NAME]`
+Create, edit, and delete list groups through ReminderKit. Moving a list into or out of a group changes only its container: the list keeps its id and every reminder in it.
+
+- `group-create NAME [--add-list LIST]… [--add-list-id ID]…` refuses a name a list or group already uses (`group_exists`), creates the group, then moves the named lists into it.
+- `group-edit` renames (`--new-name`), adds lists (`--add-list`/`--add-list-id`; a list already in the group is reported as skipped), removes lists to the top level (`--remove-list`/`--remove-list-id`; a list not in the group is refused with `list_not_in_group`), or reorders: `--move-list LIST`/`--move-list-id ID` with exactly one of `--before-list`/`--before-list-id`/`--after-list`/`--after-list-id`/`--first`/`--last`. The moved list may be a child already or join the group at that position. Reordering runs on its own (not with add/remove). Reminders puts a list it adds to a group at the top, so a reorder detaches every child and re-attaches them in reverse of the requested order; if it stops part-way, the error names the lists left at the top level (`listsAtTopLevel` under `--json`).
+- `group-delete` moves every child list to the top level, confirms the group is empty, then deletes it. `--force` skips confirmation (and is required with `--json` or a non-interactive stdin).
+
+Every edit is validated before the first write, and every write is read back from the store before the next one starts; JSON output reports `verified: true`, and an unconfirmed write fails with `group_write_unverified` (or `group_order_unverified`).
+```bash
+remctl group-create Writing --add-list Editorial --add-list-id 475 --json
+remctl group-edit Writing --new-name Drafts
+remctl group-edit Writing --add-list Podcasts --remove-list Socials
+remctl group-edit Writing --move-list Editorial --before-list Podcasts
+remctl group-edit --group-id 476 --move-list-id 137 --last --json
+remctl group-delete Writing --force
 ```
 
 ### `list-edit [NAME] [--list-id ID]`

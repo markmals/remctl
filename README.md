@@ -49,7 +49,7 @@ There are no separate helper executables — the EventKit and ReminderKit logic 
 | See what is due | `today`, `upcoming`, `overdue` |
 | Browse reminders | `lists`, `list-info`, `smart-lists`, `templates`, `template-info`, `show`, `search`, `flagged`, `urgent`, `info`, `subtasks`, `sections`, `sharees`, `tags`, `stats` |
 | Create and edit | `add`, `edit`, `done`, `undone`, `delete`, `flag`, `unflag` |
-| Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `section-create`, `section-rename`, `section-delete` |
+| Organize lists | `list-symbols`, `list-create`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, `section-create`, `section-rename`, `section-delete`, `groups`, `group-info`, `group-create`, `group-edit`, `group-delete` |
 | Smart lists & templates | `smart-list-create`, `smart-list-edit`, `smart-list-delete`, `template-create`, `template-apply`, `template-delete` |
 | Share data | `export`, `import`, `link`, `open`, plus `--json` and `--format table` on read commands |
 | Set up the Mac | `onboard`, `permissions`, `doctor`, `setup`, `completion` |
@@ -69,6 +69,8 @@ remctl edit 23880 -l Work
 remctl done 23880 23881 --json
 remctl add "Research" -l Projects --url "https://example.com" -t remctl --new-section "Research"
 remctl section-create "Research" -l Projects
+remctl group-create Writing --add-list Editorial
+remctl group-edit Writing --move-list Editorial --first
 remctl add "Leave early" -l Work -d "today 14:00" --early-reminder 15m
 remctl add "Launch assets" -l Projects --subtask '{"title":"Export PNG","notes":"Use final crop","due":"tomorrow","url":"https://example.com","tags":["media"]}'
 remctl list-symbols
@@ -121,7 +123,7 @@ remctl template-create "Packing Template" --from-list Packing
 Private metadata covers the parts of Reminders that EventKit does not:
 
 - **Reminder metadata:** synced web rich links (`--url`), synced tags (`-t/--tags` to add, `edit --set-tags`/`--clear-tags`/`--remove-tag` to replace or remove), sections (`--section`/`--section-id`/`--new-section`, and `section-create`/`section-rename`/`section-delete` for the sections themselves), rich subtasks (`--subtask`), image attachments (`--image`), real flag state (`-f/--flag`, `--flagged`), urgent state (`--urgent`), and Early Reminders (`--early-reminder`).
-- **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), regular-list pin state, and custom-smart-list pin state (built-in smart-list pinning depends on the host's ReminderKit and fails before saving when it is missing).
+- **List metadata:** exact `#RRGGBB` colors, official list symbols (`--symbol`), emoji badges (`--emoji`), Groceries conversion/locale (`--groceries`/`--standard`/`--grocery-locale`), regular-list pin state, custom-smart-list pin state (built-in smart-list pinning depends on the host's ReminderKit and fails before saving when it is missing), and list groups (`group-create`/`group-edit`/`group-delete`, `list-create --group`).
 - **Smart lists:** custom smart-list create/edit/delete for the Reminders filters RemCTL has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete. Existing public template links are read-only; RemCTL does not create iCloud sharing links.
 

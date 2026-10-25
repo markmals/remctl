@@ -20,6 +20,11 @@ public enum CompletionScripts {
 _remctl() {
     local -a commands=(
         'lists:List all iCloud reminder lists'
+        'groups:List Reminders list groups'
+        'group-info:Show details for a Reminders list group'
+        'group-create:Create a Reminders list group'
+        'group-edit:Rename a group, add or remove its lists, or reorder them'
+        'group-delete:Delete a Reminders list group'
         'smart-lists:Inspect Reminders smart lists'
         'templates:Inspect saved Reminders templates'
         'template-info:Show a saved Reminders template'
@@ -353,6 +358,8 @@ _remctl() {
                 '--emoji[Private Reminders list emoji badge]:emoji:' \
                 '--groceries[Create as a Reminders Groceries list]' \
                 '--grocery-locale[Groceries locale identifier]:locale:' \
+                '--group[Create this list inside a list group]:group:' \
+                '--group-id[Create this list inside a group by numeric ID]:id:' \
                 '--json[JSON output]'
             return
             ;;
@@ -388,6 +395,45 @@ _remctl() {
         list-delete)
             _arguments \
                 '--list-id[Delete list by stable numeric ID]:id:' \
+                '--force[Skip confirmation prompt]' \
+                '--json[JSON output]'
+            return
+            ;;
+        group-create)
+            _arguments \
+                '--add-list[Move existing list into the new group]:list:' \
+                '--add-list-id[Move existing list by numeric ID into the new group]:id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        group-info)
+            _arguments \
+                '--group-id[Read by numeric group ID]:id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        group-edit)
+            _arguments \
+                '--group-id[Edit group by numeric ID]:id:' \
+                '--new-name[Rename the group]:name:' \
+                '--add-list[Move existing list into the group]:list:' \
+                '--add-list-id[Move existing list by numeric ID into the group]:id:' \
+                '--remove-list[Move child list out of the group]:list:' \
+                '--remove-list-id[Move child list by numeric ID out of the group]:id:' \
+                '--move-list[Move or reorder a list in this group]:list:' \
+                '--move-list-id[Move or reorder a list by numeric ID]:id:' \
+                '--before-list[Place moved list before this child list]:list:' \
+                '--before-list-id[Place moved list before this child list ID]:id:' \
+                '--after-list[Place moved list after this child list]:list:' \
+                '--after-list-id[Place moved list after this child list ID]:id:' \
+                '--first[Place moved list first in the group]' \
+                '--last[Place moved list last in the group]' \
+                '--json[JSON output]'
+            return
+            ;;
+        group-delete)
+            _arguments \
+                '--group-id[Delete group by numeric ID]:id:' \
                 '--force[Skip confirmation prompt]' \
                 '--json[JSON output]'
             return
@@ -429,7 +475,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists groups group-info group-create group-edit group-delete smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees list-info stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -481,7 +527,7 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--html --preview --json" -- "$cur") )
         return
     elif [ "$cmd" = "list-create" ]; then
-        COMPREPLY=( $(compgen -W "--color --private --symbol --emoji --groceries --grocery-locale --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--color --private --symbol --emoji --groceries --grocery-locale --group --group-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "smart-list-create" ]; then
         COMPREPLY=( $(compgen -W "--private --color --symbol --emoji --match --filter-json --flagged --priority --tags --tag-match --any-tag --date --date-today-include-past-due --date-on --date-before --date-after --date-range --time --include-list --include-list-id --vehicle --location-title --latitude --longitude --radius --proximity --json" -- "$cur") )
@@ -519,6 +565,21 @@ _remctl() {
     elif [ "$cmd" = "list-delete" ]; then
         COMPREPLY=( $(compgen -W "--list-id --force --json" -- "$cur") )
         return
+    elif [ "$cmd" = "groups" ]; then
+        COMPREPLY=( $(compgen -W "--format --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "group-info" ]; then
+        COMPREPLY=( $(compgen -W "--group-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "group-create" ]; then
+        COMPREPLY=( $(compgen -W "--add-list --add-list-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "group-edit" ]; then
+        COMPREPLY=( $(compgen -W "--group-id --new-name --add-list --add-list-id --remove-list --remove-list-id --move-list --move-list-id --before-list --before-list-id --after-list --after-list-id --first --last --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "group-delete" ]; then
+        COMPREPLY=( $(compgen -W "--group-id --force --json" -- "$cur") )
+        return
     elif [ "$cmd" = "section-create" ]; then
         COMPREPLY=( $(compgen -W "--list -l --list-id --json" -- "$cur") )
         return
@@ -539,6 +600,11 @@ complete -F _remctl remctl
     public static let fish: String = #"""
 # Fish completion for remctl
 complete -c remctl -n "__fish_use_subcommand" -a lists -d "List all iCloud reminder lists"
+complete -c remctl -n "__fish_use_subcommand" -a groups -d "List Reminders list groups"
+complete -c remctl -n "__fish_use_subcommand" -a group-info -d "Show details for a Reminders list group"
+complete -c remctl -n "__fish_use_subcommand" -a group-create -d "Create a Reminders list group"
+complete -c remctl -n "__fish_use_subcommand" -a group-edit -d "Rename a group, add or remove its lists, or reorder them"
+complete -c remctl -n "__fish_use_subcommand" -a group-delete -d "Delete a Reminders list group"
 complete -c remctl -n "__fish_use_subcommand" -a smart-lists -d "Inspect Reminders smart lists"
 complete -c remctl -n "__fish_use_subcommand" -a templates -d "Inspect saved Reminders templates"
 complete -c remctl -n "__fish_use_subcommand" -a template-info -d "Show a saved Reminders template"
@@ -616,6 +682,8 @@ complete -c remctl -n "__fish_seen_subcommand_from list-create" -l symbol -d "Of
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l emoji -d "Private Reminders list emoji badge" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l groceries -d "Create as a Reminders Groceries list"
 complete -c remctl -n "__fish_seen_subcommand_from list-create" -l grocery-locale -d "Groceries locale identifier" -r
+complete -c remctl -n "__fish_seen_subcommand_from list-create" -l group -d "Create this list inside a list group" -r
+complete -c remctl -n "__fish_seen_subcommand_from list-create" -l group-id -d "Create this list inside a group by numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create" -l private -d "Use private ReminderKit smart-list creation"
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l color -d "Smart-list color name or #RRGGBB" -r
 complete -c remctl -n "__fish_seen_subcommand_from smart-list-create smart-list-edit" -l symbol -d "Official Reminders list symbol" -r
@@ -684,6 +752,29 @@ complete -c remctl -n "__fish_seen_subcommand_from list-rename" -l list-id -d "R
 complete -c remctl -n "__fish_seen_subcommand_from list-rename" -l new-name -d "New list name" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-delete" -l list-id -d "Delete list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-delete" -l force -d "Skip confirmation prompt"
+complete -c remctl -n "__fish_seen_subcommand_from group-create" -l add-list -d "Move existing list into the new group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-create" -l add-list-id -d "Move existing list by numeric ID into the new group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-create" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from group-info" -l group-id -d "Read by numeric group ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-info" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l group-id -d "Edit group by numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l new-name -d "Rename the group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l add-list -d "Move existing list into the group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l add-list-id -d "Move existing list by numeric ID into the group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l remove-list -d "Move child list out of the group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l remove-list-id -d "Move child list by numeric ID out of the group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l move-list -d "Move or reorder a list in this group" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l move-list-id -d "Move or reorder a list by numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l before-list -d "Place moved list before this child list" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l before-list-id -d "Place moved list before this child list ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l after-list -d "Place moved list after this child list" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l after-list-id -d "Place moved list after this child list ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l first -d "Place moved list first in the group"
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l last -d "Place moved list last in the group"
+complete -c remctl -n "__fish_seen_subcommand_from group-edit" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from group-delete" -l group-id -d "Delete group by numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from group-delete" -l force -d "Skip confirmation prompt"
+complete -c remctl -n "__fish_seen_subcommand_from group-delete" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from section-create" -s l -l list -d "Target list" -r
 complete -c remctl -n "__fish_seen_subcommand_from section-create" -l list-id -d "Target list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from section-create" -l json -d "JSON output"

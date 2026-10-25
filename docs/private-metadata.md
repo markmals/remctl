@@ -139,6 +139,23 @@ remctl list-unpin --smart-list-id 4
 
 Verify list color and badges with `lists --json` (`color`, `badge`, `badgeEmblem`). Verify regular-list pinning with `lists --json` and **smart-list** pinning with `smart-lists --json`: smart-list rows can leave `ZISPINNEDBYCURRENTUSER` empty while still updating `ZPINNEDDATE`, so RemCTL reports `pinned: true` when the smart-list pin date is positive.
 
+## List groups
+
+Reminders list groups are sidebar containers for lists. `groups` and `group-info` read them; `group-create`, `group-edit`, `group-delete`, and `list-create --group` write them through ReminderKit (`create_group`, `set_list_parent_group`, `delete_group`; a rename reuses `set_list_appearance`).
+
+- Moving a list into or out of a group (`set_list_parent_group`) changes only its container. The list keeps its numeric id, object UUID, and every reminder.
+- Reminders puts a list it adds to a group at the **top** of the group. `group-edit --move-list` therefore detaches every child and re-attaches them in reverse of the requested order; the final order is read back before it is reported. If a reorder stops part-way, the error names the lists left at the top level (`listsAtTopLevel`).
+- `group-delete` moves each child to the top level and deletes the group only once the store shows it empty, so no list or reminder is deleted with it. ReminderKit also refuses to delete an object that is not a group when the host reports group state.
+- Every write is read back from the store before the next one starts (`verified: true`; `group_write_unverified` / `group_order_unverified` when the store never shows it).
+
+```bash
+remctl groups --json
+remctl group-create Writing --add-list Editorial
+remctl group-edit Writing --move-list Editorial --after-list Podcasts
+remctl list-create Drafts --group Writing
+remctl group-delete Writing --force
+```
+
 ## Groceries
 
 Reminders stores Groceries lists as ordinary lists with private grocery metadata, not as a separate EventKit list class.

@@ -134,13 +134,20 @@ public func fmtTable(_ rowsData: [TableRow], maxWidth: Int = 80,
     }
     columns.append(("Pri", { $0.pri }))
 
-    let headers = columns.map { $0.label }
+    return fmtColumns(headers: columns.map { $0.label },
+                      rows: rowsData.map { row in columns.map { $0.value(row) } },
+                      titleIndex: titleIndex, maxWidth: maxWidth, ansi: ansi)
+}
 
+/// The box-drawing table behind `fmtTable`, for any columns. The `titleIndex` column is capped so
+/// the table fits `maxWidth`; `ansi` only bolds the headers.
+public func fmtColumns(headers: [String], rows: [[String]], titleIndex: Int, maxWidth: Int = 80,
+                       ansi: Ansi = Ansi(enabled: false)) -> String {
     // Natural column widths: max(visibleLen(header), max visibleLen(cell)).
     var colWidths = headers.map { $0.count }
-    for row in rowsData {
-        for (i, col) in columns.enumerated() {
-            colWidths[i] = max(colWidths[i], visibleLength(col.value(row)))
+    for row in rows {
+        for (i, cell) in row.enumerated() {
+            colWidths[i] = max(colWidths[i], visibleLength(cell))
         }
     }
 
@@ -148,7 +155,7 @@ public func fmtTable(_ rowsData: [TableRow], maxWidth: Int = 80,
     let fixed = colWidths.enumerated()
         .filter { $0.offset != titleIndex }
         .reduce(0) { $0 + $1.element }
-        + 3 * columns.count + 1
+        + 3 * headers.count + 1
     let maxTitle = max(10, maxWidth - fixed)
     colWidths[titleIndex] = min(colWidths[titleIndex], maxTitle)
 
@@ -176,8 +183,8 @@ public func fmtTable(_ rowsData: [TableRow], maxWidth: Int = 80,
     lines.append(hline("┌", "┬", "┐"))
     lines.append(rowLine(headers.map { ansi.bold($0) }))
     lines.append(hline("├", "┼", "┤"))
-    for row in rowsData {
-        lines.append(rowLine(columns.map { $0.value(row) }))
+    for row in rows {
+        lines.append(rowLine(row))
     }
     lines.append(hline("└", "┴", "┘"))
     return lines.joined(separator: "\n")

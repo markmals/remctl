@@ -113,11 +113,21 @@ struct ListCreate: AsyncParsableCommand {
     @Option(name: .long, help: "Emoji badge") var emoji: String?
     @Flag(name: .long, help: "Create as a Groceries list") var groceries = false
     @Option(name: .long, help: "Groceries locale identifier, e.g. en_US") var groceryLocale: String?
+    @Option(name: .long, help: "Create this list inside a Reminders list group") var group: String?
+    @Option(name: .long, help: "Create this list inside a group by numeric ID") var groupId: Int?
 
     @Flag(name: .long, help: "Emit machine-readable JSON instead of human output.") var json = false
 
     func run() async throws {
         let args = self
+        if group != nil || groupId != nil {
+            WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
+                try await Self.performInGroup(
+                    name: args.name, group: args.group, groupId: args.groupId, color: args.color, symbol: args.symbol,
+                    emoji: args.emoji, groceries: args.groceries, groceryLocale: args.groceryLocale, json: args.json,
+                    store: store, private: priv)
+            })
+        }
         WriteDispatch.emit(await WriteDispatch.runShellBoth { _, writer, priv in
             try await Self.perform(
                 name: args.name, color: args.color, symbol: args.symbol, emoji: args.emoji,
@@ -189,24 +199,9 @@ struct ListCreate: AsyncParsableCommand {
                 return .ok(obj.serialized(indent: nil, ensureAscii: false) + "\n")
             }
 
-            // Human output: "Created list: <name>\n" + optional metadata line.
-            // Details in order: color, symbol, emoji, groceries locale (cmd_list_create:6109-6116).
-            var details: [String] = []
-            if let color, !color.isEmpty {
-                details.append("color=\(normalizeListColor(color) ?? color)")
-            }
-            if let symbol, !symbol.isEmpty { details.append("symbol=\(symbol)") }
-            if let emoji, !emoji.isEmpty { details.append("emoji=\(emoji)") }
-            if groceries {
-                let loc = groceryLocale.flatMap { try? normalizeGroceryLocale($0) } ?? defaultGroceryLocaleID
-                details.append("groceries locale=\(loc)")
-            }
-
-            var out = "Created list: \(safeDisplay(name))\n"
-            if !details.isEmpty {
-                out += "Applied private metadata: \(details.joined(separator: ", "))\n"
-            }
-            return .ok(out)
+            return .ok("Created list: \(safeDisplay(name))\n"
+                + appliedMetadataLine(color: color, symbol: symbol, emoji: emoji,
+                                      groceries: groceries, groceryLocale: groceryLocale))
         }
 
         // 3b. PUBLIC PATH (EventKit): existing Phase-2 behavior, byte-for-byte.
@@ -245,6 +240,21 @@ struct ListCreate: AsyncParsableCommand {
                 + "Find it with lists.")]))]
         }
         return [("id", .int(id))]
+    }
+
+    /// The private appearance a new list got, in `cmd_list_create`'s order (color, symbol, emoji,
+    /// groceries locale); empty when there is none.
+    static func appliedMetadataLine(color: String?, symbol: String?, emoji: String?,
+                                    groceries: Bool, groceryLocale: String?) -> String {
+        var details: [String] = []
+        if let color, !color.isEmpty { details.append("color=\(normalizeListColor(color) ?? color)") }
+        if let symbol, !symbol.isEmpty { details.append("symbol=\(symbol)") }
+        if let emoji, !emoji.isEmpty { details.append("emoji=\(emoji)") }
+        if groceries {
+            let loc = groceryLocale.flatMap { try? normalizeGroceryLocale($0) } ?? defaultGroceryLocaleID
+            details.append("groceries locale=\(loc)")
+        }
+        return details.isEmpty ? "" : "Applied private metadata: \(details.joined(separator: ", "))\n"
     }
 }
 
