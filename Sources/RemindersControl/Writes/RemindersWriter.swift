@@ -9,14 +9,29 @@ public enum AlarmWrite: Equatable {
     case clear                          // remove all alarms
 }
 
+/// An EventKit recurrence rule. The CLI string grammar only ever fills frequency/interval/
+/// daysOfWeek/daysOfMonth; the remaining fields exist so an exported `recurrence` object
+/// (`ReminderSerializer.recurrenceFromRow`) round-trips through `import` and subtask JSON.
 public struct RecurrenceWrite: Equatable {
     public var frequency: String        // "daily"|"weekly"|"monthly"|"yearly"
     public var interval: Int?
     public var daysOfWeek: [Int]?       // 1=Sun..7=Sat
+    public var weekNumbers: [Int]?      // parallel to daysOfWeek; 0 = unpinned, -1 = last
     public var daysOfMonth: [Int]?
+    public var monthsOfYear: [Int]?
+    public var daysOfYear: [Int]?
+    public var weeksOfYear: [Int]?
+    public var setPositions: [Int]?
+    public var count: Int?              // occurrence-count end; mutually exclusive with `end`
     public var end: Date?
-    public init(frequency: String, interval: Int? = nil, daysOfWeek: [Int]? = nil, daysOfMonth: [Int]? = nil, end: Date? = nil) {
-        self.frequency = frequency; self.interval = interval; self.daysOfWeek = daysOfWeek; self.daysOfMonth = daysOfMonth; self.end = end
+    public init(frequency: String, interval: Int? = nil, daysOfWeek: [Int]? = nil,
+                weekNumbers: [Int]? = nil, daysOfMonth: [Int]? = nil, monthsOfYear: [Int]? = nil,
+                daysOfYear: [Int]? = nil, weeksOfYear: [Int]? = nil, setPositions: [Int]? = nil,
+                count: Int? = nil, end: Date? = nil) {
+        self.frequency = frequency; self.interval = interval; self.daysOfWeek = daysOfWeek
+        self.weekNumbers = weekNumbers; self.daysOfMonth = daysOfMonth; self.monthsOfYear = monthsOfYear
+        self.daysOfYear = daysOfYear; self.weeksOfYear = weeksOfYear; self.setPositions = setPositions
+        self.count = count; self.end = end
     }
 }
 

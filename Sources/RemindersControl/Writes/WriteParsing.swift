@@ -27,8 +27,15 @@ public enum WriteParsing {
 
     // MARK: - Recurrence
 
-    /// Port of `parse_recurrence` (remctl:3991). nil if unparseable.
-    public static func parseRecurrenceSpec(_ s: String) -> RecurrenceWrite? {
+    /// Port of `parse_recurrence` (remctl:3991, upstream 98efe89). Accepts the CLI string
+    /// grammar, or an exported recurrence object serialized as JSON text (what `export` /
+    /// `info --json` emit, which `import` and `--subtask` JSON may carry back in).
+    /// nil if unparseable.
+    public static func parseRecurrenceSpec(_ s: String, calendar: Calendar = .current) -> RecurrenceWrite? {
+        if s.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+            guard case let .object(pairs)? = OrderedJSON.parse(Data(s.utf8)) else { return nil }
+            return normalizeRecurrenceObject(pairs, calendar: calendar)
+        }
         // parts = spec.lower().split()  (whitespace split, drops empties)
         let parts = s.lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }).map(String.init)
         guard let freq = parts.first else { return nil }
@@ -58,6 +65,200 @@ public enum WriteParsing {
             return nil
         }
         return RecurrenceWrite(frequency: freq, interval: 1)
+    }
+
+    /// Port of `parse_recurrence` for an already-decoded value: a string spec or an exported
+    /// recurrence object. Anything else (numbers, booleans, arrays, null) is rejected.
+    public static func parseRecurrence(_ value: JSONValue, calendar: Calendar = .current) -> RecurrenceWrite? {
+        switch value {
+        case let .string(s):      return parseRecurrenceSpec(s, calendar: calendar)
+        case let .object(pairs):  return normalizeRecurrenceObject(pairs, calendar: calendar)
+        default:                  return nil
+        }
+    }
+
+    private static let recurrenceObjectFields: Set<String> = [
+        "frequency", "interval", "daysOfWeek", "daysOfWeekDetailed", "weekNumbers",
+        "daysOfMonth", "monthsOfYear", "daysOfYear", "weeksOfYear", "setPositions",
+        "count", "endDate", "end",
+    ]
+
+    /// Port of `normalize_recurrence_object` (upstream 98efe89, 90f24cc, ccaaca6): validate an
+    /// exported recurrence object field by field. Every rejection happens here, before any write,
+    /// because EventKit raises uncatchable exceptions on several out-of-range values.
+    static func normalizeRecurrenceObject(_ pairs: [(String, JSONValue)], calendar: Calendar = .current) -> RecurrenceWrite? {
+        var fields: [String: JSONValue] = [:]
+        for (key, value) in pairs {
+            guard recurrenceObjectFields.contains(key) else { return nil }
+            fields[key] = value
+        }
+        guard case let .string(frequency)? = fields["frequency"],
+              ["daily", "weekly", "monthly", "yearly"].contains(frequency) else { return nil }
+
+        var out = RecurrenceWrite(frequency: frequency)
+
+        if let value = fields["interval"] {
+            guard let interval = recurrenceInt(value), 1...recurrenceMaxInt ~= interval else { return nil }
+            out.interval = interval
+        } else {
+            out.interval = 1
+        }
+
+        // `daysOfWeekDetailed` is the exported pairing of weekday + week number; it expands to the
+        // parallel daysOfWeek/weekNumbers arrays, which must agree when they are also present.
+        if let detailed = fields["daysOfWeekDetailed"] {
+            guard let (days, weeks) = recurrenceDetailedDays(detailed) else { return nil }
+            if let existing = fields["daysOfWeek"], existing != .array(days) { return nil }
+            if let existing = fields["weekNumbers"], existing != .array(weeks) { return nil }
+            fields["daysOfWeek"] = .array(days)
+            fields["weekNumbers"] = .array(weeks)
+        }
+
+        var lists: [String: [Int]] = [:]
+        for (key, bounds) in [("daysOfWeek", 1...7), ("daysOfMonth", -31...31), ("monthsOfYear", 1...12),
+                              ("daysOfYear", -366...366), ("weeksOfYear", -53...53), ("setPositions", -366...366)] {
+            guard let value = fields[key] else { continue }
+            guard let ints = recurrenceIntList(value, in: bounds) else { return nil }
+            lists[key] = ints
+        }
+        out.daysOfWeek = lists["daysOfWeek"]
+        out.daysOfMonth = lists["daysOfMonth"]
+        out.monthsOfYear = lists["monthsOfYear"]
+        out.daysOfYear = lists["daysOfYear"]
+        out.weeksOfYear = lists["weeksOfYear"]
+        out.setPositions = lists["setPositions"]
+
+        if let value = fields["weekNumbers"] {
+            // Pinning a weekday to a week only means something monthly (±1..5) or yearly (±1..53);
+            // 0 is "unpinned" everywhere.
+            let bound = ["monthly": 5, "yearly": 53][frequency] ?? 0
+            guard case let .array(items) = value, items.count == (out.daysOfWeek?.count ?? 0) else { return nil }
+            let weeks = items.compactMap { recurrenceInt($0) }
+            guard weeks.count == items.count, weeks.allSatisfy({ -bound...bound ~= $0 }) else { return nil }
+            out.weekNumbers = weeks
+        }
+
+        if let value = fields["count"] {
+            guard let count = recurrenceInt(value), 1...recurrenceMaxInt ~= count else { return nil }
+            out.count = count
+        }
+
+        // `endDate` is the exported key, `end` the writer-facing one; both may appear only in agreement.
+        var endValue = fields["end"]
+        if let exported = fields["endDate"] {
+            guard endValue == nil || endValue == exported else { return nil }
+            endValue = exported
+        }
+        if let endValue {
+            guard out.count == nil, case let .string(text) = endValue,
+                  let end = parseRecurrenceEnd(text, calendar: calendar) else { return nil }
+            out.end = end
+        }
+        return out
+    }
+
+    /// EventKit stores recurrence counts/intervals as 32-bit values.
+    private static let recurrenceMaxInt = Int(Int32.max)
+
+    /// JSON integers only: a bool or a float is NOT an integer here (upstream `type(x) is not int`).
+    private static func recurrenceInt(_ value: JSONValue) -> Int? {
+        if case let .int(n) = value { return n }
+        return nil
+    }
+
+    /// A non-empty array of non-zero integers inside `bounds`.
+    private static func recurrenceIntList(_ value: JSONValue, in bounds: ClosedRange<Int>) -> [Int]? {
+        guard case let .array(items) = value, !items.isEmpty else { return nil }
+        let ints = items.compactMap { recurrenceInt($0) }
+        guard ints.count == items.count, ints.allSatisfy({ $0 != 0 && bounds ~= $0 }) else { return nil }
+        return ints
+    }
+
+    /// Split `daysOfWeekDetailed` into parallel weekday / week-number values (week number
+    /// defaults to 0 = unpinned). Range checks happen with the merged arrays.
+    private static func recurrenceDetailedDays(_ value: JSONValue) -> (days: [JSONValue], weeks: [JSONValue])? {
+        guard case let .array(items) = value, !items.isEmpty else { return nil }
+        var days: [JSONValue] = [], weeks: [JSONValue] = []
+        for item in items {
+            guard case let .object(dayPairs) = item else { return nil }
+            var day: JSONValue? = nil
+            var week: JSONValue = .int(0)
+            for (key, dayValue) in dayPairs {
+                switch key {
+                case "dayOfTheWeek": day = dayValue
+                case "weekNumber":   week = dayValue
+                default: return nil
+                }
+            }
+            guard let day else { return nil }
+            days.append(day); weeks.append(week)
+        }
+        return (days, weeks)
+    }
+
+    /// Recurrence end timestamps as `export` / `info --json` write them (naive local, optional
+    /// microseconds) plus the other ISO-8601 spellings Python's `fromisoformat` accepts: a
+    /// trailing `Z`, `±HH[[:]MM[[:]SS]]` offsets, and week dates. Upstream canonicalizes the text
+    /// to UTC for its bridge (90f24cc, ccaaca6); here it lands in a zone-free `Date` instead.
+    static func parseRecurrenceEnd(_ raw: String, calendar: Calendar = .current) -> Date? {
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        let pattern = #"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,9}))?)?(Z|[+-]\d{2}(?::?\d{2}(?::?\d{2})?)?)?$"#
+        if let m = firstMatch(in: text, pattern: pattern, groupCount: 8) {
+            guard let zone = recurrenceZone(m[8], calendar: calendar) else { return nil }
+            var comps = DateComponents()
+            comps.year = Int(m[1]); comps.month = Int(m[2]); comps.day = Int(m[3])
+            comps.hour = m[4].isEmpty ? 0 : Int(m[4])
+            comps.minute = m[5].isEmpty ? 0 : Int(m[5])
+            comps.second = m[6].isEmpty ? 0 : Int(m[6])
+            comps.nanosecond = m[7].isEmpty ? 0 : fractionalNanoseconds(m[7])
+            return gregorianDate(comps, zone: zone)
+        }
+        if let m = firstMatch(in: text, pattern: #"^(\d{4})-W(\d{2})-(\d)$"#, groupCount: 3) {
+            guard let weekday = Int(m[3]), 1...7 ~= weekday else { return nil }
+            var iso = Calendar(identifier: .iso8601)
+            iso.timeZone = calendar.timeZone
+            var comps = DateComponents()
+            comps.yearForWeekOfYear = Int(m[1]); comps.weekOfYear = Int(m[2])
+            comps.weekday = weekday == 7 ? 1 : weekday + 1   // ISO Mon=1..Sun=7 → Calendar Sun=1..Sat=7
+            guard let week = comps.weekOfYear, 1...53 ~= week else { return nil }
+            return iso.date(from: comps)
+        }
+        return nil
+    }
+
+    /// `Z`, `±HH`, `±HHMM`, `±HH:MM`, `±HH:MM:SS` (Python allows seconds in the offset), or the
+    /// local zone when the text carries no designator at all.
+    private static func recurrenceZone(_ designator: String, calendar: Calendar) -> TimeZone? {
+        if designator.isEmpty { return calendar.timeZone }
+        if designator == "Z" { return TimeZone(secondsFromGMT: 0) }
+        let digits = designator.dropFirst().filter { $0.isNumber }
+        guard digits.count == 2 || digits.count == 4 || digits.count == 6 else { return nil }
+        let padded = Array(digits + String(repeating: "0", count: 6 - digits.count))
+        let parts = stride(from: 0, to: 6, by: 2).compactMap { Int(String(padded[$0...$0 + 1])) }
+        guard parts.count == 3, parts[1] < 60, parts[2] < 60 else { return nil }
+        let magnitude = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        return TimeZone(secondsFromGMT: designator.hasPrefix("-") ? -magnitude : magnitude)
+    }
+
+    /// ".125" -> 125_000_000ns; digits past nanosecond precision are dropped.
+    private static func fractionalNanoseconds(_ digits: String) -> Int {
+        let padded = (digits + String(repeating: "0", count: 9)).prefix(9)
+        return Int(padded) ?? 0
+    }
+
+    /// Build a date from literal components, rejecting ones Calendar would silently roll over
+    /// (month 13, 2026-02-30) and out-of-range clock fields.
+    private static func gregorianDate(_ comps: DateComponents, zone: TimeZone) -> Date? {
+        guard let year = comps.year, let month = comps.month, let day = comps.day,
+              let hour = comps.hour, let minute = comps.minute, let second = comps.second,
+              1...12 ~= month, 1...31 ~= day, 0...23 ~= hour, 0...59 ~= minute, 0...59 ~= second
+        else { return nil }
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = zone
+        guard let date = gregorian.date(from: comps) else { return nil }
+        let check = gregorian.dateComponents([.year, .month, .day], from: date)
+        guard check.year == year, check.month == month, check.day == day else { return nil }
+        return date
     }
 
     // MARK: - Alarm

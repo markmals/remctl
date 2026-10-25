@@ -238,6 +238,8 @@ remctl unflag 23880
 
 **Recurrence** (EventKit, on `add` and `edit`): `daily`, `weekly`, `weekly mon,wed,fri`, `monthly`, `monthly 1,15`, `yearly` — validated before write. Recurring reminders show a `↻` badge (and a `Repeat` column in table output) and decode back to a `recurrence` object in JSON.
 
+A recurrence **object** — exactly the shape `export` and `info --json` emit (`frequency`, `interval`, `daysOfWeek`/`daysOfWeekDetailed`/`weekNumbers`, `daysOfMonth`, `monthsOfYear`, `daysOfYear`, `weeksOfYear`, `setPositions`, `count`, `endDate`) — is also accepted anywhere a recurrence spec is, so exported rules round-trip back through `import`, `--subtask` JSON, and `--recurrence`. Every field is validated before the write; an unknown field, an out-of-range value, `{}`, or `endDate` together with `count` is rejected.
+
 **Alarms** (`--alarm 15m`, `1h`, `1d`, or an absolute date) are EventKit alarms; they appear under `alarms` in `info --json`. `edit --alarm clear` removes normal alarms. `edit -d` carries a single matching absolute alarm forward; `edit -d clear` removes a single matching absolute alarm/display time while preserving unrelated alarms.
 
 **Early Reminders** (`--early-reminder`) are a *separate* Reminders Early Reminder (a private due-date delta alert, not an EventKit alarm). Accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; a non-clear value requires a due date. JSON readback includes `earlyReminder`/`earlyReminders`.

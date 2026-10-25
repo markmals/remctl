@@ -55,7 +55,10 @@ public final class EventKitWriter: RemindersWriter {
 
     // MARK: - Recurrence
 
-    private func buildRecurrenceRule(_ spec: RecurrenceWrite) -> EKRecurrenceRule? {
+    /// Translate a validated `RecurrenceWrite` into an EventKit rule. Pure (no EventKit state
+    /// beyond the rule it builds), so it is unit-testable alongside `colorForName`.
+    /// Port of the bridge's `buildRecurrenceRule` (upstream c84fbca, 98efe89).
+    func buildRecurrenceRule(_ spec: RecurrenceWrite) -> EKRecurrenceRule? {
         let freq: EKRecurrenceFrequency
         switch spec.frequency {
         case "daily":   freq = .daily
@@ -72,18 +75,48 @@ public final class EventKitWriter: RemindersWriter {
         if let days = spec.daysOfWeek {
             // Input: 1=Sun, 2=Mon ... 7=Sat → EKWeekday raw values match
             guard !days.isEmpty, days.allSatisfy({ 1...7 ~= $0 }) else { return nil }
-            daysOfWeek = days.map { EKRecurrenceDayOfWeek(EKWeekday(rawValue: $0)!) }
+            // Week numbers pin a weekday to the Nth week of the period (4 = 4th Friday,
+            // -1 = last Friday); 0 means unpinned. Validate here: EKRecurrenceDayOfWeek
+            // raises an uncatchable NSException on an out-of-range or wrong-frequency week
+            // number, so a bad value must never reach it.
+            var weekNumbers: [Int]?
+            if let numbers = spec.weekNumbers, !numbers.isEmpty {
+                guard numbers.count == days.count else { return nil }
+                let bounds: ClosedRange<Int>
+                switch freq {
+                case .monthly: bounds = -5...5
+                case .yearly:  bounds = -53...53
+                default:       bounds = 0...0   // daily/weekly accept no pinning at all
+                }
+                guard numbers.allSatisfy({ bounds ~= $0 }) else { return nil }
+                weekNumbers = numbers
+            }
+            daysOfWeek = zip(days, weekNumbers ?? Array(repeating: 0, count: days.count)).map { day, number in
+                let weekday = EKWeekday(rawValue: day)!
+                return number == 0 ? EKRecurrenceDayOfWeek(weekday)
+                                   : EKRecurrenceDayOfWeek(dayOfTheWeek: weekday, weekNumber: number)
+            }
         }
 
         var daysOfMonth: [NSNumber]?
         if let days = spec.daysOfMonth {
-            guard !days.isEmpty, days.allSatisfy({ 1...31 ~= $0 }) else { return nil }
+            guard !days.isEmpty, days.allSatisfy({ $0 != 0 && -31...31 ~= $0 }) else { return nil }
             daysOfMonth = days.map { NSNumber(value: $0) }
+        }
+
+        for (values, bounds) in [(spec.monthsOfYear, 1...12), (spec.daysOfYear, -366...366),
+                                 (spec.weeksOfYear, -53...53), (spec.setPositions, -366...366)] {
+            guard let values else { continue }
+            guard !values.isEmpty, values.allSatisfy({ $0 != 0 && bounds ~= $0 }) else { return nil }
         }
 
         var end: EKRecurrenceEnd?
         if let endDate = spec.end {
+            guard spec.count == nil else { return nil }
             end = EKRecurrenceEnd(end: endDate)
+        } else if let count = spec.count {
+            guard count > 0 else { return nil }
+            end = EKRecurrenceEnd(occurrenceCount: count)
         }
 
         return EKRecurrenceRule(
@@ -91,10 +124,10 @@ public final class EventKitWriter: RemindersWriter {
             interval: interval,
             daysOfTheWeek: daysOfWeek,
             daysOfTheMonth: daysOfMonth,
-            monthsOfTheYear: nil,
-            weeksOfTheYear: nil,
-            daysOfTheYear: nil,
-            setPositions: nil,
+            monthsOfTheYear: spec.monthsOfYear?.map { NSNumber(value: $0) },
+            weeksOfTheYear: spec.weeksOfYear?.map { NSNumber(value: $0) },
+            daysOfTheYear: spec.daysOfYear?.map { NSNumber(value: $0) },
+            setPositions: spec.setPositions?.map { NSNumber(value: $0) },
             end: end
         )
     }
