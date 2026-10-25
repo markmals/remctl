@@ -40,15 +40,33 @@ extension RemindersStore {
             arguments: [pk]) }) ?? []
     }
 
-    /// q_alarms — alarm objects (REMCDAlarm) LEFT JOIN their trigger object, ORDER BY a.Z_PK.
+    /// q_alarms — alarm objects (REMCDAlarm) LEFT JOIN their trigger object, ORDER BY a.Z_PK,
+    /// without the time-interval half of a location alarm (`alarmsWithoutLocationCompanions`).
     public func alarms(pk: Int) -> [Row] {
         let ent = alarmEntity
-        let sql = "SELECT a.Z_PK AS alarm_id, a.ZTRIGGER AS trigger_id, t.Z_ENT AS trigger_entity, t.ZTIMEINTERVAL AS time_interval, " +
+        let alarmUID = tableColumnNames("ZREMCDOBJECT").contains("ZALARMUID") ? "a.ZALARMUID" : "NULL"
+        let sql = "SELECT a.Z_PK AS alarm_id, \(alarmUID) AS alarm_uid, a.ZTRIGGER AS trigger_id, t.Z_ENT AS trigger_entity, t.ZTIMEINTERVAL AS time_interval, " +
             "t.ZDATECOMPONENTSDATA AS date_components, t.ZTITLE AS location_title, t.ZLATITUDE AS latitude, t.ZLONGITUDE AS longitude, " +
             "t.ZRADIUS AS radius, t.ZADDRESS AS address, t.ZPROXIMITY AS proximity " +
             "FROM ZREMCDOBJECT a LEFT JOIN ZREMCDOBJECT t ON a.ZTRIGGER = t.Z_PK " +
             "WHERE a.ZREMINDER = ? AND +a.Z_ENT = \(ent) AND +a.ZMARKEDFORDELETION = 0 AND (t.Z_PK IS NULL OR t.ZMARKEDFORDELETION = 0) " +
             "ORDER BY a.Z_PK"
-        return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk]) }) ?? []
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [pk]) }) ?? []
+        return alarmsWithoutLocationCompanions(rows)
+    }
+}
+
+/// Reminders saves an EventKit location alarm as two REMCDAlarm rows sharing one ZALARMUID: the
+/// location trigger, and a time-interval trigger at offset 0. EventKit reads the pair back as a
+/// single location alarm, so the time-interval row is dropped; a genuine at-due-time alarm has a
+/// ZALARMUID of its own and stays.
+func alarmsWithoutLocationCompanions<Alarm: ReminderRow>(_ rows: [Alarm]) -> [Alarm] {
+    let locationAlarmUIDs = Set(rows.compactMap { row -> String? in
+        guard row.double("latitude") != nil || row.double("longitude") != nil else { return nil }
+        return row.string("alarm_uid")
+    })
+    return rows.filter { row in
+        guard row.double("time_interval") == 0, let uid = row.string("alarm_uid") else { return true }
+        return !locationAlarmUIDs.contains(uid)
     }
 }

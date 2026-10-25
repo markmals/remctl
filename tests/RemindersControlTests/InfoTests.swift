@@ -97,6 +97,39 @@ import GRDB
         #expect(alarms?.first?["type"] as? String == "relative")
     }
 
+    /// Rows as Reminders stored them live: a genuine at-due-time alarm (own ZALARMUID), then an
+    /// EventKit location alarm saved as a time-interval/location pair sharing one ZALARMUID.
+    @Test func locationAlarmCompanionRowIsHidden() throws {
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            ALTER TABLE ZREMCDOBJECT ADD COLUMN ZALARMUID TEXT;
+            ALTER TABLE ZREMCDOBJECT ADD COLUMN ZALARM INTEGER;
+            INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (1,3,'L',0);
+            INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZDUEDATE) VALUES (42,'Both',1,1,0,0,980000000);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZALARMUID,ZMARKEDFORDELETION) VALUES
+              (10,15,42,11,'AT-DUE',0), (12,15,42,13,'LOC',0), (14,15,42,15,'LOC',0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZALARM,ZTIMEINTERVAL,ZMARKEDFORDELETION) VALUES (11,19,10,0,0), (13,19,12,0,0);
+            INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZALARM,ZTITLE,ZLATITUDE,ZLONGITUDE,ZRADIUS,ZPROXIMITY,ZMARKEDFORDELETION)
+              VALUES (15,18,14,'Ocean',0.5,-140,100,1,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["info", "42", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let d = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any]
+        let alarms = try #require(d?["alarms"] as? [[String: Any]])
+        #expect(alarms.map { $0["id"] as? Int } == [10, 14])
+        #expect(alarms.map { $0["type"] as? String } == ["relative", "location"])
+    }
+
+    @Test func alarmRowsWithoutAnAlarmUIDAreAllKept() {
+        // Older stores have no ZALARMUID: the pairing can't be proven, so nothing is hidden.
+        let rows = [DictRow(["alarm_id": 1, "time_interval": 0.0]),
+                    DictRow(["alarm_id": 2, "latitude": 0.5, "longitude": -140.0])]
+        #expect(alarmsWithoutLocationCompanions(rows).map { $0.int("alarm_id") } == [1, 2])
+    }
+
     @Test func relativeAlarmLabelFormat() throws {
         // unit test of the label helper (oracle: -900 -> "15 minutes before due date")
         #expect(relativeAlarmLabel(-900) == "15 minutes before due date")

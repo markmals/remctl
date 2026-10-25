@@ -100,7 +100,12 @@ Ordinary mutations go through Apple's EventKit, in-process. `EventKitWriter`
   clone-delete in `Writes/ListMove.swift`)
 - list create, rename, and delete
 - structured-location alarms (written through EventKit's structured-location
-  path because they materialize reliably there on current macOS)
+  path because they materialize reliably there on current macOS). Reminders
+  stores each one as two `REMCDAlarm` rows sharing a `ZALARMUID`: the location
+  trigger and a time-interval trigger at offset 0. EventKit reads the pair as
+  one location alarm, and so do RemCTL's reads (`alarmsWithoutLocationCompanions`
+  in `Store/Queries+Extras.swift`); a genuine at-due-time alarm has its own
+  `ZALARMUID` and is still listed.
 
 Write and read targeting is iCloud-scoped: `Writes/ListTargeting.swift` matches a
 list by its stable ReminderKit identifier before its title, identifies iCloud
