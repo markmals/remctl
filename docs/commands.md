@@ -171,7 +171,7 @@ remctl upcoming 14 --via-eventkit --json
 ## Creating and Editing
 
 ### `add <title>`
-Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `--json`.
+Create a reminder. Key flags: `-l/--list` or `--list-id`, `-n/--notes`, `-d/--due`, `-p/--priority high|medium|low|none`, `--recurrence`, `--alarm`, `--url`, `-f/--flag`, `-t/--tags`, `--grocery`, `--section`/`--section-id`/`--new-section`, `--smart-list`/`--smart-list-id` (with `--section`/`--section-id`), `--subtask` (repeatable), `--image` (repeatable), `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `--json`.
 
 Date-only `-d` inputs (`today`, `tomorrow`, `2026-06-01`, `+3d`, `in 2 weeks`, `next friday`, and natural-language dates such as `march 30`) create **all-day** reminders; inputs with explicit times create timed reminders.
 
@@ -198,14 +198,21 @@ How RemCTL picks the path from context on a bare `add`:
 - `--url` alongside private metadata becomes a synced web rich link and requires a public `http`/`https` host — loopback, private, `.local`, fake-IP (`198.18.0.0/15`) and IPv4-mapped IPv6 spellings of those are rejected before anything is written (`--json`: `{"status":"error","code":"invalid_rich_link_url",…,"url":…}` on stderr). With no other private metadata it only appends to notes.
 - `-t/--tags` writes inline `#hashtag` title tokens on a bare add, but synced tags when private metadata is present (`edit --tags` is always a synced-tag write).
 - `-f/--flag` always writes the real Reminders flag through ReminderKit, so it implies the private path (as `edit --flagged` does). EventKit has no flagged API, so a failed flag write is reported as an error — RemCTL never substitutes a priority change.
-- Private targets that can be checked up front (`--section`, `--section-id`, `--assign`) are resolved **before** the reminder is created. If a private step fails after the create, `add` exits 1 reporting the created reminder, the steps that completed, and the failed one, and tells you to finish with `edit` rather than re-running `add` (`--json`: `{"status":"error","code":"private_add_partial",…}` on stderr).
+- Private targets that can be checked up front (`--section`, `--section-id`, `--smart-list`/`--smart-list-id`, `--assign`) are resolved **before** the reminder is created. If a private step fails after the create, `add` exits 1 reporting the created reminder, the steps that completed, and the failed one, and tells you to finish with `edit` rather than re-running `add` (`--json`: `{"status":"error","code":"private_add_partial",…}` on stderr).
 
 ### `edit <id>`
-Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `-t/--tags`, `--set-tags`, `--clear-tags`, `--remove-tag` (repeatable), `--grocery`, `--section`/`--section-id`/`--new-section`, `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
+Edit an existing reminder. Flags: `--title`, `-l/--list` or `--list-id` (move; see below), `-n/--notes`, `-d/--due` (or `clear`), `-p/--priority`, `--url`, `--recurrence`, `--alarm` (or `clear`), `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity arriving|leaving`, `--location-address`, `-t/--tags`, `--set-tags`, `--clear-tags`, `--remove-tag` (repeatable), `--grocery`, `--section`/`--section-id`/`--new-section`, `--smart-list`/`--smart-list-id` (with `--section`/`--section-id`), `--subtask` (repeatable), `--image` (repeatable), `--flagged/--no-flagged`, `--urgent/--no-urgent`, `--early-reminder`, `--assign`/`--unassign`, `--json`.
 
 Date-only `-d` values keep the reminder all-day through the edit (re-setting the same all-day date nudges by a day, not an hour, so the change still syncs).
 
 Rich-link and image edits are **additive** — RemCTL adds, never removes or replaces existing links/images. `--section` resolves by name inside the target list (a single non-empty match wins on duplicates; use `--section-id` otherwise). When combined with `-l/--list`, section resolution uses the destination list.
+
+`--smart-list NAME` or `--smart-list-id ID` makes `--section`/`--section-id` name one of that custom smart list's own sections instead (on `add` too). The section is resolved before anything is written — a built-in smart list, an unknown or ambiguous section, or a combination with `--new-section` changes nothing (`smart_list_not_custom`, `section_not_found`, `section_ambiguous`, `invalid_section_target` under `--json`) — and the write is read back from the smart list (`verified: true` in the `private` result). `smart-lists` shows the section ids.
+
+```bash
+remctl edit 23880 --smart-list "This Week" --section Next
+remctl add "Draft agenda" -l Work --smart-list-id 42 --section-id 6C6828D7-B2B7-45A6-82AD-D26A8A484B1F
+```
 
 `--url` on a public edit appends to the existing notes instead of replacing them; pass `-n/--notes` to replace the body first (`-n ""` clears it). A URL already present in the notes as its own word is not appended a second time, so repeating the same edit is safe.
 
@@ -460,7 +467,7 @@ remctl add "Milk" -l Groceries --grocery
 ## Smart Lists
 
 ### `smart-lists`
-Read-only inspector for built-in and custom smart lists. Reports numeric ID, object UUID, smart-list type, pin state/date, filter byte length, and a decoded summary when RemCTL recognizes the filter payload. Use `pinned`/`pinnedDate` here (not `lists --json`) to verify smart-list pinning.
+Read-only inspector for built-in and custom smart lists. Reports numeric ID, object UUID, smart-list type, pin state/date, filter byte length, and a decoded summary when RemCTL recognizes the filter payload. Use `pinned`/`pinnedDate` here (not `lists --json`) to verify smart-list pinning. Custom smart lists also list their own sections (`sections: [{"id", "name"}]`), the ids `add`/`edit --smart-list-id … --section-id` take.
 ```bash
 remctl smart-lists
 remctl smart-lists --json

@@ -127,4 +127,6 @@ public protocol PrivateWriter {
     /// `anchorId`, or `append`). The reminder keeps its identifier.
     func moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String,
                                  anchorId: String?) async throws -> PrivateResult
+    /// Puts a reminder in one of a custom smart list's own sections (keyed by smart-list ckIdentifier).
+    func assignSmartListSection(id: String, sectionId: String, smartListId: String) async throws -> PrivateResult
 }

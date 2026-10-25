@@ -89,44 +89,25 @@ extension RemindersStore {
         return sections(listPk: listPk).first { unicodeCasefold($0.string("ZCKIDENTIFIER") ?? "") == folded }
     }
 
-    /// Port of `q_reminder_section_ckid`: the live section of the list a reminder is in, or nil.
-    public func reminderSectionCkid(listPk: Int, reminderCkid: String) -> String? {
-        guard let row = try? queue.read({ try Row.fetchOne($0, sql:
-                  "SELECT ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [listPk]) }),
-              let text = row.blobString("ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA"),
-              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let memberships = object["memberships"] as? [[String: Any]] else { return nil }
+    /// Port of `q_reminder_section_ckid`: the live section a reminder is effectively in, or nil.
+    /// With `smartList`, `listPk` is a custom smart list's Z_PK: its row stores its own section
+    /// memberships. Strict: a disagreement the membership dates cannot settle counts as no section,
+    /// so write verification never passes on a guess.
+    public func reminderSectionCkid(listPk: Int, reminderCkid: String, smartList: Bool = false) -> String? {
         let member = unicodeCasefold(reminderCkid)
-        for membership in memberships where (membership["isObsolete"] as? Bool) != true {
-            guard let memberID = membership["memberID"] as? String, unicodeCasefold(memberID) == member,
-                  let groupID = membership["groupID"] as? String,
-                  let section = liveSection(listPk: listPk, identifier: groupID) else { continue }
-            return section.string("ZCKIDENTIFIER")
-        }
-        return nil
+        let memberships = effectiveSectionMemberships(sectionMembershipEntries(pk: listPk), strict: true)
+        guard let group = memberships.first(where: { unicodeCasefold($0.key) == member })?.value else { return nil }
+        let sections = smartList ? smartListSections(smartListPk: listPk) : self.sections(listPk: listPk)
+        let folded = unicodeCasefold(group)
+        return sections.first { unicodeCasefold($0.string("ZCKIDENTIFIER") ?? "") == folded }?.string("ZCKIDENTIFIER")
     }
 
-    /// q_section_member_counts (remctl:1339): counts per section CKID from the
-    /// `ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA` JSON blob on the list row.
-    /// Non-obsolete memberships only. Returns empty dict if blob is absent/invalid.
+    /// q_section_member_counts: how many members each section CKID effectively holds (display
+    /// rules: the last live entry when dates cannot decide).
     public func sectionMemberCounts(listPk: Int) -> [String: Int] {
-        guard let row = try? queue.read({ try Row.fetchOne($0, sql:
-            "SELECT ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?",
-            arguments: [listPk]) }),
-              let blob = row.string("ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA"),
-              let data = blob.data(using: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let memberships = parsed["memberships"] as? [[String: Any]]
-        else { return [:] }
-
         var counts: [String: Int] = [:]
-        for membership in memberships {
-            if let isObsolete = membership["isObsolete"] as? Bool, isObsolete { continue }
-            if let groupId = membership["groupID"] as? String,
-               let memberId = membership["memberID"] as? String,
-               !groupId.isEmpty, !memberId.isEmpty {
-                counts[groupId, default: 0] += 1
-            }
+        for group in effectiveSectionMemberships(sectionMembershipEntries(pk: listPk), strict: false).values {
+            counts[group, default: 0] += 1
         }
         return counts
     }

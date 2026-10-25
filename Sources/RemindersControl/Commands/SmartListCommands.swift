@@ -11,7 +11,7 @@ struct SmartLists: ParsableCommand {
 
     func run() throws {
         Dispatch.runRead { store in
-            let payloads = store.smartLists().map { smartListToDict($0) }
+            let payloads = store.smartLists().map { Self.withSections(smartListToDict($0), store: store) }
             if opts.json {
                 Dispatch.printJSON(.array(payloads.map { .object($0) }), ensureAscii: false)
                 return
@@ -45,10 +45,29 @@ struct SmartLists: ParsableCommand {
                 let pinInfo = isPinned ? ansi.dim(" [pinned]") : ""
                 print("  \(safeDisplay(str("name"))) \(ansi.dim("(id: \(intOf("id")), \(kind))"))\(pinInfo)")
                 print("    \(smartType) · filter bytes: \(length) · \(line)")
+                if case let .array(sections)? = d["sections"] {
+                    for case let .object(section) in sections {
+                        let s = Dictionary(section, uniquingKeysWith: { a, _ in a })
+                        guard case let .string(id)? = s["id"], case let .string(name)? = s["name"] else { continue }
+                        print("    - \(safeDisplay(name)) \(ansi.dim("(\(id))"))")
+                    }
+                }
             }
             let n = payloads.count
             print("\n\(n) smart list\(n == 1 ? "" : "s")")
         }
+    }
+
+    /// A custom smart list's own sections, with the ids `--section-id` takes alongside
+    /// `--smart-list-id` (upstream caf7423). Built-in smart lists have none.
+    private static func withSections(_ item: [(String, JSONValue)], store: RemindersStore) -> [(String, JSONValue)] {
+        guard item.contains(where: { $0.0 == "kind" && $0.1 == .string("custom") }),
+              case let .int(pk)? = item.first(where: { $0.0 == "id" })?.1 else { return item }
+        let sections: [JSONValue] = store.smartListSections(smartListPk: pk).compactMap { row in
+            guard let id = row.string("ZCKIDENTIFIER"), !id.isEmpty else { return nil }
+            return .object([("id", .string(id)), ("name", row.string("ZDISPLAYNAME").map { .string($0) } ?? .null)])
+        }
+        return item + [("sections", .array(sections))]
     }
 }
 

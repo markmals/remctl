@@ -131,6 +131,8 @@ _remctl() {
                 '--section[Assign to existing section]:section:' \
                 '--section-id[Assign to section by stable ID]:section-id:' \
                 '--new-section[Create and assign to new section]:section:' \
+                '--smart-list[Resolve the section in this custom smart list]:smart-list:' \
+                '--smart-list-id[Resolve the section in a custom smart list by numeric ID]:id:' \
                 '--subtask[Add private subtask title or JSON object]:subtask:' \
                 '--image[Add private image attachment]:path:_files' \
                 '--assign[Assign to shared-list user]:sharee:' \
@@ -163,6 +165,8 @@ _remctl() {
                 '--section[Assign to existing section]:section:' \
                 '--section-id[Assign to section by stable ID]:section-id:' \
                 '--new-section[Create and assign to new section]:section:' \
+                '--smart-list[Resolve the section in this custom smart list]:smart-list:' \
+                '--smart-list-id[Resolve the section in a custom smart list by numeric ID]:id:' \
                 '--subtask[Add private subtask title or JSON object]:subtask:' \
                 '--image[Add private image attachment]:path:_files' \
                 '--assign[Assign to shared-list user]:sharee:' \
@@ -507,10 +511,10 @@ _remctl() {
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --url --tags -t --list -l --list-id --notes -n --due -d --priority -p --flag -f --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "edit" ]; then
-        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --smart-list --smart-list-id --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "reminder-move" ]; then
         COMPREPLY=( $(compgen -W "--before --after --first --last --parent --top-level --smart-list --smart-list-id --json" -- "$cur") )
@@ -828,6 +832,8 @@ complete -c remctl -n "__fish_seen_subcommand_from add" -l private -d "Use unsup
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section-id -d "Assign to section by stable ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l new-section -d "Create and assign to new section" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l smart-list -d "Resolve the section in this custom smart list" -r
+complete -c remctl -n "__fish_seen_subcommand_from add" -l smart-list-id -d "Resolve the section in a custom smart list by numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l subtask -d "Add private subtask title or JSON object" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l image -d "Add private image attachment" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l assign -d "Assign to shared-list user" -r
@@ -863,6 +869,8 @@ complete -c remctl -n "__fish_seen_subcommand_from edit" -l private -d "Use unsu
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l section-id -d "Assign to section by stable ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l new-section -d "Create and assign to new section" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l smart-list -d "Resolve the section in this custom smart list" -r
+complete -c remctl -n "__fish_seen_subcommand_from edit" -l smart-list-id -d "Resolve the section in a custom smart list by numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l subtask -d "Add private subtask title or JSON object" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l image -d "Add private image attachment" -r
 complete -c remctl -n "__fish_seen_subcommand_from edit" -l assign -d "Assign to shared-list user" -r

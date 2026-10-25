@@ -50,7 +50,7 @@ public enum PrivateChanges {
     public static func apply(
         reminderCkid: String,
         url: String?, tags: [String], replacementTags: [String]? = nil,
-        section: String?, sectionId: String?, newSection: String?,
+        section: String?, sectionId: String?, newSection: String?, sectionTarget: SectionTarget? = nil,
         subtasks: [SubtaskSpec] = [], images: [String] = [],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
         assign: String? = nil, unassign: Bool = false,
@@ -58,7 +58,7 @@ public enum PrivateChanges {
         store: RemindersStore, listPk: Int?,
         writer: RemindersWriter, private p: PrivateWriter,
         now: Date = Date(), calendar: Calendar = .current,
-        groceryAttempts: Int = 24, groceryDelay: Double = 0.25
+        groceryAttempts: Int = 24, groceryDelay: Double = 0.25, readback: Readback = .standard
     ) async throws -> [PrivateResult] {
         var results: [PrivateResult] = []
         var completed: [String] = []
@@ -87,12 +87,28 @@ public enum PrivateChanges {
             results.append(try step("add_private_metadata", await p.addPrivateMetadata(id: reminderCkid, urls: urls, tags: tags)))
         }
 
-        // 2. assign_section — pre-resolve the section CKID via the store (resolve_section_ckid:2803).
-        if section != nil || sectionId != nil {
-            let resolved = try store.resolveSectionCkid(listPk: listPk ?? 0, section: section, sectionId: sectionId)
-            if let resolved {
-                results.append(try step("assign_section", await p.assignSection(id: reminderCkid, sectionId: resolved)))
+        // 2. assign_section / assign_smart_list_section — the section validated before anything was
+        //    written (upstream c6a2429), so a sync that renames sections in between cannot redirect
+        //    the write. Callers without a preflight target resolve the list section here.
+        let target = try sectionTarget
+            ?? store.resolveSectionCkid(listPk: listPk ?? 0, section: section, sectionId: sectionId).map(SectionTarget.list)
+        switch target {
+        case .list(let sectionId)?:
+            results.append(try step("assign_section", await p.assignSection(id: reminderCkid, sectionId: sectionId)))
+        case .smartList(let smartSection)?:
+            let result = try await p.assignSmartListSection(id: reminderCkid, sectionId: smartSection.sectionId,
+                                                            smartListId: smartSection.smartListId)
+            if result.status != "error", !(await smartSectionLanded(smartSection, reminderCkid: reminderCkid,
+                                                                    store: store, readback: readback)) {
+                throw PrivateStepFailure(
+                    action: "assign_smart_list_section",
+                    message: "ReminderKit reported success, but the reminder is not in section "
+                        + "\(WriteFormatting.pyRepr(smartSection.section)) of smart list \(WriteFormatting.pyRepr(smartSection.smartList)).",
+                    completed: completed)
             }
+            results.append(try step("assign_smart_list_section", smartSectionResult(result, smartSection)))
+        case nil:
+            break
         }
 
         // 3. add_section_and_assign — create a section by name and assign this reminder to it. The
@@ -195,6 +211,27 @@ public enum PrivateChanges {
         }
 
         return results
+    }
+
+    // MARK: - Custom smart-list sections (upstream caf7423, 231fb1f)
+
+    /// Smart lists keep section memberships on their own row; the write counts once that record
+    /// effectively (strictly, never on a guess) puts the reminder in the section.
+    private static func smartSectionLanded(_ target: SmartListSection, reminderCkid: String,
+                                           store: RemindersStore, readback: Readback) async -> Bool {
+        await readback.waitUntil {
+            store.reminderSectionCkid(listPk: target.smartListPk, reminderCkid: reminderCkid, smartList: true) == target.sectionId
+        }
+    }
+
+    /// The helper's reply, plus the smart list and section it was verified in.
+    private static func smartSectionResult(_ result: PrivateResult, _ target: SmartListSection) -> PrivateResult {
+        guard result.status != "error" else { return result }
+        var fields = result.fields
+        fields["smartList"] = .string(target.smartList)
+        fields["section"] = .string(target.section)
+        fields["verified"] = .bool(true)
+        return PrivateResult(status: result.status, fields: fields, message: result.message)
     }
 
     // MARK: - Grocery categorization (P14)

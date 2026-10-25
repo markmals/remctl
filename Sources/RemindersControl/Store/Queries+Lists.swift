@@ -320,26 +320,17 @@ extension RemindersStore {
             "SELECT Z_PK, ZDISPLAYNAME, ZLIST, ZCKIDENTIFIER FROM ZREMCDBASESECTION WHERE ZMARKEDFORDELETION = 0 AND ZLIST = ? ORDER BY Z_PK", arguments: [pk]) }) ?? []
     }
 
-    /// q_section_memberships: reminder ZCKIDENTIFIER -> section ZDISPLAYNAME (from the list membership blob).
+    /// q_section_memberships: reminder ZCKIDENTIFIER -> section ZDISPLAYNAME, from each member's
+    /// effective membership (display keeps the last live entry when dates cannot decide).
     public func sectionMemberships(_ pk: Int) -> [String: String] {
-        let blobRow = try? queue.read { try Row.fetchOne($0, sql:
-            "SELECT ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [pk]) }
-        guard let blob = blobRow?.blobString("ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA"),
-              let data = blob.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let memberships = obj["memberships"] as? [[String: Any]] else { return [:] }
+        let memberships = effectiveSectionMemberships(sectionMembershipEntries(pk: pk), strict: false)
+        guard !memberships.isEmpty else { return [:] }
         // section ckid -> display name (separate read, sequential — not nested)
         let secRows = (try? queue.read { try Row.fetchAll($0, sql:
             "SELECT ZCKIDENTIFIER, ZDISPLAYNAME FROM ZREMCDBASESECTION WHERE ZLIST = ? AND ZMARKEDFORDELETION = 0", arguments: [pk]) }) ?? []
         var g2n: [String: String] = [:]
         for r in secRows { if let ck = r.string("ZCKIDENTIFIER") { g2n[ck] = r.string("ZDISPLAYNAME") } }
-        var result: [String: String] = [:]
-        for m in memberships {
-            guard let groupID = m["groupID"] as? String, let memberID = m["memberID"] as? String,
-                  let name = g2n[groupID] else { continue }
-            result[memberID] = name
-        }
-        return result
+        return memberships.compactMapValues { g2n[$0] }
     }
 
     /// Whether a list (by Z_PK) is a grocery list.

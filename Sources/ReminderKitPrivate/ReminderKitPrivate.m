@@ -24,6 +24,7 @@
 - (id)fetchListWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchSmartListWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchListSectionWithObjectID:(id)objectID error:(NSError **)error;
+- (id)fetchSmartListSectionWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchCustomSmartListWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchTemplateWithObjectID:(id)objectID error:(NSError **)error;
 - (id)fetchPrimaryActiveCloudKitAccountWithError:(NSError **)error;
@@ -77,6 +78,7 @@
 - (void)setParentOwnerID:(id)objectID;
 - (void)setSmartListType:(NSString *)smartListType;
 - (void)updateManualOrdering:(id)manualOrdering;
+- (id)sectionsContextChangeItem;
 - (void)removeFromParentWithAccountChangeItem:(id)accountChangeItem;
 @end
 
@@ -1341,6 +1343,53 @@ static NSDictionary *moveReminderInHierarchy(NSDictionary *cmd) {
              @"parentId": parentID ?: [NSNull null], @"position": position, @"anchorId": anchorID ?: @""};
 }
 
+#pragma mark - Custom smart-list sections (upstream caf7423)
+
+static NSURL *smartListSectionURL(NSString *ckIdentifier) {
+    return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDSmartListSection/%@", ckIdentifier]];
+}
+
+/// Records the reminder as a member of one of a custom smart list's own sections. Smart lists keep
+/// these memberships on their own row, apart from the reminder's list. Returns an error message,
+/// or nil once the membership is staged on `save`.
+static NSString *assignSmartListSection(REMStore *store, REMSaveRequest *save, id reminderObjectID,
+                                        NSDictionary *cmd, NSMutableDictionary *details) {
+    NSString *sectionID = cmd[@"sectionId"];
+    NSString *smartListID = cmd[@"smartListId"];
+    if (![sectionID isKindOfClass:[NSString class]] || sectionID.length == 0) return @"sectionId is required";
+    if (![smartListID isKindOfClass:[NSString class]] || smartListID.length == 0) return @"smartListId is required";
+    if (![store respondsToSelector:@selector(fetchSmartListSectionWithObjectID:error:)]
+        || ![store respondsToSelector:@selector(fetchCustomSmartListWithObjectID:error:)]) {
+        return @"Smart-list section assignment is unavailable on this macOS version";
+    }
+    id sectionObjectID = [REMObjectID objectIDWithURL:smartListSectionURL(sectionID)];
+    id smartListObjectID = [REMObjectID objectIDWithURL:smartListURL(smartListID)];
+    if (!sectionObjectID || !smartListObjectID) return @"Could not build ReminderKit smart-list object IDs";
+    NSError *error = nil;
+    if (![store fetchSmartListSectionWithObjectID:sectionObjectID error:&error]) {
+        return error.localizedDescription ?: @"Smart-list section not found";
+    }
+    error = nil;
+    id smartList = [store fetchCustomSmartListWithObjectID:smartListObjectID error:&error];
+    if (!smartList) return error.localizedDescription ?: @"Custom smart list not found";
+    REMSmartListChangeItem *smartListChange = [save updateSmartList:smartList];
+    if (!smartListChange || ![smartListChange respondsToSelector:@selector(sectionsContextChangeItem)]) {
+        return @"ReminderKit smart-list change item does not support sections";
+    }
+    id sectionContext = [smartListChange sectionsContextChangeItem];
+    if (!sectionContext || ![sectionContext respondsToSelector:@selector(setUnsavedMembershipsOfRemindersInSections:)]) {
+        return @"ReminderKit smart-list section context unavailable";
+    }
+    id membership = [[REMMembership alloc] initWithMemberIdentifier:[reminderObjectID uuid]
+                                                    groupIdentifier:[sectionObjectID uuid]
+                                                         isObsolete:NO
+                                                         modifiedOn:[NSDate date]];
+    [sectionContext setUnsavedMembershipsOfRemindersInSections:[[REMMemberships alloc] initWithMemberships:@[membership]]];
+    details[@"sectionId"] = sectionID;
+    details[@"smartListId"] = smartListID;
+    return nil;
+}
+
 #pragma mark - Dispatch
 
 NSDictionary *RKPDispatch(NSDictionary *request) {
@@ -1358,6 +1407,7 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"set_tags",
                 @"add_subtasks",
                 @"assign_section",
+                @"assign_smart_list_section",
                 @"add_section_and_assign",
                 @"assign_sharee",
                 @"clear_assignment",
@@ -2188,6 +2238,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 id memberships = [[REMMemberships alloc] initWithMemberships:@[membership]];
                 [sectionContext setUnsavedMembershipsOfRemindersInSections:memberships];
                 details[@"sectionId"] = sectionID;
+            } else if ([action isEqualToString:@"assign_smart_list_section"]) {
+                NSString *membershipError = assignSmartListSection(store, save, objectID, cmd, details);
+                if (membershipError) { RKP_FAIL(membershipError); }
             } else if ([action isEqualToString:@"add_section_and_assign"]) {
                 NSString *name = cmd[@"name"];
                 if (![name isKindOfClass:[NSString class]] || name.length == 0) { RKP_FAIL(@"name is required"); }

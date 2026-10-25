@@ -36,6 +36,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case moveReminderInList(id: String, listId: String, position: String, anchorId: String?)
         case setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String])
         case moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String, anchorId: String?)
+        case assignSmartListSection(id: String, sectionId: String, smartListId: String)
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
@@ -96,6 +97,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func moveReminderInList(id: String, listId: String, position: String, anchorId: String?) async throws -> PrivateResult { try record(.moveReminderInList(id: id, listId: listId, position: position, anchorId: anchorId)) }
     func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String]) async throws -> PrivateResult { try record(.setSmartListManualOrder(id: id, smartListId: smartListId, manualOrderingId: manualOrderingId, topLevelElementIds: topLevelElementIds)) }
     func moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String, anchorId: String?) async throws -> PrivateResult { try record(.moveReminderInHierarchy(id: id, listId: listId, parentId: parentId, position: position, anchorId: anchorId)) }
+    func assignSmartListSection(id: String, sectionId: String, smartListId: String) async throws -> PrivateResult { try record(.assignSmartListSection(id: id, sectionId: sectionId, smartListId: smartListId)) }
 
     private func record(_ call: Call) throws -> PrivateResult {
         calls.append(call)

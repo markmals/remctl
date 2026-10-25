@@ -28,6 +28,7 @@ public final class ReminderKitWriter: PrivateWriter {
         "set_early_reminder",
         "rename_section",
         "set_list_parent_group",
+        "assign_smart_list_section",
     ]
 
     // MARK: - Transient-error detection
@@ -427,5 +428,11 @@ public final class ReminderKitWriter: PrivateWriter {
         if let parentId { req["parentId"] = parentId }
         if let anchorId { req["anchorId"] = anchorId }
         return await dispatchWithRetry(req)
+    }
+
+    public func assignSmartListSection(id: String, sectionId: String, smartListId: String) async throws -> PrivateResult {
+        await dispatchWithRetry([
+            "action": "assign_smart_list_section", "id": id, "sectionId": sectionId, "smartListId": smartListId,
+        ])
     }
 }

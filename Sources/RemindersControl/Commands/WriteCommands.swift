@@ -54,6 +54,8 @@ struct Add: AsyncParsableCommand {
     @Option(name: .long, help: "Assign to an existing section") var section: String?
     @Option(name: .long, help: "Assign to a section by stable ID") var sectionId: String?
     @Option(name: .long, help: "Create a section and assign this reminder") var newSection: String?
+    @Option(name: .customLong("smart-list"), help: "Resolve --section/--section-id in this custom smart list instead") var smartList: String?
+    @Option(name: .customLong("smart-list-id"), help: "Like --smart-list, by numeric ID from smart-lists") var smartListId: Int?
     @Option(name: .long, help: "Add a subtask title or JSON object (repeatable)") var subtask: [String] = []
     @Option(name: .long, help: "Add an image attachment path (repeatable)") var image: [String] = []
     @Flag(inversion: .prefixedNo, help: "Set urgent state") var urgent: Bool?
@@ -74,6 +76,7 @@ struct Add: AsyncParsableCommand {
                 radius: args.radius, proximity: args.proximity,
                 locationAddress: try LocationAlarmInput.address(args.locationAddress, alias: args.address),
                 section: args.section, sectionId: args.sectionId, newSection: args.newSection,
+                smartList: args.smartList, smartListId: args.smartListId,
                 subtask: args.subtask, image: args.image, urgent: args.urgent, earlyReminder: args.earlyReminder,
                 assign: args.assign, unassign: args.unassign,
                 json: args.json, store: store, writer: writer, private: priv)
@@ -89,6 +92,7 @@ struct Add: AsyncParsableCommand {
         locationTitle: String? = nil, latitude: Double? = nil, longitude: Double? = nil,
         radius: Double = 100.0, proximity: Proximity = .arriving, locationAddress: String? = nil,
         section: String? = nil, sectionId: String? = nil, newSection: String? = nil,
+        smartList: String? = nil, smartListId: Int? = nil,
         subtask: [String] = [], image: [String] = [], urgent: Bool? = nil, earlyReminder: String? = nil,
         assign: String? = nil, unassign: Bool = false,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
@@ -110,6 +114,7 @@ struct Add: AsyncParsableCommand {
         // wantsPrivate, --tags/--url route through the private writer too; otherwise they keep
         // their Phase-2 public behavior (title #hashtags / notes-append).
         let wantsPrivate = flag || section != nil || sectionId != nil || newSection != nil
+            || smartList != nil || smartListId != nil
             || urgent != nil || earlyReminder != nil || grocery
             || assign != nil || unassign
             || !subtask.isEmpty || !image.isEmpty
@@ -242,9 +247,14 @@ struct Add: AsyncParsableCommand {
         // 5b. validate_private_add_ready (upstream 504f504): resolve the private targets that can
         //     fail BEFORE the reminder exists, so an unknown --section or --assign never strands a
         //     created reminder that the user must finish with `edit`.
+        var sectionTarget: SectionTarget? = nil
         if wantsPrivate {
-            if section != nil || sectionId != nil {
-                _ = try store.resolveSectionCkid(listPk: resolution?.id ?? 0, section: section, sectionId: sectionId)
+            do {
+                sectionTarget = try resolveSectionTarget(
+                    store: store, listPk: resolution?.id, section: section, sectionId: sectionId,
+                    newSection: newSection, smartList: smartList, smartListId: smartListId)
+            } catch let error as CLIError where json {
+                return CommandFailure(error.code ?? "invalid_section_target", error.message).outcome(json: true)
             }
             if let assign {
                 guard let listPk = resolution?.id else {
@@ -289,7 +299,7 @@ struct Add: AsyncParsableCommand {
                 privateResults = try await PrivateChanges.apply(
                     reminderCkid: result.id ?? "",
                     url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
-                    section: section, sectionId: sectionId, newSection: newSection,
+                    section: section, sectionId: sectionId, newSection: newSection, sectionTarget: sectionTarget,
                     subtasks: subtaskSpecs, images: imagePaths,
                     flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
                     assign: assign, unassign: unassign,
@@ -486,6 +496,8 @@ struct Edit: AsyncParsableCommand {
     @Option(name: .long, help: "Assign to an existing section") var section: String?
     @Option(name: .long, help: "Assign to a section by stable ID") var sectionId: String?
     @Option(name: .long, help: "Create a section and assign this reminder") var newSection: String?
+    @Option(name: .customLong("smart-list"), help: "Resolve --section/--section-id in this custom smart list instead") var smartList: String?
+    @Option(name: .customLong("smart-list-id"), help: "Like --smart-list, by numeric ID from smart-lists") var smartListId: Int?
     @Option(name: .long, help: "Add a subtask title or JSON object (repeatable)") var subtask: [String] = []
     @Option(name: .long, help: "Add an image attachment path (repeatable)") var image: [String] = []
     @Flag(inversion: .prefixedNo, help: "Set the real flagged state") var flagged: Bool?
@@ -507,7 +519,8 @@ struct Edit: AsyncParsableCommand {
                 radius: args.radius, proximity: args.proximity,
                 tags: args.tags, setTags: args.setTags, clearTags: args.clearTags, removeTag: args.removeTag,
                 grocery: args.grocery, section: args.section, sectionId: args.sectionId,
-                newSection: args.newSection, subtask: args.subtask, image: args.image,
+                newSection: args.newSection, smartList: args.smartList, smartListId: args.smartListId,
+                subtask: args.subtask, image: args.image,
                 flagged: args.flagged, urgent: args.urgent, earlyReminder: args.earlyReminder,
                 assign: args.assign, unassign: args.unassign,
                 locationAddress: try LocationAlarmInput.address(args.locationAddress, alias: args.address),
@@ -525,7 +538,8 @@ struct Edit: AsyncParsableCommand {
         radius: Double = 100.0, proximity: Proximity = .arriving,
         tags: String? = nil, setTags: String? = nil, clearTags: Bool = false, removeTag: [String] = [],
         grocery: Bool = false, section: String? = nil, sectionId: String? = nil,
-        newSection: String? = nil, subtask: [String] = [], image: [String] = [],
+        newSection: String? = nil, smartList: String? = nil, smartListId: Int? = nil,
+        subtask: [String] = [], image: [String] = [],
         flagged: Bool? = nil, urgent: Bool? = nil, earlyReminder: String? = nil,
         assign: String? = nil, unassign: Bool = false, locationAddress: String? = nil,
         json: Bool, store: RemindersStore, writer: RemindersWriter, private priv: PrivateWriter,
@@ -571,6 +585,7 @@ struct Edit: AsyncParsableCommand {
         // it. So when --tags is the only private flag, we still want it private. Fold that in,
         // along with the tag-replacement flags (private_changes_from_args:5803-5805).
         let wantsPrivate = section != nil || sectionId != nil || newSection != nil
+            || smartList != nil || smartListId != nil
             || flagged != nil || urgent != nil || earlyReminder != nil || tags != nil || grocery
             || assign != nil || unassign || replacementTags != nil
             || !subtask.isEmpty || !image.isEmpty
@@ -676,6 +691,18 @@ struct Edit: AsyncParsableCommand {
         if let failure = try LocationAlarmInput.validate(
             latitude: latitude, longitude: longitude, radius: radius, address: locationAddress, json: json) {
             return failure
+        }
+
+        // 4a'. Resolve --section/--section-id (and --smart-list) before the first write, so a bad
+        //      section changes nothing and the write lands on the section validated here
+        //      (upstream caf7423, c6a2429).
+        let sectionTarget: SectionTarget?
+        do {
+            sectionTarget = wantsPrivate ? try resolveSectionTarget(
+                store: store, listPk: resolution?.id ?? row.int("ZLIST"), section: section, sectionId: sectionId,
+                newSection: newSection, smartList: smartList, smartListId: smartListId) : nil
+        } catch let error as CLIError where json {
+            return CommandFailure(error.code ?? "invalid_section_target", error.message).outcome(json: true)
         }
 
         // 4b. Parent-with-subtasks list move (upstream ed5e982): EventKit cannot carry a subtask
@@ -830,7 +857,7 @@ struct Edit: AsyncParsableCommand {
         if !hasChanges {
             let privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, replacementTags: replacementTags,
-                section: section, sectionId: sectionId,
+                section: section, sectionId: sectionId, sectionTarget: sectionTarget,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
                 assign: assign, unassign: unassign, grocery: grocery,
@@ -887,7 +914,7 @@ struct Edit: AsyncParsableCommand {
         if wantsPrivate {
             privateResults = try await applyPrivate(
                 reminderCkid: ckid, url: url, tags: tags, replacementTags: replacementTags,
-                section: section, sectionId: sectionId,
+                section: section, sectionId: sectionId, sectionTarget: sectionTarget,
                 newSection: newSection, subtasks: subtaskSpecs, images: imagePaths,
                 flagged: flagged, urgent: urgent, earlyReminder: parsedEarly,
                 assign: assign, unassign: unassign, grocery: grocery,
@@ -977,7 +1004,7 @@ struct Edit: AsyncParsableCommand {
     /// `flagged` collapse for edit is just the boolean as-is (add collapses --flag→true upstream).
     private static func applyPrivate(
         reminderCkid: String, url: String?, tags: String?, replacementTags: [String]?,
-        section: String?, sectionId: String?, newSection: String?,
+        section: String?, sectionId: String?, sectionTarget: SectionTarget?, newSection: String?,
         subtasks: [SubtaskSpec], images: [String],
         flagged: Bool?, urgent: Bool?, earlyReminder: EarlyReminderWrite?,
         assign: String?, unassign: Bool, grocery: Bool,
@@ -989,7 +1016,7 @@ struct Edit: AsyncParsableCommand {
         try await PrivateChanges.apply(
             reminderCkid: reminderCkid,
             url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [], replacementTags: replacementTags,
-            section: section, sectionId: sectionId, newSection: newSection,
+            section: section, sectionId: sectionId, newSection: newSection, sectionTarget: sectionTarget,
             subtasks: subtasks, images: images,
             flagged: flagged, urgent: urgent, earlyReminder: earlyReminder,
             assign: assign, unassign: unassign, grocery: grocery,
