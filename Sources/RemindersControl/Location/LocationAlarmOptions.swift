@@ -48,7 +48,7 @@ enum LocationAlarmInput {
     /// spellings is a mistake worth reporting rather than silently keeping one.
     static func address(_ locationAddress: String?, alias: String?) throws -> String? {
         if locationAddress != nil && alias != nil {
-            throw CLIError("pass either --location-address or --address, not both.")
+            throw CLIError("pass either --location-address or --address, not both.", code: "location_address_conflict")
         }
         return locationAddress ?? alias
     }
@@ -66,13 +66,13 @@ enum LocationAlarmInput {
         }
         guard latitude != nil || longitude != nil || address != nil else { return nil }
         if address == nil, latitude == nil || longitude == nil {
-            throw WriteError("Location alarms require latitude and longitude")
+            throw WriteError("Location alarms require latitude and longitude", code: "invalid_location")
         }
         if let latitude, !(latitude.isFinite && (-90.0...90.0).contains(latitude)) {
-            throw WriteError("--latitude must be between -90 and 90.")
+            throw WriteError("--latitude must be between -90 and 90.", code: "invalid_location")
         }
         if let longitude, !(longitude.isFinite && (-180.0...180.0).contains(longitude)) {
-            throw WriteError("--longitude must be between -180 and 180.")
+            throw WriteError("--longitude must be between -180 and 180.", code: "invalid_location")
         }
         if !(radius.isFinite && (1.0...LocationLimits.maxRadius).contains(radius)) {
             return failLocation(code: "invalid_location_radius",

@@ -978,7 +978,7 @@ public func completionTargetPath(
     case "fish":
         return home.appendingPathComponent(".config/fish/completions/remctl.fish")
     default:
-        throw CLIError("Unsupported shell '\(shell)'")
+        throw CLIError("Unsupported shell '\(shell)'", code: "unsupported_shell")
     }
 }
 
@@ -1001,6 +1001,6 @@ public func completionScript(for shell: String) throws -> String {
     case "zsh":  return CompletionScripts.zsh
     case "bash": return CompletionScripts.bash
     case "fish": return CompletionScripts.fish
-    default: throw CLIError("Unsupported shell '\(shell)'. Use bash, zsh, or fish.")
+    default: throw CLIError("Unsupported shell '\(shell)'. Use bash, zsh, or fish.", code: "unsupported_shell")
     }
 }

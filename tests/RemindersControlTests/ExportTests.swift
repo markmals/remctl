@@ -96,7 +96,9 @@ import GRDB
         defer { try? FileManager.default.removeItem(at: dir) }
         let r = try CLIRunner.run(["export", "--list", "Nonexistent"], storeDir: dir)
         #expect(r.exit == 1)
-        #expect(r.stderr.contains("Error: list not found: Nonexistent"))
+        #expect(r.stdout.isEmpty)
+        let error = try JSONSerialization.jsonObject(with: Data(r.stderr.utf8)) as? [String: Any]
+        #expect(error?["code"] as? String == "list_not_found")
     }
 
     @Test func bothListAndIdErrors() throws {

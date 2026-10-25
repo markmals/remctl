@@ -8,12 +8,44 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 
 - **Nouns are read-only inspectors** (`lists`, `smart-lists`, `templates`, `today`, `stats`); **verb commands are writes** (`add`, `edit`, `delete`, `list-create`, `smart-list-create`, `template-create`). List management uses the `list-*` prefix, custom smart-list writes use `smart-list-*`, template writes use `template-*`.
 - **List-name resolution** is conservative: exact match → case-insensitive → normalized fallback that ignores decorative punctuation and emoji prefixes (so `Weekly 513` resolves `🗓️ Weekly 513` when unambiguous). If more than one list matches, RemCTL fails and prints the candidate IDs — pass `--list-id` to disambiguate. Passing both a name and `--list-id` is an error. `show`, `search`, `add`, `edit`, `link`, `export`, `list-info`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, and `list-delete` accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
-- **`--json`** works on every command. For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command, so both `remctl --format table show Work` and `remctl show Work --format table` are valid. `export --format json|csv` selects a file format, not a display style.
+- **`--json`** works on commands that offer machine-readable output (`open` is human-only). For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command, so both `remctl --format table show Work` and `remctl show Work --format table` are valid. `export --format json|csv` selects a file format, not a display style.
 - **`NO_COLOR=1`** (or `--no-color`) disables ANSI color.
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
 - **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching. `import` validates the whole file the same way (structured `invalid_import`) before its first write.
 - **Refusals Reminders would reject:** a relative alarm (`15m`, `1h`, `1d`) needs a due date to count back from, so `add`/`edit` refuse one when the reminder would have none (`relative_alarm_requires_due_date`), and `edit -d clear` on a repeating reminder is refused before any write (`repeating_reminder_requires_due_date`) unless the same edit also passes `--recurrence clear`. Both exit `1` and emit the structured code on stderr under `--json`.
 - **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `section-delete`, `group-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
+
+### JSON error contract
+
+For command-generated failures, `--json` (or a read command's `--format json`, including `export --format json`) writes one JSON object to stderr and leaves stdout empty. The exit status remains nonzero (usually 1; invalid date parsing remains 2). Human output keeps its existing wording. The object contains `status: "error"`, a stable snake_case `code`, and a nonempty `message`; additional keys such as `id`, `list`, `input`, `field`, `report`, `summary`, or `errors` give context. Parse `code` for decisions and display `message` for the person running the command. ArgumentParser syntax failures (unknown options, missing arguments, invalid option values) still use its exit 64 and help text; they are outside this contract.
+
+Codes by area (the identifiers are stable; wording in `message` may vary):
+
+| Code | Meaning |
+| --- | --- |
+| `database_unavailable` | The local Reminders store could not be opened. |
+| `command_failed`, `write_failed`, `private_write_failed` | Unexpected command, EventKit, or ReminderKit failure; inspect `message`. |
+| `reminders_access_denied`, `icloud_list_required` | Reminders access denied, or no writable iCloud list/source available. |
+| `doctor_failed`, `onboarding_failed`, `setup_failed`, `unsupported_permissions_topic`, `unsupported_shell` | A setup check failed, onboarding failed, setup could not complete, a permissions topic was unsupported, or a shell was unsupported. Doctor and onboard attach the full check `report`. |
+| `invalid_request`, `invalid_output_options`, `invalid_days`, `invalid_limit`, `invalid_offset` | Invalid command combination, incompatible output options, upcoming range, search limit, or search offset. |
+| `not_found`, `reminder_not_found`, `no_stable_identifier`, `invalid_title` | Reminder missing, unavailable stable identifier, or missing create title. `reminder_not_found` identifies an item in a batch or reorder. |
+| `invalid_due_date`, `invalid_completion_date`, `invalid_recurrence`, `invalid_alarm`, `invalid_priority`, `invalid_early_reminder`, `invalid_location` | Invalid reminder field. Date errors retain exit 2. |
+| `early_reminder_requires_due_date`, `relative_alarm_requires_due_date`, `repeating_reminder_requires_due_date`, `completion_date_unsupported_for_recurring` | A due date or nonrecurring reminder is required for the requested alarm, recurrence edit, or completion date. |
+| `invalid_rich_link_url`, `invalid_subtask`, `invalid_assignment`, `invalid_sharee_target`, `list_not_shared`, `sharee_ambiguous`, `sharee_not_found`, `sharee_owner_unknown`, `sharee_owner_missing` | Rejected link, subtask, or shared-list assignment; sharee resolution can be retried with a specific identifier. |
+| `invalid_list_target`, `list_not_found`, `list_ambiguous`, `list_is_group`, `list_missing_identifier`, `invalid_list_edit`, `invalid_list_appearance`, `invalid_grocery_locale`, `invalid_grocery_target`, `grocery_categorization_failed`, `list_target_ambiguous` | Invalid or ambiguous list, a list group where a writable list is required, missing list identifier, list edit/appearance/Groceries failure, or a name that matches both a list and smart list. |
+| `invalid_group_target`, `group_not_found`, `group_ambiguous`, `not_a_group`, `group_exists`, `group_missing_identifier`, `invalid_group_edit`, `list_not_in_group`, `group_not_empty`, `group_order_unverified`, `group_write_unverified`, `list_write_unverified` | List-group targeting, editing, membership, ordering, or verification failure. |
+| `invalid_section_target`, `invalid_section_name`, `section_not_found`, `section_ambiguous`, `section_missing_identifier`, `section_exists`, `section_write_unverified` | Section targeting, name, existence, identifier, or post-write verification failure. |
+| `invalid_smart_list_target`, `smart_list_not_found`, `smart_list_ambiguous`, `smart_list_not_custom`, `smart_list_missing_identifier`, `invalid_smart_list_filter`, `invalid_smart_list_edit`, `smart_list_already_exists`, `sectioned_smart_list` | Smart-list resolution, unsupported built-in/sectioned list, filter or edit validation, duplicate name, or missing identifier. |
+| `invalid_template_target`, `template_not_found`, `template_ambiguous`, `template_already_exists`, `template_missing_identifier` | Template resolution, duplicate name, or missing identifier. |
+| `invalid_import`, `invalid_import_json`, `import_read_failed`, `import_file_not_found`, `import_partial` | Invalid imported items or document, unreadable stdin, missing file, or a runtime failure after validation. `import_partial` includes already created identifiers in `createdIds`. |
+| `batch_too_large`, `batch_failed`, `batch_partial`, `confirmation_required` | Too many reminder IDs, every item failed, some items failed, or a destructive write requires `--force`. Batch failure attaches per-item codes in `summary.results`. |
+| `private_add_partial`, `flag_failed` | A reminder was created but private metadata failed, or flagging failed. Do not repeat `add` after `private_add_partial`. |
+| `eventkit_read_unsupported`, `eventkit_read_failed` | Unsupported or failed limited EventKit read fallback. |
+| `location_address_conflict`, `location_address_required`, `location_address_too_long`, `location_label_not_address`, `invalid_location_radius`, `invalid_timeout` | Invalid location input or geocoding timeout setting. |
+| `location_ambiguous`, `location_imprecise`, `location_unconfirmed`, `location_not_found`, `location_lookup_denied`, `location_lookup_timeout`, `location_lookup_failed` | Geocoder result must be disambiguated, made more precise, confirmed, or retried. |
+| `invalid_move`, `order_unavailable`, `order_unverified`, `hierarchy_unverified`, `reminder_unpositioned`, `anchor_unpositioned`, `level_unrecorded` | Reminder move/reorder is invalid, its order data is missing, or the result could not be verified. |
+| `clone_move_missing_reminder_identifier`, `clone_move_missing_list_identifier`, `clone_move_missing_subtask_identifiers`, `clone_move_missing_new_identifier`, `clone_move_failed`, `clone_move_unverified`, `clone_move_original_not_deleted`, `list_move_with_subtasks_conflicts_with_edits` | Cross-list clone/delete move was refused or could not be verified; check `message` before retrying. |
+| `tag_replacement_conflicts_with_tags`, `conflicting_tag_replacement_modes`, `set_tags_requires_tag`, `remove_tag_requires_tag` | Conflicting or empty synced-tag replacement arguments. |
 
 ---
 
@@ -300,9 +332,9 @@ Every id is resolved before the first write, so an unknown id (`reminder_not_fou
 remctl done 23880 23881 23881 --json
 ```
 ```json
-{"status": "partial", "operation": "done", "requested": [23880, 23881, 23881], "succeeded": [23880], "failed": [23881], "results": [{"id": 23880, "status": "completed", "title": "Pay rent", "list": "Home"}, {"id": 23881, "status": "not_found", "code": "reminder_not_found", "message": "#23881 not found"}], "duplicatesIgnored": [23881]}
+{"status": "error", "code": "batch_partial", "message": "1 reminder(s) could not be completed.", "summary": {"status": "partial", "operation": "done", "requested": [23880, 23881, 23881], "succeeded": [23880], "failed": [23881], "results": [{"id": 23880, "status": "completed", "title": "Pay rent", "list": "Home"}, {"id": 23881, "status": "not_found", "code": "reminder_not_found", "message": "#23881 not found"}], "duplicatesIgnored": [23881]}}
 ```
-`status` is `completed`/`uncompleted`/`deleted` when every id succeeded, `partial` when some did, and `failed` when none did. Human output prints one `Completed: #id title` line per success, one `Error: …` line per failure on stderr, and a closing `N of M completed` count.
+All-success batches report `completed`/`uncompleted`/`deleted` on stdout. Failed batches report `batch_partial` or `batch_failed` on stderr with the original per-item outcome in `summary` and empty stdout. Human output keeps one `Completed: #id title` line per success, one `Error: …` line per failure on stderr, and a closing `N of M completed` count.
 
 ### `flag <id>` / `unflag <id>`
 Toggle the flagged state. `--json`.
@@ -573,7 +605,7 @@ The **whole document is validated first**: if any item has a non-string field, a
 
 `--dry-run` stops at that gate and prints `{"status": "valid", "count": N, "created": 0}` without creating anything; an invalid document still fails the same way.
 
-Once validation passes, items are created one by one. `--json` prints a one-line summary on stdout (`status` `completed`/`partial`, `created`, `createdIds`, indexed `errors`, `total`) and per-item progress on stderr; any item that fails to write makes the status `partial` and the exit code 1.
+Once validation passes, items are created one by one. Successful `--json` imports print a one-line `completed` summary on stdout and per-item progress on stderr. If an item fails to write, the command exits 1 with `import_partial` on stderr, empty stdout, and already created ids under `createdIds`. The error includes indexed failures under `errors`; those ids must not be imported a second time.
 ```bash
 remctl import shopping.json
 remctl import shopping.json --json

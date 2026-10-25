@@ -86,15 +86,15 @@ extension RemindersStore {
 
 /// Mirrors resolve_required_template_target_or_die — throws CLIError (Dispatch prints "Error: <msg>" + exit 1).
 public func resolveRequiredTemplateTarget(store: RemindersStore, name: String?, templateId: Int?) throws -> Int {
-    if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.") }
-    if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.") }
+    if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.", code: "invalid_template_target") }
+    if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.", code: "invalid_template_target") }
     let requested = templateId != nil ? "id \(templateId!)" : (name ?? "")
     switch store.resolveTemplateRef(name: name, templateId: templateId) {
     case .found(let id, _, _): return id
     case .ambiguous(let candidates):
         let options = candidates.map { "\($0.id) (\($0.name))" }.joined(separator: ", ")
-        throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)")
+        throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)", code: "template_ambiguous")
     case .notFound:
-        throw CLIError("template not found: \(requested)")
+        throw CLIError("template not found: \(requested)", code: "template_not_found")
     }
 }

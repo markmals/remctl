@@ -32,21 +32,21 @@ func shareeMatchTerms(_ row: ReminderRow) -> [String] {
 public func resolveSharee(store: RemindersStore, listPk: Int, value: String, allowMe: Bool = true) throws -> Row {
     let sharees = store.sharees(listPk: listPk)
     guard !sharees.isEmpty else {
-        throw CLIError("target list has no sharees; assignment requires a shared list.")
+        throw CLIError("target list has no sharees; assignment requires a shared list.", code: "list_not_shared")
     }
     let currentUserCkid = store.listSharedOwnerCkid(listPk: listPk)
     let raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !raw.isEmpty else {
-        throw CLIError("--assign requires a name, email, phone number, or sharee ID.")
+        throw CLIError("--assign requires a name, email, phone number, or sharee ID.", code: "invalid_sharee_target")
     }
     if allowMe, ["me", "myself"].contains(unicodeCasefold(raw)) {
         guard let currentUserCkid else {
-            throw CLIError("could not identify the current-user sharee for this list.")
+            throw CLIError("could not identify the current-user sharee for this list.", code: "sharee_owner_unknown")
         }
         for sharee in sharees where ckidEq(sharee.string("ZCKIDENTIFIER"), currentUserCkid) {
             return sharee
         }
-        throw CLIError("current-user sharee is not present in this list.")
+        throw CLIError("current-user sharee is not present in this list.", code: "sharee_owner_missing")
     }
 
     let needle = normalizeListLookupName(raw)
@@ -86,23 +86,25 @@ public func resolveSharee(store: RemindersStore, listPk: Int, value: String, all
                 ?? item.string("ZCKIDENTIFIER") ?? ""
             return "\(shareeDisplayName(item)) (\(fallback))"
         }.joined(separator: ", ")
-        throw CLIError("multiple sharees match \(WriteFormatting.pyRepr(raw)). Use one of: \(options)")
+        throw CLIError("multiple sharees match \(WriteFormatting.pyRepr(raw)). Use one of: \(options)",
+                       code: "sharee_ambiguous", context: [("input", .string(raw))])
     }
     let options = sharees.map { item -> String in
         let name = shareeDisplayName(item)
         return name.isEmpty ? (item.string("ZCKIDENTIFIER") ?? "") : name
     }.joined(separator: ", ")
-    throw CLIError("no sharee matching \(WriteFormatting.pyRepr(raw)) in this list. Available: \(options)")
+    throw CLIError("no sharee matching \(WriteFormatting.pyRepr(raw)) in this list. Available: \(options)",
+                   code: "sharee_not_found", context: [("input", .string(raw))])
 }
 
 /// Port of `resolve_assignment_originator_or_die` (remctl:909): the current user's
 /// own sharee row, used as the assignment originator.
 public func resolveAssignmentOriginator(store: RemindersStore, listPk: Int) throws -> Row {
     guard let ownerCkid = store.listSharedOwnerCkid(listPk: listPk) else {
-        throw CLIError("could not identify the current-user sharee for assignment originator.")
+        throw CLIError("could not identify the current-user sharee for assignment originator.", code: "sharee_owner_unknown")
     }
     for sharee in store.sharees(listPk: listPk) where ckidEq(sharee.string("ZCKIDENTIFIER"), ownerCkid) {
         return sharee
     }
-    throw CLIError("current-user sharee is not present in this list.")
+    throw CLIError("current-user sharee is not present in this list.", code: "sharee_owner_missing")
 }

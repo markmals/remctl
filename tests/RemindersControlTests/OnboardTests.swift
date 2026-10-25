@@ -137,7 +137,10 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
         )
 
         #expect(outcome.exitCode == 1)
-        let json = try #require(JSONSerialization.jsonObject(with: Data(outcome.stdout.utf8)) as? [String: Any])
+        #expect(outcome.stdout.isEmpty)
+        let failure = try #require(JSONSerialization.jsonObject(with: Data(outcome.stderr.utf8)) as? [String: Any])
+        #expect(failure["code"] as? String == "onboarding_failed")
+        let json = try #require(failure["report"] as? [String: Any])
         #expect(json["ok"] as? Bool == false)
         #expect(json["failures"] as? Int == 1)
 
@@ -160,7 +163,10 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
         )
 
         #expect(outcome.exitCode == 1)
-        let json = try #require(JSONSerialization.jsonObject(with: Data(outcome.stdout.utf8)) as? [String: Any])
+        #expect(outcome.stdout.isEmpty)
+        let failure = try #require(JSONSerialization.jsonObject(with: Data(outcome.stderr.utf8)) as? [String: Any])
+        #expect(failure["code"] as? String == "onboarding_failed")
+        let json = try #require(failure["report"] as? [String: Any])
         #expect(json["failures"] as? Int == 1)
 
         let checks = try #require(json["checks"] as? [[String: Any]])
@@ -182,7 +188,9 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
         )
 
         #expect(outcome.exitCode == 1)
-        let json = try #require(JSONSerialization.jsonObject(with: Data(outcome.stdout.utf8)) as? [String: Any])
+        #expect(outcome.stdout.isEmpty)
+        let failure = try #require(JSONSerialization.jsonObject(with: Data(outcome.stderr.utf8)) as? [String: Any])
+        let json = try #require(failure["report"] as? [String: Any])
         let checks = try #require(json["checks"] as? [[String: Any]])
         let db = try #require(checks.first { $0["name"] as? String == "database" })
         #expect(db["status"] as? String == "fail")
@@ -196,7 +204,7 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
 
 @Suite struct OnboardJSONModeTests {
 
-    @Test("--json: result serialized indent=2; NO Settings/clipboard fired; state still written")
+    @Test("--json: failing checks emit a structured error; NO Settings/clipboard fired; state still written")
     func onboardJSONNoGuidance() async throws {
         // db check needs FDA, BUT json mode must NOT fire helper/Settings/clipboard.
         let accessErr = "Full Disk Access is missing; the Reminders store is not readable."
@@ -212,15 +220,12 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
         #expect(rec.settingsURLs.isEmpty, "JSON mode must NOT open Settings")
         #expect(rec.clipboardWrites.isEmpty, "JSON mode must NOT touch the clipboard")
 
-        // Output is indent=2 serialized JSON ending in a newline.
-        #expect(outcome.stdout.contains("  \"ok\""), "expected 2-space indented JSON")
-        #expect(outcome.stdout.hasSuffix("\n"))
-        #expect(!outcome.stdout.contains("RemCTL onboard"), "JSON mode prints no human header")
-        #expect(!outcome.stdout.contains("Full Disk Access\n"), "JSON mode prints no guidance block")
-
-        // exit 1 because db failed.
+        #expect(outcome.stdout.isEmpty)
+        let error = try JSONSerialization.jsonObject(with: Data(outcome.stderr.utf8)) as? [String: Any]
+        #expect(error?["status"] as? String == "error")
+        #expect(error?["code"] as? String == "onboarding_failed")
+        #expect((error?["report"] as? [String: Any])?["ok"] as? Bool == false)
         #expect(outcome.exitCode == 1)
-
         // State file still written.
         let state = try #require(readStateFile(dir))
         #expect(state["seenAt"] as? String == fixedNowISO)
@@ -338,7 +343,9 @@ private func readStateFile(_ dir: URL) -> [String: Any]? {
             storeAccessError: accessErr,
             dbPath: nil
         )
-        let json = try #require(JSONSerialization.jsonObject(with: Data(outcome.stdout.utf8)) as? [String: Any])
+        #expect(outcome.stdout.isEmpty)
+        let failure = try #require(JSONSerialization.jsonObject(with: Data(outcome.stderr.utf8)) as? [String: Any])
+        let json = try #require(failure["report"] as? [String: Any])
         let checks = try #require(json["checks"] as? [[String: Any]])
         let dbDict = try #require(checks.first { $0["name"] as? String == "database" })
         let check = DoctorCheck(

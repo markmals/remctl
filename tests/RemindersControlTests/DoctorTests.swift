@@ -481,30 +481,32 @@ private func check(_ checks: [DoctorCheck], _ name: String) -> DoctorCheck? {
         #expect(result.stdout.contains("[OK] database:"))
     }
 
-    @Test("doctor --json emits ok/warnings/failures/context/checks with indent=2")
+    @Test("doctor --json sends failed checks to structured stderr")
     func jsonShape() throws {
         let bogus = URL(fileURLWithPath: "/tmp/remctl-doctor-missing-\(UUID().uuidString)")
         let result = try CLIRunner.run(["doctor", "--json"], storeDir: bogus)
-        // --json never adds agent_note unless --for-agent; exit still reflects fails.
         #expect(result.exit == 1)
-        let data = Data(result.stdout.utf8)
-        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        #expect(obj?["ok"] as? Bool == false)
-        #expect(obj?["warnings"] != nil)
-        #expect(obj?["failures"] != nil)
-        #expect(obj?["context"] != nil)
-        #expect(obj?["checks"] != nil)
-        #expect(obj?["agent_note"] == nil)
-        // indent=2 → pretty-printed (contains the 2-space-indented first key).
-        #expect(result.stdout.contains("\n  \"ok\":"))
+        #expect(result.stdout.isEmpty)
+        let obj = try JSONSerialization.jsonObject(with: Data(result.stderr.utf8)) as? [String: Any]
+        #expect(obj?["status"] as? String == "error")
+        #expect(obj?["code"] as? String == "doctor_failed")
+        let report = obj?["report"] as? [String: Any]
+        #expect(report?["ok"] as? Bool == false)
+        #expect(report?["warnings"] != nil)
+        #expect(report?["failures"] != nil)
+        #expect(report?["context"] != nil)
+        #expect(report?["checks"] != nil)
+        #expect(report?["agent_note"] == nil)
     }
 
     @Test("doctor --for-agent --json adds agent_note")
     func forAgentJSON() throws {
         let bogus = URL(fileURLWithPath: "/tmp/remctl-doctor-missing-\(UUID().uuidString)")
         let result = try CLIRunner.run(["doctor", "--for-agent", "--json"], storeDir: bogus)
-        let obj = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
-        #expect((obj?["agent_note"] as? String)?.contains("process context") == true)
+        #expect(result.stdout.isEmpty)
+        let obj = try JSONSerialization.jsonObject(with: Data(result.stderr.utf8)) as? [String: Any]
+        let report = obj?["report"] as? [String: Any]
+        #expect((report?["agent_note"] as? String)?.contains("process context") == true)
     }
 
     @Test("doctor --for-agent human prints the Agent note line")

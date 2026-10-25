@@ -44,7 +44,7 @@ public enum PrivateParsing {
         }
         // Match ^(\d+)\s*([a-z]+)$
         guard let match = stripped.range(of: #"^(\d+)\s*([a-z]+)$"#, options: .regularExpression) else {
-            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.")
+            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.", code: "invalid_early_reminder")
         }
         _ = match  // used to confirm regex matched
         // Extract groups manually
@@ -54,12 +54,12 @@ public enum PrivateParsing {
               m.numberOfRanges == 3,
               let digitRange = Range(m.range(at: 1), in: stripped),
               let unitRange = Range(m.range(at: 2), in: stripped) else {
-            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.")
+            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.", code: "invalid_early_reminder")
         }
         let amount = Int(stripped[digitRange])!
         let unitStr = String(stripped[unitRange])
         guard amount > 0, let unitCode = earlyReminderUnitCodes[unitStr] else {
-            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.")
+            throw CLIError("--early-reminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.", code: "invalid_early_reminder")
         }
         return .set(unit: unitCode, count: -amount, existingIdentifiers: [])
     }
@@ -132,7 +132,7 @@ public enum PrivateParsing {
                       let parsed = try? JSONSerialization.jsonObject(with: data),
                       let dict = parsed as? [String: Any] else {
                     // Extract parse error message like Python does
-                    throw CLIError("invalid --subtask JSON: \(jsonParseErrorMessage(raw)).")
+                    throw CLIError("invalid --subtask JSON: \(jsonParseErrorMessage(raw)).", code: "invalid_subtask")
                 }
                 spec = dict
             } else {
@@ -143,7 +143,7 @@ public enum PrivateParsing {
             guard let titleAny = spec["title"],
                   let titleStr = titleAny as? String,
                   !titleStr.trimmingCharacters(in: .whitespaces).isEmpty else {
-                throw CLIError("each --subtask requires a non-empty title.")
+                throw CLIError("each --subtask requires a non-empty title.", code: "invalid_subtask")
             }
             let titleNorm = titleStr.trimmingCharacters(in: .whitespaces)
 
@@ -155,7 +155,7 @@ public enum PrivateParsing {
                     if let notesStr = notes as? String {
                         result.notes = notesStr
                     } else if !(notes is NSNull) {
-                        throw CLIError("subtask notes must be a string.")
+                        throw CLIError("subtask notes must be a string.", code: "invalid_subtask")
                     }
                 }
             }
@@ -172,7 +172,7 @@ public enum PrivateParsing {
             if let prioAny = spec["priority"], !(prioAny is NSNull) {
                 let p = "\(prioAny)".lowercased()
                 guard ["high", "h", "medium", "med", "m", "low", "l", "none"].contains(p) else {
-                    throw CLIError("subtask priority must be high, medium, low, or none.")
+                    throw CLIError("subtask priority must be high, medium, low, or none.", code: "invalid_subtask")
                 }
                 result.priority = p
             }
@@ -187,7 +187,7 @@ public enum PrivateParsing {
             // absent key both mean "no recurrence" (upstream 467ac55).
             if let recAny = spec["recurrence"], !(recAny is NSNull) {
                 guard let canonical = recurrenceSpecText(recAny) else {
-                    throw CLIError("could not parse subtask recurrence \(recurrenceValueRepr(recAny)). \(WriteParsing.recurrenceGrammarHint)")
+                    throw CLIError("could not parse subtask recurrence \(recurrenceValueRepr(recAny)). \(WriteParsing.recurrenceGrammarHint)", code: "invalid_subtask")
                 }
                 result.recurrence = canonical
             }
@@ -200,7 +200,7 @@ public enum PrivateParsing {
                 do {
                     _ = try parseEarlyReminder(earlyStr)
                 } catch {
-                    throw CLIError("subtask earlyReminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.")
+                    throw CLIError("subtask earlyReminder must be like 15m, 1h, 2d, 1w, 1mo, or clear.", code: "invalid_subtask")
                 }
                 result.earlyReminder = earlyStr
             }
@@ -210,7 +210,7 @@ public enum PrivateParsing {
             let urls = normalizeStringList(urlsRaw, field: "urls")
             for url in urls {
                 if let problem = RichLinkURL.problem(url, flag: "--private --subtask url") {
-                    throw CLIError(problem)
+                    throw CLIError(problem, code: "invalid_subtask")
                 }
             }
             result.urls = urls
@@ -239,23 +239,23 @@ public enum PrivateParsing {
             let locTitle = spec["locationTitle"] ?? spec["location_title"]
             if latAny != nil || lonAny != nil || locTitle != nil {
                 guard let latAny, let lonAny, !(latAny is NSNull), !(lonAny is NSNull) else {
-                    throw CLIError("subtask location alarms require both latitude and longitude.")
+                    throw CLIError("subtask location alarms require both latitude and longitude.", code: "invalid_subtask")
                 }
                 guard let lat = toDouble(latAny), let lon = toDouble(lonAny) else {
-                    throw CLIError("subtask location latitude, longitude, and radius must be numbers.")
+                    throw CLIError("subtask location latitude, longitude, and radius must be numbers.", code: "invalid_subtask")
                 }
                 let radRaw = spec["radius"] ?? 100.0
                 guard let radius = toDouble(radRaw) else {
-                    throw CLIError("subtask location latitude, longitude, and radius must be numbers.")
+                    throw CLIError("subtask location latitude, longitude, and radius must be numbers.", code: "invalid_subtask")
                 }
                 guard lat >= -90, lat <= 90 else {
-                    throw CLIError("subtask latitude must be between -90 and 90.")
+                    throw CLIError("subtask latitude must be between -90 and 90.", code: "invalid_subtask")
                 }
                 guard lon >= -180, lon <= 180 else {
-                    throw CLIError("subtask longitude must be between -180 and 180.")
+                    throw CLIError("subtask longitude must be between -180 and 180.", code: "invalid_subtask")
                 }
                 guard radius > 0 else {
-                    throw CLIError("subtask radius must be greater than 0.")
+                    throw CLIError("subtask radius must be greater than 0.", code: "invalid_subtask")
                 }
                 // proximity
                 let proximityText: String
@@ -265,7 +265,7 @@ public enum PrivateParsing {
                     proximityText = "arriving"
                 }
                 guard ["arriving", "leaving"].contains(proximityText) else {
-                    throw CLIError("subtask proximity must be arriving or leaving.")
+                    throw CLIError("subtask proximity must be arriving or leaving.", code: "invalid_subtask")
                 }
                 result.latitude = lat
                 result.longitude = lon
@@ -275,7 +275,7 @@ public enum PrivateParsing {
 
                 // address is unsupported for subtasks
                 if let addr = spec["address"], !(addr is NSNull), "\(addr)".isEmpty == false {
-                    throw CLIError("subtask location address is not currently supported.")
+                    throw CLIError("subtask location address is not currently supported.", code: "invalid_subtask")
                 }
             }
 
@@ -317,7 +317,8 @@ public enum PrivateParsing {
             if ["1", "true", "yes", "on"].contains(low) { return true }
             if ["0", "false", "no", "off"].contains(low) { return false }
         }
-        throw CLIError("subtask \(field) must be a boolean.")
+        throw CLIError("subtask \(field) must be a boolean.", code: "invalid_subtask",
+                       context: [("field", .string(field))])
     }
 
     /// Validate a subtask `recurrence` value and return the text `bridge_update_subtask` re-parses:

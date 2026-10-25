@@ -33,22 +33,23 @@ public struct JSONOnlyOptions: ParsableArguments {
 public struct CLIError: Error, CustomStringConvertible {
     public let message: String
     public let code: String?
-    public init(_ m: String, code: String? = nil) { self.message = m; self.code = code }
+    public let context: [(String, JSONValue)]
+    public init(_ m: String, code: String? = nil, context: [(String, JSONValue)] = []) {
+        self.message = m; self.code = code; self.context = context
+    }
     public var description: String { message }
 }
 
 public enum Dispatch {
-    /// Open the store and run `body`; on RemindersDBUnavailable / CLIError / any error, print "Error: <msg>" to stderr and exit(1).
-    public static func runRead(_ body: (RemindersStore) throws -> Void) {
+    /// Open the store and run `body`; render failures to the command's requested output mode.
+    public static func runRead(json: Bool = false, _ body: (RemindersStore) throws -> Void) {
         do {
             let store = try RemindersStore.open()
             try body(store)
-        } catch let e as RemindersDBUnavailable {
-            FileHandle.standardError.write(Data("Error: \(e.message)\n".utf8)); exit(1)
-        } catch let e as CLIError {
-            FileHandle.standardError.write(Data("Error: \(e.message)\n".utf8)); exit(1)
         } catch {
-            FileHandle.standardError.write(Data("Error: \(error)\n".utf8)); exit(1)
+            let outcome = FailureRendering.outcome(error, json: json)
+            FileHandle.standardError.write(Data(outcome.stderr.utf8))
+            exit(outcome.exitCode)
         }
     }
     public static func printJSON(_ v: JSONValue, indent: Int? = 2, ensureAscii: Bool) {

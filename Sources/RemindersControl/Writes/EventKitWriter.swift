@@ -32,16 +32,16 @@ public final class EventKitWriter: RemindersWriter {
         do {
             granted = try await store.requestFullAccessToReminders()
         } catch {
-            throw WriteError("EventKit access error: \(error.localizedDescription)")
+            throw WriteError("EventKit access error: \(error.localizedDescription)", code: "reminders_access_denied")
         }
-        if !granted { throw WriteError("Reminders access not granted") }
+        if !granted { throw WriteError("Reminders access not granted", code: "reminders_access_denied") }
     }
 
     // MARK: - Lookups
 
     private func findReminder(id: String) throws -> EKReminder {
         guard let item = store.calendarItem(withIdentifier: id) as? EKReminder else {
-            throw WriteError("Reminder not found for id: \(id)")
+            throw WriteError("Reminder not found for id: \(id)", code: "not_found", context: [("id", .string(id))])
         }
         return item
     }
@@ -74,7 +74,7 @@ public final class EventKitWriter: RemindersWriter {
                 in: calendars.map(descriptor), name: name, listId: listId, providers: accountProviders)
             return calendars[index]
         } catch let e as ListTargetingError {
-            throw WriteError(e.message)
+            throw WriteError(e.message, code: "list_not_found")
         }
     }
 
@@ -83,7 +83,8 @@ public final class EventKitWriter: RemindersWriter {
     private func defaultICloudReminderList() throws -> EKCalendar {
         guard let cal = store.defaultCalendarForNewReminders(),
               ListTargeting.isICloud(descriptor(cal), providers: accountProviders) else {
-            throw WriteError("Default Reminders list is not in iCloud; pass -l/--list for an iCloud Reminders list")
+            throw WriteError("Default Reminders list is not in iCloud; pass -l/--list for an iCloud Reminders list",
+                             code: "icloud_list_required")
         }
         return cal
     }
@@ -224,7 +225,7 @@ public final class EventKitWriter: RemindersWriter {
         }
 
         if let p = write.priority {
-            guard 0...9 ~= p else { throw WriteError("Invalid priority") }
+            guard 0...9 ~= p else { throw WriteError("Invalid priority", code: "invalid_priority") }
             reminder.priority = p
         }
 
@@ -245,7 +246,7 @@ public final class EventKitWriter: RemindersWriter {
         if write.clearRecurrence {
             reminder.recurrenceRules = []
         } else if let spec = write.recurrence {
-            guard let rule = buildRecurrenceRule(spec) else { throw WriteError("Invalid recurrence") }
+            guard let rule = buildRecurrenceRule(spec) else { throw WriteError("Invalid recurrence", code: "invalid_recurrence") }
             reminder.recurrenceRules = [rule]
         }
 
@@ -262,16 +263,16 @@ public final class EventKitWriter: RemindersWriter {
 
         if let loc = write.location {
             guard (-90.0...90.0).contains(loc.latitude), (-180.0...180.0).contains(loc.longitude) else {
-                throw WriteError("Invalid location coordinates")
+                throw WriteError("Invalid location coordinates", code: "invalid_location")
             }
-            guard loc.radius > 0, loc.radius <= 100_000 else { throw WriteError("Invalid location radius") }
+            guard loc.radius > 0, loc.radius <= 100_000 else { throw WriteError("Invalid location radius", code: "invalid_location") }
             let location = EKStructuredLocation(title: loc.title ?? "Location")
             location.geoLocation = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
             location.radius = loc.radius
             let alarm = EKAlarm()
             alarm.structuredLocation = location
             guard ["enter", "arriving", "leave", "leaving"].contains(loc.proximity) else {
-                throw WriteError("Invalid location proximity")
+                throw WriteError("Invalid location proximity", code: "invalid_location")
             }
             let proximityValue = (loc.proximity == "leaving" || loc.proximity == "leave")
                 ? EKAlarmProximity.leave
@@ -293,7 +294,7 @@ public final class EventKitWriter: RemindersWriter {
     public func create(_ write: ReminderWrite) async throws -> WriteResult {
         try await requestAccess()
         guard let title = write.title, !title.isEmpty else {
-            throw WriteError("title is required for create")
+            throw WriteError("title is required for create", code: "invalid_title")
         }
         let reminder = EKReminder(eventStore: store)
         reminder.title = title
@@ -366,7 +367,7 @@ public final class EventKitWriter: RemindersWriter {
 
     public func createList(title: String, color: String?) async throws -> WriteResult {
         try await requestAccess()
-        guard !title.isEmpty else { throw WriteError("title is required for create_list") }
+        guard !title.isEmpty else { throw WriteError("title is required for create_list", code: "invalid_title") }
         let cal = EKCalendar(for: .reminder, eventStore: store)
         cal.title = title
         // New lists belong in iCloud: a local or third-party CalDAV account would silently
@@ -381,12 +382,12 @@ public final class EventKitWriter: RemindersWriter {
             in: descriptors,
             defaultReminderSource: store.defaultCalendarForNewReminders()?.source.sourceIdentifier,
             providers: accountProviders) else {
-            throw WriteError("No iCloud Reminders source found")
+            throw WriteError("No iCloud Reminders source found", code: "icloud_list_required")
         }
         cal.source = sources[index]
         if let colorName = color {
             guard let cg = colorForName(colorName) else {
-                throw WriteError("Unsupported list color: \(colorName)")
+                throw WriteError("Unsupported list color: \(colorName)", code: "invalid_list_appearance")
             }
             cal.cgColor = cg
         }

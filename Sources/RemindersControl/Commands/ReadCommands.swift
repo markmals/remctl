@@ -26,7 +26,7 @@ struct Today: AsyncParsableCommand {
                 emptyMessage: "Nothing due today (\(dateStr)) via EventKit")
             return
         }
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             let rows = store.dueToday(includeOverdue: !noOverdue, now: now)
             let pks = rows.compactMap { $0.int("Z_PK") }
@@ -82,7 +82,8 @@ struct Upcoming: AsyncParsableCommand {
 
     func run() async throws {
         guard (1...3650).contains(days) else {
-            FileHandle.standardError.write(Data("Error: upcoming days must be between 1 and 3650.\n".utf8))
+            let failure = CommandFailure("invalid_days", "upcoming days must be between 1 and 3650.")
+            FileHandle.standardError.write(Data(failure.outcome(json: opts.effectiveJSON).stderr.utf8))
             throw ExitCode(1)
         }
         if viaEventkit {
@@ -93,7 +94,7 @@ struct Upcoming: AsyncParsableCommand {
                 groupByDay: true)
             return
         }
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             let rows = store.upcoming(days: days, now: now)
             let pks = rows.compactMap { $0.int("Z_PK") }
@@ -163,7 +164,7 @@ struct Overdue: ParsableCommand {
     @OptionGroup var opts: ReadDisplayOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             let rows = store.overdue(now: now)
             let pks = rows.compactMap { $0.int("Z_PK") }
@@ -263,7 +264,7 @@ struct Search: AsyncParsableCommand {
             return
         }
         let (limit, offset, paged) = try pageArgs()
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             var listRef: (id: Int, title: String)?
             if list != nil || listId != nil {
@@ -332,7 +333,7 @@ struct Flagged: ParsableCommand {
     @OptionGroup var opts: ReadDisplayOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             let rows = store.flagged()
             let pks = rows.compactMap { $0.int("Z_PK") }
@@ -368,7 +369,7 @@ struct Urgent: ParsableCommand {
     @OptionGroup var opts: ReadDisplayOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             let now = Date()
             let rows = store.urgent()
             let pks = rows.compactMap { $0.int("Z_PK") }
@@ -404,7 +405,7 @@ struct Tags: ParsableCommand {
     @OptionGroup var opts: JSONOnlyOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let ansi = opts.ansi()
             let names = store.allTagNames()
 
@@ -433,10 +434,9 @@ struct Subtasks: ParsableCommand {
     @Flag(name: [.short, .long], help: "Verbose output (accepted, no-op)") var verbose = false
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: json) { store in
             guard let parent = store.reminder(pk: id) else {
-                FileHandle.standardError.write(Data("Error: #\(id) not found\n".utf8))
-                Foundation.exit(1)
+                throw CLIError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
             }
             let subs = store.reminders(completed: true, parentPk: id)
             let subPks = subs.compactMap { $0.int("Z_PK") }
@@ -483,7 +483,7 @@ struct Sections: ParsableCommand {
     @OptionGroup var opts: JSONOnlyOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let ansi = opts.ansi()
             let rows = store.sectionsAll()
 
@@ -535,7 +535,7 @@ struct Sharees: ParsableCommand {
     @Option(name: .long, help: "Shared list by stable numeric ID") var listId: Int?
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             let currentUserCkid = store.listSharedOwnerCkid(listPk: target.id)
             let rows = store.sharees(listPk: target.id)
@@ -598,7 +598,7 @@ struct Stats: ParsableCommand {
     @OptionGroup var opts: JSONOnlyOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let ansi = opts.ansi()
             let counts = store.reminderStats()
             let total = counts.total
@@ -771,7 +771,7 @@ struct Show: AsyncParsableCommand {
                 emptyMessage: "No \(completed ? "" : "active ")reminders found via EventKit")
             return
         }
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.effectiveJSON) { store in
             // A group holds lists, not reminders, so `show` reads through to its child lists.
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId, allowGroups: true)
             if target.isGroup {
@@ -860,10 +860,9 @@ struct Info: ParsableCommand {
     @Flag(name: .long, help: "Disable ANSI color") var noColor = false
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: json) { store in
             guard let r = store.reminder(pk: id) else {
-                FileHandle.standardError.write(Data("Error: #\(id) not found\n".utf8))
-                Foundation.exit(1)
+                throw CLIError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
             }
             let subs = store.reminders(completed: true, parentPk: id)
             let tags = store.hashtags(pk: id)

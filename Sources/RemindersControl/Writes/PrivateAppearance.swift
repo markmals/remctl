@@ -40,10 +40,10 @@ public func normalizeListColor(_ value: String) -> String? {
 /// GROCERY_LOCALE_RE (else throw), then lang.lowercased() + `_` + REGION.uppercased().
 public func normalizeGroceryLocale(_ value: String) throws -> String {
     let trimmed = value.trimmingCharacters(in: .whitespaces)
-    if trimmed.isEmpty { throw CLIError("--grocery-locale cannot be empty.") }
+    if trimmed.isEmpty { throw CLIError("--grocery-locale cannot be empty.", code: "invalid_grocery_locale") }
     let localeID = trimmed.replacingOccurrences(of: "-", with: "_")
     if !matches(groceryLocaleRegex, localeID) {
-        throw CLIError("--grocery-locale must look like en_US or it_IT.")
+        throw CLIError("--grocery-locale must look like en_US or it_IT.", code: "invalid_grocery_locale")
     }
     let parts = localeID.split(separator: "_", maxSplits: 1, omittingEmptySubsequences: false)
     if parts.count == 2 {
@@ -55,10 +55,10 @@ public func normalizeGroceryLocale(_ value: String) throws -> String {
 /// validate_list_grocery_args (remctl:2699), with the `--private`-requiring branch DROPPED.
 public func validateListGroceryArgs(groceries: Bool, standard: Bool, groceryLocale: String?) throws {
     if groceries && standard {
-        throw CLIError("pass either --groceries or --standard, not both.")
+        throw CLIError("pass either --groceries or --standard, not both.", code: "invalid_list_appearance")
     }
     if standard, let loc = groceryLocale, !loc.isEmpty {
-        throw CLIError("--grocery-locale cannot be combined with --standard.")
+        throw CLIError("--grocery-locale cannot be combined with --standard.", code: "invalid_list_appearance")
     }
     if let loc = groceryLocale, !loc.isEmpty {
         _ = try normalizeGroceryLocale(loc)
@@ -74,20 +74,21 @@ public func validateListAppearanceArgs(
 ) throws {
     // Python `if symbol and emoji` tests truthiness — empty strings are falsy.
     if !(symbol ?? "").isEmpty && !(emoji ?? "").isEmpty {
-        throw CLIError("pass either --symbol or --emoji, not both.")
+        throw CLIError("pass either --symbol or --emoji, not both.", code: "invalid_list_appearance")
     }
     // Python branches on `symbol is not None` / `emoji is not None` for the emptiness checks.
     if let symbol, symbol.trimmingCharacters(in: .whitespaces).isEmpty {
-        throw CLIError("--symbol cannot be empty.")
+        throw CLIError("--symbol cannot be empty.", code: "invalid_list_appearance")
     }
     if let emoji, emoji.trimmingCharacters(in: .whitespaces).isEmpty {
-        throw CLIError("--emoji cannot be empty.")
+        throw CLIError("--emoji cannot be empty.", code: "invalid_list_appearance")
     }
     if let symbol {
         let normalized = symbol.trimmingCharacters(in: .whitespaces)
         if !officialListSymbolNames.contains(normalized) {
             throw CLIError("unsupported list symbol \(WriteFormatting.pyRepr(normalized)). "
-                + "Run `remctl list-symbols` to see official names, or use --emoji for custom emoji badges.")
+                + "Run `remctl list-symbols` to see official names, or use --emoji for custom emoji badges.",
+                           code: "invalid_list_appearance")
         }
     }
     try validateListColor(color)
@@ -107,7 +108,8 @@ func validateListColor(_ value: String?) throws {
     }()
     if !ok {
         throw CLIError("unsupported list color \(WriteFormatting.pyRepr(value)). "
-            + "Use red, orange, yellow, green, blue, purple, brown, gray, cyan, or #RRGGBB.")
+            + "Use red, orange, yellow, green, blue, purple, brown, gray, cyan, or #RRGGBB.",
+                       code: "invalid_list_appearance")
     }
 }
 

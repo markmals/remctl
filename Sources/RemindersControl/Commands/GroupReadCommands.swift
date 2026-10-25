@@ -11,7 +11,7 @@ struct Groups: ParsableCommand {
     /// Port of `cmd_groups` (upstream e013fb9): each group with its child lists, in Reminders'
     /// child order, and their reminder counts.
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: json) { store in
             let (groups, childRows, _) = splitListGroupRows(store.lists(includeGroups: true))
             let counts = store.listReminderCounts(listPks: childRows.values.flatMap { $0.compactMap { $0.int("Z_PK") } })
             let payloads = groups.map { group in
@@ -83,7 +83,7 @@ struct GroupInfo: ParsableCommand {
     /// Port of `cmd_group_info` (upstream e013fb9): the group, its child lists with counts, and the
     /// commands that act on it.
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: json) { store in
             let group = try resolveRequiredGroupTarget(store: store, name: name, groupId: groupId)
             let counts = store.listReminderCounts(listPks: group.children.compactMap { $0.int("Z_PK") })
             if json {

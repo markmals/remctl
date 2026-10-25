@@ -205,9 +205,11 @@ extension Onboard {
                     ])
                 })),
             ])
-            return WriteOutcome(
-                stdout: result.serialized(indent: 2, ensureAscii: false) + "\n",
-                exitCode: exitCode)
+            if failures > 0 {
+                return .failure("onboarding_failed", "RemCTL onboard found \(failures) failing checks.", json: true,
+                                context: [("report", result)])
+            }
+            return WriteOutcome(stdout: result.serialized(indent: 2, ensureAscii: false) + "\n")
         }
 
         // 4. Human mode — header + dim approve line + blank + check report.

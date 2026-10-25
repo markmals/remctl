@@ -16,7 +16,7 @@ struct Lists: ParsableCommand {
 
     func run() throws {
         let effJSON = json || format == .json
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: effJSON) { store in
             // Groups come along: `lists` is the one view that shows the hierarchy.
             let rows = store.lists(includeGroups: true)
             let (groups, childRows, ungrouped) = splitListGroupRows(rows)
@@ -128,7 +128,7 @@ struct ListCreate: AsyncParsableCommand {
                     store: store, private: priv)
             })
         }
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { _, writer, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth(json: json) { _, writer, priv in
             try await Self.perform(
                 name: args.name, color: args.color, symbol: args.symbol, emoji: args.emoji,
                 groceries: args.groceries, groceryLocale: args.groceryLocale, json: args.json,
@@ -274,7 +274,7 @@ struct ListEdit: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, listId: args.listId, newName: args.newName,
                 color: args.color, symbol: args.symbol, emoji: args.emoji,
@@ -303,7 +303,7 @@ struct ListEdit: AsyncParsableCommand {
         let hasChange = newName != nil || color != nil || symbol != nil || emoji != nil
             || groceries || standard || (groceryLocale != nil && !(groceryLocale!.isEmpty))
         if !hasChange {
-            return .error("pass at least one of --new-name, --color, --symbol, --emoji, --groceries, --standard, or --grocery-locale.")
+            return .failure("invalid_list_edit", "pass at least one of --new-name, --color, --symbol, --emoji, --groceries, --standard, or --grocery-locale.", json: json)
         }
 
         // 3. Resolve the target list. CLIErrors (not-both / no-target / not-found / ambiguous) propagate.
@@ -311,7 +311,7 @@ struct ListEdit: AsyncParsableCommand {
 
         // 4. Require a stable CloudKit identifier.
         guard let ckid = store.listCkid(pk: target.id), !ckid.isEmpty else {
-            return .error("target list has no stable CloudKit identifier.")
+            return .failure("list_missing_identifier", "target list has no stable CloudKit identifier.", json: json)
         }
 
         // 5. Build the appearance payload and invoke the private writer.
@@ -323,13 +323,13 @@ struct ListEdit: AsyncParsableCommand {
         do {
             result = try await priv.setListAppearance(listId: ckid, appearance: appearance)
         } catch let e as WriteError {
-            return .error(e.message)
+            return json ? FailureRendering.outcome(e, json: true) : .error(e.message)
         } catch {
-            return .error("\(error)")
+            return json ? FailureRendering.outcome(error, json: true) : .error("\(error)")
         }
 
         guard result.status == "updated" else {
-            return .error(result.message ?? "private helper failed")
+            return .failure("private_write_failed", result.message ?? "private helper failed", json: json)
         }
 
         // 6. output_name = --new-name if given, else the RESOLVED current title.
@@ -363,7 +363,7 @@ struct ListPin: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.performPin(
                 name: args.name, listId: args.listId, smartListId: args.smartListId,
                 pinned: true, json: args.json, store: store, private: priv)
@@ -379,13 +379,13 @@ struct ListPin: AsyncParsableCommand {
     ) async throws -> WriteOutcome {
         // 1. Reject both --list-id AND --smart-list-id together.
         if listId != nil && smartListId != nil {
-            return .error("pass either --list-id or --smart-list-id, not both.")
+            return .failure("invalid_list_target", "pass either --list-id or --smart-list-id, not both.", json: json)
         }
 
         // 2. Require at least one of: name, --list-id, --smart-list-id.
         let hasName = name != nil && !(name!.isEmpty)
         if !hasName && listId == nil && smartListId == nil {
-            return .error("pass a list/smart-list name, --list-id, or --smart-list-id.")
+            return .failure("invalid_list_target", "pass a list/smart-list name, --list-id, or --smart-list-id.", json: json)
         }
 
         // 3. Branch by target type.
@@ -400,12 +400,12 @@ struct ListPin: AsyncParsableCommand {
             case .found(let id, let title, _):
                 targetId = id; targetTitle = title; targetKind = "smart-list"
                 guard let c = store.smartListCkid(pk: id), !c.isEmpty else {
-                    return .error("target smart list has no stable CloudKit identifier.")
+                    return .failure("smart_list_missing_identifier", "target smart list has no stable CloudKit identifier.", json: json)
                 }
                 ckid = c
             // A smart list is never a group; `.group` can only mean "no smart list here".
             case .group, .ambiguous, .notFound:
-                return .error("smart list not found: id \(smartListId)")
+                return .failure("smart_list_not_found", "smart list not found: id \(smartListId)", json: json)
             }
         } else if let listId {
             // --list-id path: resolve regular list by id.
@@ -413,13 +413,13 @@ struct ListPin: AsyncParsableCommand {
             case .found(let id, let title, _):
                 targetId = id; targetTitle = title; targetKind = "list"
                 guard let c = store.listCkid(pk: id), !c.isEmpty else {
-                    return .error("target list has no stable CloudKit identifier.")
+                    return .failure("list_missing_identifier", "target list has no stable CloudKit identifier.", json: json)
                 }
                 ckid = c
             case .group(_, let title, _, let children):
-                return .error(listIsGroupMessage(title: title, children: children))
+                return .failure("list_is_group", listIsGroupMessage(title: title, children: children), json: json)
             case .ambiguous, .notFound:
-                return .error("list not found: id \(listId)")
+                return .failure("list_not_found", "list not found: id \(listId)", json: json)
             }
         } else {
             // Name path: dual-resolve — call BOTH resolvers.
@@ -430,37 +430,37 @@ struct ListPin: AsyncParsableCommand {
             // Ambiguous in EITHER kind fires before the both-match check (match Python ordering).
             if case .ambiguous(let candidates) = listRes {
                 let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
-                return .error("multiple lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact list name or --list-id with one of: \(options)")
+                return .failure("list_ambiguous", "multiple lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact list name or --list-id with one of: \(options)", json: json)
             }
             if case .group(_, let title, _, let children) = listRes {
-                return .error(listIsGroupMessage(title: title, children: children))
+                return .failure("list_is_group", listIsGroupMessage(title: title, children: children), json: json)
             }
             if case .ambiguous(let candidates) = smartRes {
                 let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
-                return .error("multiple smart lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact smart-list name or --smart-list-id with one of: \(options)")
+                return .failure("smart_list_ambiguous", "multiple smart lists match \(WriteFormatting.pyRepr(nameStr)). Use the exact smart-list name or --smart-list-id with one of: \(options)", json: json)
             }
 
             let listFound  = if case .found = listRes { true } else { false }
             let smartFound = if case .found = smartRes { true } else { false }
 
             if listFound && smartFound {
-                return .error("\(WriteFormatting.pyRepr(nameStr)) matches both a list and a smart list. Use --list-id or --smart-list-id.")
+                return .failure("list_target_ambiguous", "\(WriteFormatting.pyRepr(nameStr)) matches both a list and a smart list. Use --list-id or --smart-list-id.", json: json)
             }
 
             if case .found(let id, let title, _) = listRes, listFound {
                 targetId = id; targetTitle = title; targetKind = "list"
                 guard let c = store.listCkid(pk: id), !c.isEmpty else {
-                    return .error("target list has no stable CloudKit identifier.")
+                    return .failure("list_missing_identifier", "target list has no stable CloudKit identifier.", json: json)
                 }
                 ckid = c
             } else if case .found(let id, let title, _) = smartRes, smartFound {
                 targetId = id; targetTitle = title; targetKind = "smart-list"
                 guard let c = store.smartListCkid(pk: id), !c.isEmpty else {
-                    return .error("target smart list has no stable CloudKit identifier.")
+                    return .failure("smart_list_missing_identifier", "target smart list has no stable CloudKit identifier.", json: json)
                 }
                 ckid = c
             } else {
-                return .error("list or smart list not found: \(nameStr)")
+                return .failure("list_not_found", "list or smart list not found: \(nameStr)", json: json)
             }
         }
 
@@ -472,13 +472,13 @@ struct ListPin: AsyncParsableCommand {
                     smartListId: ckid, pinned: pinned, isCustom: store.smartListIsCustom(pk: targetId))
                 : priv.setListPinned(listId: ckid, pinned: pinned))
         } catch let e as WriteError {
-            return .error(e.message)
+            return json ? FailureRendering.outcome(e, json: true) : .error(e.message)
         } catch {
-            return .error("\(error)")
+            return json ? FailureRendering.outcome(error, json: true) : .error("\(error)")
         }
 
         guard result.status == "updated" else {
-            return .error(result.message ?? "private helper failed")
+            return .failure("private_write_failed", result.message ?? "private helper failed", json: json)
         }
 
         // 5. Output.
@@ -513,7 +513,7 @@ struct ListUnpin: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await ListPin.performPin(
                 name: args.name, listId: args.listId, smartListId: args.smartListId,
                 pinned: false, json: args.json, store: store, private: priv)
@@ -532,7 +532,7 @@ struct ListRename: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShell(json: json) { store, writer in
             try await Self.perform(
                 name: args.name, newNamePositional: args.newName, listId: args.listId,
                 newNameOption: args.newNameOption, json: args.json, store: store, writer: writer)
@@ -548,10 +548,10 @@ struct ListRename: AsyncParsableCommand {
     ) async throws -> WriteOutcome {
         // 1. New-name precedence: `--new-name` OR positional `new_name` (remctl:6235). Both -> error.
         if newNameOption != nil && newNamePositional != nil {
-            return .error("pass the new list name as an argument or --new-name, not both.")
+            return .failure("invalid_list_target", "pass the new list name as an argument or --new-name, not both.", json: json)
         }
         guard let newName = newNameOption ?? newNamePositional, !newName.isEmpty else {
-            return .error("pass a new list name.")
+            return .failure("invalid_list_target", "pass a new list name.", json: json)
         }
 
         // 2. Resolve the target list. resolveRequiredListTarget's CLIErrors pass through (mapped to
@@ -592,7 +592,7 @@ struct ListDelete: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShell(json: json) { store, writer in
             try await Self.perform(
                 name: args.name, listId: args.listId, force: args.force, json: args.json,
                 store: store, writer: writer, confirm: .standard)
@@ -671,7 +671,9 @@ struct ListSymbols: ParsableCommand {
         let htmlArg = resolvedHTMLArg
         if htmlArg != nil || preview {
             if json {
-                FileHandle.standardError.write(Data("Error: --json cannot be combined with --html or --preview.\n".utf8))
+                FileHandle.standardError.write(Data(
+                    CommandFailure("invalid_output_options", "--json cannot be combined with --html or --preview.")
+                        .outcome(json: true).stderr.utf8))
                 Foundation.exit(1)
             }
             let outcome = try Self.performHTML(

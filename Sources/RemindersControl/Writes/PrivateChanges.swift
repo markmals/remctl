@@ -185,7 +185,7 @@ public enum PrivateChanges {
         //      emit the private actions. The either/or validation lives in Add/Edit (validate_private_args).
         if let assign {
             guard let listPk else {
-                throw CLIError("--assign requires a target shared list via -l/--list or --list-id.")
+                throw CLIError("--assign requires a target shared list via -l/--list or --list-id.", code: "invalid_assignment")
             }
             let assignee = try resolveSharee(store: store, listPk: listPk, value: assign)
             let originator = try resolveAssignmentOriginator(store: store, listPk: listPk)
@@ -203,7 +203,7 @@ public enum PrivateChanges {
         if grocery {
             guard let listPk else {
                 // Mirrors `if list_pk is None: Error: --grocery requires a target list.` (remctl:3137).
-                throw CLIError("--grocery requires a target list.")
+                throw CLIError("--grocery requires a target list.", code: "invalid_grocery_target")
             }
             results.append(try step("categorize_grocery_items", try await categorizeGrocery(
                 listPk: listPk, reminderCkid: reminderCkid, store: store, private: p,
@@ -270,22 +270,22 @@ public enum PrivateChanges {
     ) async throws -> PrivateResult {
         // 1. require_grocery_list_target (remctl:2898): the target must be a Groceries list.
         guard let target = store.groceryListTarget(pk: listPk) else {
-            throw CLIError("target list not found.")
+            throw CLIError("target list not found.", code: "list_not_found")
         }
         guard target.isGroceries else {
             throw CLIError("target list '\(target.name)' is not a Groceries list. "
-                + "Use `remctl list-edit ... --private --groceries` first.")
+                + "Use `remctl list-edit ... --private --groceries` first.", code: "invalid_grocery_target")
         }
 
         // 2. The list's stable CloudKit identifier.
         guard let ckid = store.listCkid(pk: listPk) else {
-            throw CLIError("target list has no stable CloudKit identifier.")
+            throw CLIError("target list has no stable CloudKit identifier.", code: "list_missing_identifier")
         }
 
         // 3. Filter reminder ckids (drop empty). Empty → error.
         let reminderCkids = [reminderCkid].filter { !$0.isEmpty }
         guard !reminderCkids.isEmpty else {
-            throw CLIError("grocery categorization needs a stable reminder identifier.")
+            throw CLIError("grocery categorization needs a stable reminder identifier.", code: "no_stable_identifier")
         }
 
         // 4. Poll each reminder for auto-sectioning.
@@ -353,7 +353,7 @@ public enum PrivateChanges {
         if fallbackVerified.contains(where: { $0.section != nil }) {
             return remindersAutoResult(verified: fallbackVerified, warning: message)
         }
-        throw CLIError(message)
+        throw CLIError(message, code: "grocery_categorization_failed")
     }
 
     /// Build the `reminders_auto` PrivateResult (source's {action, source, [warning], verifiedSections}).
@@ -418,7 +418,7 @@ public enum PrivateChanges {
 
         if let due = spec.due, !due.isEmpty {
             guard let parsed = WriteParsing.parseDue(due, now: now, calendar: calendar) else {
-                throw CLIError("could not parse subtask due date \(WriteFormatting.pyRepr(due)). Use ISO (YYYY-MM-DD [HH:MM]) or shortcuts like today/tomorrow/eod/+3d.")
+                throw CLIError("could not parse subtask due date \(WriteFormatting.pyRepr(due)). Use ISO (YYYY-MM-DD [HH:MM]) or shortcuts like today/tomorrow/eod/+3d.", code: "invalid_subtask")
             }
             write.due = .set(parsed)
             // Date-only due text makes an all-day child, exactly as on the parent (upstream 3203f22).
@@ -429,14 +429,14 @@ public enum PrivateChanges {
         if let priority = spec.priority {
             // parse_subtask_specs already validated the value (high/h/medium/med/m/low/l/none).
             guard let p = WriteParsing.parsePriority(priority, allowAliases: true) else {
-                throw CLIError("subtask priority must be high, medium, low, or none.")
+                throw CLIError("subtask priority must be high, medium, low, or none.", code: "invalid_subtask")
             }
             write.priority = p; hasBridgeField = true
         }
 
         if let alarm = spec.alarm, !alarm.isEmpty {
             guard let al = WriteParsing.parseAlarmSpec(alarm, allowClear: false, calendar: calendar) else {
-                throw CLIError("could not parse subtask alarm \(WriteFormatting.pyRepr(alarm)).")
+                throw CLIError("could not parse subtask alarm \(WriteFormatting.pyRepr(alarm)).", code: "invalid_subtask")
             }
             write.alarm = al; hasBridgeField = true
         }
@@ -444,7 +444,7 @@ public enum PrivateChanges {
         if let recurrence = spec.recurrence, !recurrence.isEmpty {
             // parse_subtask_specs already validated the spec (string grammar or exported object).
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence, calendar: calendar) else {
-                throw CLIError("could not parse subtask recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
+                throw CLIError("could not parse subtask recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)", code: "invalid_subtask")
             }
             write.recurrence = r; hasBridgeField = true
         }

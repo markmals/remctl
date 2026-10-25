@@ -210,7 +210,9 @@ import GRDB
         let dir = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
         let group = try CLIRunner.run(["list-info", "Writing", "--json"], storeDir: dir)
         #expect(group.exit == 1)
-        #expect(group.stderr.contains("Error: 'Writing' is a Reminders list group, not a writable list."))
+        let error = try JSONSerialization.jsonObject(with: Data(group.stderr.utf8)) as? [String: Any]
+        #expect(error?["code"] as? String == "list_is_group")
+        #expect((error?["message"] as? String)?.contains("'Writing' is a Reminders list group, not a writable list.") == true)
         #expect(group.stdout.isEmpty)
         let bare = try CLIRunner.run(["list-info"], storeDir: dir)
         #expect(bare.exit == 1)

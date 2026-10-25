@@ -44,7 +44,12 @@ import GRDB
 
         #expect(m.calls == [.complete(id: "CK-1", completionDate: nil), .complete(id: "CK-3", completionDate: nil)])
         #expect(out.exitCode == 1)
-        #expect(out.stdout == ##"{"status": "partial", "operation": "done", "requested": [1, 999, 4, 3], "succeeded": [1, 3], "failed": [999, 4], "results": [{"id": 1, "status": "completed", "title": "One", "list": "Work"}, {"id": 999, "status": "not_found", "code": "reminder_not_found", "message": "#999 not found"}, {"id": 4, "status": "error", "code": "no_stable_identifier", "message": "The reminder has no stable identifier. Refusing unsafe title-based fallback for #4 ('Loose') while trying to complete it.", "title": "Loose", "list": "Work"}, {"id": 3, "status": "completed", "title": "Weekly review", "list": "Work", "recurring": true}]}"## + "\n")
+        #expect(out.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_partial")
+        let summary = try #require(payload["summary"] as? [String: Any])
+        #expect(summary["status"] as? String == "partial")
+        #expect(summary["failed"] as? [Int] == [999, 4])
     }
 
     @Test func duplicateIdsAreWrittenOnceAndReported() async throws {
@@ -91,7 +96,10 @@ import GRDB
         let expected = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 1))!
         #expect(m.calls == [.complete(id: "CK-1", completionDate: expected)])
         #expect(out.exitCode == 1)
-        #expect(out.stdout == #"{"status": "partial", "operation": "done", "requested": [1, 3], "succeeded": [1], "failed": [3], "results": [{"id": 1, "status": "completed", "completionDate": "2026-09-01T00:00:00", "title": "One", "list": "Work"}, {"id": 3, "status": "error", "code": "completion_date_unsupported_for_recurring", "message": "--date is not supported for recurring reminders; complete it without --date to advance the series.", "title": "Weekly review", "list": "Work", "recurring": true}]}"# + "\n")
+        #expect(out.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_partial")
+        #expect((payload["summary"] as? [String: Any])?["failed"] as? [Int] == [3])
     }
 
     @Test func anUnparseableDateStopsTheBatchBeforeAnyWrite() async throws {
@@ -115,8 +123,11 @@ import GRDB
         #expect(m.calls == [.complete(id: "CK-1", completionDate: nil), .complete(id: "CK-2", completionDate: nil),
                             .complete(id: "CK-3", completionDate: nil)])
         #expect(out.exitCode == 1)
-        #expect(out.stdout.contains(#""status": "partial", "operation": "done", "requested": [1, 2, 3], "succeeded": [2, 3], "failed": [1]"#))
-        #expect(out.stdout.contains(#"{"id": 1, "status": "error", "code": "write_failed", "message": "EventKit refused; #1 was not changed.", "title": "One", "list": "Work"}"#))
+        #expect(out.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_partial")
+        let summary = try #require(payload["summary"] as? [String: Any])
+        #expect(summary["failed"] as? [Int] == [1])
     }
 
     @Test func everyIdFailingReportsFailedAndExitsOne() async throws {
@@ -125,7 +136,9 @@ import GRDB
         m.onStateWrite = { _ in throw WriteError("EventKit refused") }
         let out = await ReminderStateBatch.run(operation: .undone, ids: [1, 2], json: true,
                                                store: s, writer: m, confirm: .unexpected)
-        #expect(out.stdout.hasPrefix(#"{"status": "failed", "operation": "undone", "requested": [1, 2], "succeeded": [], "failed": [1, 2]"#))
+        #expect(out.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_failed")
         #expect(out.exitCode == 1)
     }
 
@@ -224,7 +237,7 @@ import GRDB
     @Test func oneIdKeepsTheSingleIdOutput() throws {
         let dir = try emptyStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let r = try CLIRunner.run(["done", "7", "--json"], storeDir: dir)
-        #expect(r.stderr == "Error: #7 not found\n")
+        #expect(r.stderr.contains(#""code": "not_found""#))
         #expect(r.stdout.isEmpty)
         #expect(r.exit == 1)
     }
@@ -232,14 +245,19 @@ import GRDB
     @Test func twoIdsUseTheBatchPath() throws {
         let dir = try emptyStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let r = try CLIRunner.run(["done", "7", "8", "--json"], storeDir: dir)
-        #expect(r.stdout == ##"{"status": "failed", "operation": "done", "requested": [7, 8], "succeeded": [], "failed": [7, 8], "results": [{"id": 7, "status": "not_found", "code": "reminder_not_found", "message": "#7 not found"}, {"id": 8, "status": "not_found", "code": "reminder_not_found", "message": "#8 not found"}]}"## + "\n")
+        #expect(r.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(r.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_failed")
+        #expect((payload["summary"] as? [String: Any])?["failed"] as? [Int] == [7, 8])
         #expect(r.exit == 1)
     }
 
     @Test func batchFlagGivesOneIdTheBatchShape() throws {
         let dir = try emptyStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let r = try CLIRunner.run(["undone", "7", "--batch", "--json"], storeDir: dir)
-        #expect(r.stdout == ##"{"status": "failed", "operation": "undone", "requested": [7], "succeeded": [], "failed": [7], "results": [{"id": 7, "status": "not_found", "code": "reminder_not_found", "message": "#7 not found"}]}"## + "\n")
+        #expect(r.stdout.isEmpty)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(r.stderr.utf8)) as? [String: Any])
+        #expect(payload["code"] as? String == "batch_failed")
         #expect(r.exit == 1)
     }
 

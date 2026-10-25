@@ -10,7 +10,7 @@ struct SmartLists: ParsableCommand {
     @OptionGroup var opts: JSONOnlyOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let payloads = store.smartLists().map { Self.withSections(smartListToDict($0), store: store) }
             if opts.json {
                 Dispatch.printJSON(.array(payloads.map { .object($0) }), ensureAscii: false)
@@ -153,7 +153,7 @@ struct SmartListCreate: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, color: args.color, symbol: args.symbol, emoji: args.emoji,
                 filterArgs: args.filter.toFilterArgs(), json: args.json, store: store, private: priv)
@@ -170,7 +170,7 @@ struct SmartListCreate: AsyncParsableCommand {
     ) async throws -> WriteOutcome {
         // 1. Duplicate-name preflight (exact, case-sensitive). Fires before validation/encoding.
         if store.customSmartListExactNameCount(name: name) > 0 {
-            return .error("smart list already exists: \(name). Choose a unique test name.")
+            return .failure("smart_list_already_exists", "smart list already exists: \(name). Choose a unique test name.", json: json)
         }
         // 2. Appearance validation (symbol XOR emoji, unknown symbol, bad color, ...).
         try validateListAppearanceArgs(
@@ -192,12 +192,12 @@ struct SmartListCreate: AsyncParsableCommand {
         do {
             result = try await priv.createSmartList(name: name, filterData: filterData, appearance: appearance)
         } catch let e as WriteError {
-            return .error("Failed to create smart list '\(name)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to create smart list '\(name)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to create smart list '\(name)': \(error)")
+            return .failure("private_write_failed", "Failed to create smart list '\(name)': \(error)", json: json)
         }
         guard result.status == "created" else {
-            return .error("Failed to create smart list '\(name)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to create smart list '\(name)': \(result.message ?? "private helper failed")", json: json)
         }
 
         // 6. Output.
@@ -231,7 +231,7 @@ struct SmartListEdit: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, smartListId: args.smartListId,
                 color: args.color, symbol: args.symbol, emoji: args.emoji,
@@ -251,7 +251,7 @@ struct SmartListEdit: AsyncParsableCommand {
         // 1. Require a target selector.
         let hasName = name != nil && !(name!.isEmpty)
         if !hasName && smartListId == nil {
-            return .error("provide a smart list name or --smart-list-id.")
+            return .failure("invalid_smart_list_target", "provide a smart list name or --smart-list-id.", json: json)
         }
         // 2. Appearance validation (no-op when none supplied).
         try validateListAppearanceArgs(
@@ -266,7 +266,7 @@ struct SmartListEdit: AsyncParsableCommand {
         let hasAppearanceChanges = (color != nil && !color!.isEmpty)
             || (symbol != nil && !symbol!.isEmpty) || (emoji != nil && !emoji!.isEmpty)
         if !hasFilterChanges && !hasAppearanceChanges {
-            return .error("pass at least one smart-list filter or appearance option.")
+            return .failure("invalid_smart_list_edit", "pass at least one smart-list filter or appearance option.", json: json)
         }
 
         // 5. Encode filter ONLY when a filter change was requested; otherwise omit (nil) to preserve.
@@ -277,7 +277,7 @@ struct SmartListEdit: AsyncParsableCommand {
 
         // 6. Require a stable CloudKit identifier.
         guard let ckid = target.ckid, !ckid.isEmpty else {
-            return .error("target smart list has no stable CloudKit identifier.")
+            return .failure("smart_list_missing_identifier", "target smart list has no stable CloudKit identifier.", json: json)
         }
 
         let appearance = buildListAppearance(
@@ -289,12 +289,12 @@ struct SmartListEdit: AsyncParsableCommand {
         do {
             result = try await priv.updateSmartList(smartListId: ckid, filterData: filterData, appearance: appearance)
         } catch let e as WriteError {
-            return .error("Failed to edit smart list '\(target.name)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to edit smart list '\(target.name)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to edit smart list '\(target.name)': \(error)")
+            return .failure("private_write_failed", "Failed to edit smart list '\(target.name)': \(error)", json: json)
         }
         guard result.status == "updated" else {
-            return .error("Failed to edit smart list '\(target.name)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to edit smart list '\(target.name)': \(result.message ?? "private helper failed")", json: json)
         }
 
         // 8. Output.
@@ -333,12 +333,12 @@ func resolveCustomSmartList(store: RemindersStore, name: String?, smartListId: I
                            : store.customSmartListMatches(name: name ?? "")
     if matches.isEmpty {
         let targetDesc = smartListId != nil ? "id \(smartListId!)" : (name ?? "")
-        throw WriteError("custom smart list not found: \(targetDesc)")
+        throw WriteError("custom smart list not found: \(targetDesc)", code: "smart_list_not_found")
     }
     if matches.count > 1 {
         var msg = "multiple custom smart lists match. Use --smart-list-id."
         for row in matches { msg += "\n  \(row.pk): \(row.name)" }
-        throw WriteError(msg)
+        throw WriteError(msg, code: "smart_list_ambiguous")
     }
     let row = matches[0]
     return CustomSmartListTarget(pk: row.pk, name: row.name, ckid: row.ckid)
@@ -354,7 +354,7 @@ struct SmartListDelete: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, smartListId: args.smartListId, force: args.force, json: args.json,
                 store: store, private: priv, confirm: .standard)
@@ -371,7 +371,7 @@ struct SmartListDelete: AsyncParsableCommand {
         // 1. Require a target selector.
         let hasName = name != nil && !(name!.isEmpty)
         if !hasName && smartListId == nil {
-            return .error("provide a smart list name or --smart-list-id.")
+            return .failure("invalid_smart_list_target", "provide a smart list name or --smart-list-id.", json: json)
         }
         // 2. Resolve (custom-only, EXACT-name or Z_PK). Not-found/ambiguous propagate as WriteError.
         let target = try resolveCustomSmartList(store: store, name: name, smartListId: smartListId)
@@ -386,7 +386,7 @@ struct SmartListDelete: AsyncParsableCommand {
 
         // 4. Require a stable CloudKit identifier.
         guard let ckid = target.ckid, !ckid.isEmpty else {
-            return .error("target smart list has no stable CloudKit identifier.")
+            return .failure("smart_list_missing_identifier", "target smart list has no stable CloudKit identifier.", json: json)
         }
 
         // 5. Invoke the private writer.
@@ -394,12 +394,12 @@ struct SmartListDelete: AsyncParsableCommand {
         do {
             result = try await priv.deleteSmartList(smartListId: ckid)
         } catch let e as WriteError {
-            return .error("Failed to delete smart list '\(target.name)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to delete smart list '\(target.name)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to delete smart list '\(target.name)': \(error)")
+            return .failure("private_write_failed", "Failed to delete smart list '\(target.name)': \(error)", json: json)
         }
         guard result.status == "deleted" else {
-            return .error("Failed to delete smart list '\(target.name)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to delete smart list '\(target.name)': \(result.message ?? "private helper failed")", json: json)
         }
 
         // 6. Output.

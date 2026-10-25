@@ -384,14 +384,16 @@ public func resolveRequiredListTarget(store: RemindersStore, name: String?, list
         return (id, title, uuid, false)
     case .group(let id, let title, let uuid, let children):
         guard allowGroups else {
-            throw CLIError(listIsGroupMessage(title: title, children: children), code: "list_is_group")
+            throw CLIError(listIsGroupMessage(title: title, children: children), code: "list_is_group",
+                           context: [("list", .string(requested))])
         }
         return (id, title, uuid, true)
     case .ambiguous(let candidates):
         let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
         throw CLIError("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)",
-                       code: "list_ambiguous")
+                       code: "list_ambiguous", context: [("list", .string(requested))])
     case .notFound:
-        throw CLIError("list not found: \(requested)", code: "list_not_found")
+        throw CLIError("list not found: \(requested)", code: "list_not_found",
+                       context: [("list", .string(requested))])
     }
 }

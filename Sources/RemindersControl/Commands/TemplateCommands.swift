@@ -11,7 +11,7 @@ struct Templates: ParsableCommand {
     @OptionGroup var opts: JSONOnlyOptions
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let payloads = store.templates().map { templateToDict($0) }
             if opts.json {
                 Dispatch.printJSON(.array(payloads.map { .object($0) }), ensureAscii: false)
@@ -44,10 +44,10 @@ struct TemplateInfo: ParsableCommand {
     @Option(name: .long, help: "Read by numeric template ID") var templateId: Int?
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let id = try resolveRequiredTemplateTarget(store: store, name: name, templateId: templateId)
             guard let row = store.templateMatches(templateId: id).first else {
-                throw CLIError("template not found: id \(id)")
+                throw CLIError("template not found: id \(id)", code: "template_not_found")
             }
             let payload = templateToDict(row, store: store, includeItems: true)
             if opts.json {
@@ -129,7 +129,7 @@ struct TemplateCreate: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, fromList: args.fromList, fromListId: args.fromListId,
                 includeCompleted: args.includeCompleted, json: args.json, store: store, private: priv)
@@ -148,15 +148,15 @@ struct TemplateCreate: AsyncParsableCommand {
     ) async throws -> WriteOutcome {
         // 1. Mutually-exclusive source flags.
         if fromList != nil && fromListId != nil {
-            return .error("pass either --from-list or --from-list-id, not both.")
+            return .failure("invalid_template_target", "pass either --from-list or --from-list-id, not both.", json: json)
         }
         // 2. Required source.
         if fromList == nil && fromListId == nil {
-            return .error("pass --from-list or --from-list-id.")
+            return .failure("invalid_template_target", "pass --from-list or --from-list-id.", json: json)
         }
         // 3. Duplicate EXACT-name check.
         if store.templateExactNameCount(name: name) > 0 {
-            return .error("template already exists: \(name). Use a unique template name.")
+            return .failure("template_already_exists", "template already exists: \(name). Use a unique template name.", json: json)
         }
         // 4. Resolve the source list (full 4-tier resolution; surfaces ambiguity/not-found).
         let (resolution, method) = store.resolveListRefWithMethod(name: fromList, listId: fromListId)
@@ -164,18 +164,18 @@ struct TemplateCreate: AsyncParsableCommand {
         switch resolution {
         case .found(let id, let title, let uuid): (listId, listTitle, listUUID) = (id, title, uuid)
         case .group(_, let title, _, let children):
-            return .error(listIsGroupMessage(title: title, children: children))
+            return .failure("list_is_group", listIsGroupMessage(title: title, children: children), json: json)
         case .ambiguous(let candidates):
             let requested = fromListId != nil ? "id \(fromListId!)" : (fromList ?? "")
             let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
-            return .error("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)")
+            return .failure("list_ambiguous", "multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)", json: json)
         case .notFound:
             let requested = fromListId != nil ? "id \(fromListId!)" : (fromList ?? "")
-            return .error("list not found: \(requested)")
+            return .failure("list_not_found", "list not found: \(requested)", json: json)
         }
         // 5. Source list must have a stable CloudKit identifier.
         guard let sourceUUID = listUUID, !sourceUUID.isEmpty else {
-            return .error("source list has no stable CloudKit identifier.")
+            return .failure("list_missing_identifier", "source list has no stable CloudKit identifier.", json: json)
         }
         // Build the sourceList ref payload (list_ref_payload shape) from the full row.
         let requested = fromListId != nil ? "id \(fromListId!)" : (fromList ?? "")
@@ -197,12 +197,12 @@ struct TemplateCreate: AsyncParsableCommand {
         do {
             result = try await priv.createTemplate(name: name, sourceListId: sourceUUID, includeCompleted: includeCompleted)
         } catch let e as WriteError {
-            return .error("Failed to create template '\(name)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to create template '\(name)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to create template '\(name)': \(error)")
+            return .failure("private_write_failed", "Failed to create template '\(name)': \(error)", json: json)
         }
         guard result.status == "created" else {
-            return .error("Failed to create template '\(name)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to create template '\(name)': \(result.message ?? "private helper failed")", json: json)
         }
 
         // 8. Post-write poll: re-read templateMatches(name:) until one exists with itemCount ≥
@@ -251,7 +251,7 @@ struct TemplateApply: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, templateId: args.templateId, json: args.json, store: store, private: priv)
         })
@@ -264,8 +264,8 @@ struct TemplateApply: AsyncParsableCommand {
         store: RemindersStore, private priv: PrivateWriter
     ) async throws -> WriteOutcome {
         // Resolve template (exact-name or Z_PK). Not-found/ambiguous/mutex propagate as CLIError.
-        if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.") }
-        if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.") }
+        if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.", code: "invalid_template_target") }
+        if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.", code: "invalid_template_target") }
         let requested = templateId != nil ? "id \(templateId!)" : (name ?? "")
         let tplId: Int, tplName: String, tplUUID: String?, tplMethod: String
         switch store.resolveTemplateRef(name: name, templateId: templateId) {
@@ -273,25 +273,25 @@ struct TemplateApply: AsyncParsableCommand {
             (tplId, tplName, tplUUID, tplMethod) = (id, nm, uuid, templateId != nil ? "id" : "exact")
         case .ambiguous(let candidates):
             let options = candidates.map { "\($0.id) (\($0.name))" }.joined(separator: ", ")
-            throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)")
+            throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)", code: "template_ambiguous")
         case .notFound:
-            throw CLIError("template not found: \(requested)")
+            throw CLIError("template not found: \(requested)", code: "template_not_found")
         }
         guard let templateUUID = tplUUID, !templateUUID.isEmpty else {
             // The Python helper would receive a null templateId; surface as a helper failure.
-            return .error("Failed to create list from template '\(tplName)': private helper failed")
+            return .failure("template_missing_identifier", "Failed to create list from template '\(tplName)': private helper failed", json: json)
         }
 
         let result: PrivateResult
         do {
             result = try await priv.applyTemplate(templateId: templateUUID)
         } catch let e as WriteError {
-            return .error("Failed to create list from template '\(tplName)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to create list from template '\(tplName)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to create list from template '\(tplName)': \(error)")
+            return .failure("private_write_failed", "Failed to create list from template '\(tplName)': \(error)", json: json)
         }
         guard result.status == "created" else {
-            return .error("Failed to create list from template '\(tplName)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to create list from template '\(tplName)': \(result.message ?? "private helper failed")", json: json)
         }
 
         // Post-write re-read: if the helper returned the new list UUID, fetch the created list.
@@ -333,7 +333,7 @@ struct TemplateDelete: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await Self.perform(
                 name: args.name, templateId: args.templateId, force: args.force, json: args.json,
                 store: store, private: priv, confirm: .standard)
@@ -349,8 +349,8 @@ struct TemplateDelete: AsyncParsableCommand {
         store: RemindersStore, private priv: PrivateWriter, confirm: ConfirmationPrompt
     ) async throws -> WriteOutcome {
         // Resolve template (exact-name or Z_PK). Not-found/ambiguous/mutex propagate as CLIError.
-        if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.") }
-        if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.") }
+        if name == nil && templateId == nil { throw CLIError("pass a template name or --template-id.", code: "invalid_template_target") }
+        if name != nil && templateId != nil { throw CLIError("pass either a template name or --template-id, not both.", code: "invalid_template_target") }
         let requested = templateId != nil ? "id \(templateId!)" : (name ?? "")
         let tplId: Int, tplName: String, tplUUID: String?, tplMethod: String
         switch store.resolveTemplateRef(name: name, templateId: templateId) {
@@ -358,9 +358,9 @@ struct TemplateDelete: AsyncParsableCommand {
             (tplId, tplName, tplUUID, tplMethod) = (id, nm, uuid, templateId != nil ? "id" : "exact")
         case .ambiguous(let candidates):
             let options = candidates.map { "\($0.id) (\($0.name))" }.joined(separator: ", ")
-            throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)")
+            throw CLIError("multiple templates match '\(requested)'. Use --template-id with one of: \(options)", code: "template_ambiguous")
         case .notFound:
-            throw CLIError("template not found: \(requested)")
+            throw CLIError("template not found: \(requested)", code: "template_not_found")
         }
 
         // Confirmation unless --force.
@@ -372,19 +372,19 @@ struct TemplateDelete: AsyncParsableCommand {
         }
 
         guard let templateUUID = tplUUID, !templateUUID.isEmpty else {
-            return .error("Failed to delete template '\(tplName)': private helper failed")
+            return .failure("template_missing_identifier", "Failed to delete template '\(tplName)': private helper failed", json: json)
         }
 
         let result: PrivateResult
         do {
             result = try await priv.deleteTemplate(templateId: templateUUID)
         } catch let e as WriteError {
-            return .error("Failed to delete template '\(tplName)': \(e.message.isEmpty ? "private helper failed" : e.message)")
+            return .failure("private_write_failed", "Failed to delete template '\(tplName)': \(e.message.isEmpty ? "private helper failed" : e.message)", json: json)
         } catch {
-            return .error("Failed to delete template '\(tplName)': \(error)")
+            return .failure("private_write_failed", "Failed to delete template '\(tplName)': \(error)", json: json)
         }
         guard result.status == "deleted" else {
-            return .error("Failed to delete template '\(tplName)': \(result.message ?? "private helper failed")")
+            return .failure("private_write_failed", "Failed to delete template '\(tplName)': \(result.message ?? "private helper failed")", json: json)
         }
 
         if json {

@@ -12,7 +12,7 @@ struct ListInfo: ParsableCommand {
     @Option(name: .long, help: "List by stable numeric ID") var listId: Int?
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: opts.json) { store in
             let report = try listInfoReport(store: store, name: name, listId: listId)
             if opts.json {
                 Dispatch.printJSON(report.json, ensureAscii: false)

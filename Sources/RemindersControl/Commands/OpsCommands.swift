@@ -16,7 +16,7 @@ struct Export: ParsableCommand {
     @Flag(name: .long, help: "Accepted for compatibility; output is governed by --format") var json = false
 
     func run() throws {
-        Dispatch.runRead { store in
+        Dispatch.runRead(json: json || format == .json) { store in
             let items: [Row]
             if list != nil || listId != nil {
                 let pk = try resolveRequiredListTarget(store: store, name: list, listId: listId).id
@@ -60,7 +60,7 @@ struct Import: AsyncParsableCommand {
 
     func run() async throws {
         let path = file, json = self.json, dryRun = self.dryRun
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth(json: json) { store, writer, priv in
             await Self.perform(
                 path: path,
                 readFile: { p in
@@ -106,17 +106,21 @@ struct Import: AsyncParsableCommand {
         if path == "-" {
             switch readPipedDocument(stdin) {
             case let .document(bytes):  data = bytes
-            case let .refused(outcome): return outcome
+            case let .refused(message):
+                return .failure("import_read_failed", message, json: json)
             }
         } else {
-            guard let bytes = readFile(path) else { return .error("File '\(path)' not found") }
+            guard let bytes = readFile(path) else {
+                return .failure("import_file_not_found", "File '\(path)' not found", json: json,
+                                context: [("input", .string(path))])
+            }
             data = bytes
         }
         guard let decoded = decodeJSON(data) else {
-            return .error("Failed to read JSON: \(jsonErrorText(data))")
+            return .failure("invalid_import_json", "Failed to read JSON: \(jsonErrorText(data))", json: json)
         }
         guard case let .array(items) = decoded else {
-            return .error("JSON must be an array of reminder objects")
+            return .failure("invalid_import", "JSON must be an array of reminder objects", json: json)
         }
 
         let total = items.count
@@ -148,7 +152,7 @@ struct Import: AsyncParsableCommand {
         for (index, item) in pending.enumerated() {
             // Items run with json:true so the created id is machine-readable; the item's own
             // output never reaches the caller — import prints its own progress instead.
-            let outcome = await WriteDispatch.perform {
+            let outcome = await WriteDispatch.perform(json: json) {
                 try await Add.perform(
                     title: item.title, list: item.list, notes: item.notes,
                     due: item.due, priority: item.priority,
@@ -158,9 +162,17 @@ struct Import: AsyncParsableCommand {
             }
             guard outcome.exitCode == 0,
                   case let .object(pairs)? = OrderedJSON.parse(Data(outcome.stdout.utf8)) else {
-                let message = [outcome.stderr, outcome.stdout]
+                let rawMessage = [outcome.stderr, outcome.stdout]
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .first(where: { !$0.isEmpty }) ?? "add exited \(outcome.exitCode)"
+                let parsed = OrderedJSON.parse(Data(outcome.stderr.utf8))
+                let message: String
+                if json, case let .object(fields)? = parsed,
+                   case let .string(detail)? = fields.first(where: { $0.0 == "message" })?.1 {
+                    message = detail
+                } else {
+                    message = rawMessage
+                }
                 errors.append(.object([
                     ("index", .int(index)), ("title", .string(item.title)), ("message", .string(message)),
                 ]))
@@ -180,11 +192,18 @@ struct Import: AsyncParsableCommand {
         }
 
         if json {
+            if !errors.isEmpty {
+                return .failure("import_partial", "Import failed for \(errors.count) of \(total) reminders.", json: true,
+                                context: [
+                                    ("created", .int(created)), ("createdIds", .array(createdIds)),
+                                    ("errors", .array(errors)), ("total", .int(total)),
+                                ])
+            }
             let summary: JSONValue = .object([
-                ("status", .string(errors.isEmpty ? "completed" : "partial")),
+                ("status", .string("completed")),
                 ("created", .int(created)),
                 ("createdIds", .array(createdIds)),
-                ("errors", .array(errors)),
+                ("errors", .array([])),
                 ("total", .int(total)),
             ])
             out += summary.serialized(indent: nil, ensureAscii: true) + "\n"
@@ -315,24 +334,21 @@ struct Import: AsyncParsableCommand {
     /// The largest document `import -` accepts (Python's 8 MiB cap).
     private static let maxPipedDocumentBytes = 8 * 1024 * 1024
 
-    /// Read the document from standard input (`import -`). A terminal is refused without being
-    /// read, so an interactive caller is never left waiting for input nobody is going to type.
-    /// Both refusals keep Python's plain `Error: Failed to read JSON: …` line, like the file read
-    /// failures above; the structured payload starts at the per-item validation gate.
+    /// A terminal is refused without being read, so an interactive caller never waits for input.
     private static func readPipedDocument(_ stdin: StandardInput) -> PipedDocument {
         guard !stdin.isInteractive() else {
-            return .refused(.error("Failed to read JSON: import - requires piped standard input"))
+            return .refused("Failed to read JSON: import - requires piped standard input")
         }
         let data = stdin.read(maxPipedDocumentBytes)
         guard data.count <= maxPipedDocumentBytes else {
-            return .refused(.error("Failed to read JSON: standard input exceeds 8 MiB"))
+            return .refused("Failed to read JSON: standard input exceeds 8 MiB")
         }
         return .document(data)
     }
 
     private enum PipedDocument {
         case document(Data)
-        case refused(WriteOutcome)
+        case refused(String)
     }
 
     /// Best-effort Swift error text for the `Failed to read JSON:` message. `OrderedJSON.parse`
@@ -377,6 +393,10 @@ struct Doctor: ParsableCommand {
         let (result, failCount, _) = DoctorRuntime.buildResult(checks: checks, context: context, forAgent: forAgent)
 
         if json {
+            if failCount > 0 {
+                WriteDispatch.emit(.failure("doctor_failed", "RemCTL doctor found \(failCount) failing checks.",
+                                            json: true, context: [("report", result)]))
+            }
             print(result.serialized(indent: 2, ensureAscii: false))
         } else {
             let ansi = Ansi.resolve(noColorFlag: noColor)
@@ -571,7 +591,10 @@ struct Permissions: ParsableCommand {
         if topic != "full-disk-access" {
             return Outcome(
                 stdout: "",
-                stderr: "Error: Unsupported permissions topic '\(topic)'\n",
+                stderr: json
+                    ? CommandFailure("unsupported_permissions_topic", "Unsupported permissions topic '\(topic)'",
+                                     context: [("input", .string(topic))]).outcome(json: true).stderr
+                    : "Error: Unsupported permissions topic '\(topic)'\n",
                 exitCode: 1
             )
         }
@@ -616,7 +639,14 @@ struct Setup: ParsableCommand {
     @Flag(name: .long, help: "Output machine-readable JSON.") var json = false
 
     func run() throws {
-        let outcome = try Self.perform(shellArg: shell, doctor: doctor, json: json)
+        let outcome: Outcome
+        do {
+            outcome = try Self.perform(shellArg: shell, doctor: doctor, json: json)
+        } catch let failure as CLIError {
+            WriteDispatch.emit(FailureRendering.outcome(failure, json: json))
+        } catch {
+            WriteDispatch.emit(CommandFailure("setup_failed", "\(error)").outcome(json: json))
+        }
         if !outcome.stdout.isEmpty {
             // Use FileHandle to avoid print()'s implicit newline when the output already ends with \n.
             FileHandle.standardOutput.write(Data(outcome.stdout.utf8))

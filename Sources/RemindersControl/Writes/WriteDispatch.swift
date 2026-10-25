@@ -21,10 +21,13 @@ public enum WriteDispatch {
     /// no-stable-identifier refusals (NEVER falls back to title matching). `op` is the gerund
     /// phrase used in the refusal, e.g. "complete it" / "edit it".
     public static func resolveReminderForWrite(_ store: RemindersStore, id: Int, op: String) throws -> (title: String, ckid: String) {
-        guard let row = store.reminder(pk: id) else { throw WriteError("#\(id) not found") }
+        guard let row = store.reminder(pk: id) else {
+            throw WriteError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
+        }
         let title = row.string("ZTITLE")
         guard let ckid = row.string("ZCKIDENTIFIER"), !ckid.isEmpty else {
-            throw WriteError(noStableIdentifierMessage(id: id, title: title, op: op))
+            throw WriteError(noStableIdentifierMessage(id: id, title: title, op: op),
+                             code: "no_stable_identifier", context: [("id", .int(id))])
         }
         return (title ?? "", ckid)
     }
@@ -36,49 +39,10 @@ public enum WriteDispatch {
         return "The reminder has no stable identifier. Refusing unsafe title-based fallback for #\(id) ('\(shownTitle)') while trying to \(op)."
     }
 
-    /// Run an async write core, mapping thrown WriteError / RemindersDBUnavailable / other to a WriteOutcome.
-    public static func perform(_ body: () async throws -> WriteOutcome) async -> WriteOutcome {
-        do { return try await body() }
-        catch let e as WriteError { return .error(withAccessHint(e.message), code: e.exitCode) }
-        catch let e as RemindersDBUnavailable { return .error(e.message) }
-        catch { return .error("\(error)") }
-    }
-
     /// A write refused for lack of Reminders access names the same-context fix
     /// (upstream cd31b51 `fail_bridge_write`).
     static func withAccessHint(_ message: String) -> String {
         isEventKitAccessError(message) ? message + "\n" + eventKitAccessFixText() : message
-    }
-
-    /// Opens the read store + the production writer and runs `body`, mapping any thrown error to a
-    /// WriteOutcome. The standard shell for write commands that resolve a Z_PK against the read store.
-    public static func runShell(_ body: @escaping (RemindersStore, RemindersWriter) async throws -> WriteOutcome) async -> WriteOutcome {
-        await perform {
-            let store = try RemindersStore.open()
-            let writer = WriterFactory.make()
-            return try await body(store, writer)
-        }
-    }
-
-    /// Opens the read store + the private writer and runs `body`, mapping any thrown error to a
-    /// WriteOutcome. The standard shell for write commands that use only the private writer.
-    public static func runShellPrivate(_ body: @escaping (RemindersStore, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
-        await perform {
-            let store = try RemindersStore.open()
-            let privateWriter = PrivateWriterFactory.make()
-            return try await body(store, privateWriter)
-        }
-    }
-
-    /// Opens the read store + the production writer + the private writer and runs `body`, mapping
-    /// any thrown error to a WriteOutcome. The standard shell for write commands that need both.
-    public static func runShellBoth(_ body: @escaping (RemindersStore, RemindersWriter, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
-        await perform {
-            let store = try RemindersStore.open()
-            let writer = WriterFactory.make()
-            let privateWriter = PrivateWriterFactory.make()
-            return try await body(store, writer, privateWriter)
-        }
     }
 
     /// Emit a WriteOutcome from the ArgumentParser shell (writes streams + exits). Never returns.

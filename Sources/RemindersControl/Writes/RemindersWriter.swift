@@ -78,10 +78,15 @@ public struct AuthSummary: Equatable {
 
 /// A write that failed with a user-facing message + exit code (mirrors fail()/fail_invalid_due_date).
 /// `message` is WITHOUT the "Error: " prefix; the command shell adds it.
-public struct WriteError: Error, Equatable {
+public struct WriteError: Error {
     public let message: String
     public let exitCode: Int32
-    public init(_ message: String, exitCode: Int32 = 1) { self.message = message; self.exitCode = exitCode }
+    public let code: String
+    public let context: [(String, JSONValue)]
+    public init(_ message: String, exitCode: Int32 = 1, code: String = "write_failed",
+                context: [(String, JSONValue)] = []) {
+        self.message = message; self.exitCode = exitCode; self.code = code; self.context = context
+    }
 }
 
 /// The EventKit boundary. `id` is the reminder's ZCKIDENTIFIER / EventKit calendarItemIdentifier.

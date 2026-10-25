@@ -119,7 +119,13 @@ import GRDB
             readFile: reader(#"[{"title":"A"}]"#),
             stdin: noStdin, json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
-        #expect(out.stdout == #"{"status": "partial", "created": 0, "createdIds": [], "errors": [{"index": 0, "title": "A", "message": "Error: List not found: Work"}], "total": 1}"# + "\n")
+        #expect(out.stdout.isEmpty)
+        let payload = try JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any]
+        #expect(payload?["status"] as? String == "error")
+        #expect(payload?["code"] as? String == "import_partial")
+        #expect(payload?["created"] as? Int == 0)
+        let errors = payload?["errors"] as? [[String: Any]]
+        #expect(errors?.first?["message"] as? String == "List not found: Work")
     }
 
     @Test func importAcceptsExportedRecurrenceObject() async throws {
@@ -383,7 +389,9 @@ import GRDB
             path: "-", readFile: noFile, stdin: tty,
             json: true, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: .current)
         #expect(out.exitCode == 1)
-        #expect(out.stderr == "Error: Failed to read JSON: import - requires piped standard input\n")
+        let failure = try JSONSerialization.jsonObject(with: Data(out.stderr.utf8)) as? [String: Any]
+        #expect(failure?["code"] as? String == "import_read_failed")
+        #expect(failure?["message"] as? String == "Failed to read JSON: import - requires piped standard input")
         #expect(out.stdout.isEmpty)
         #expect(m.calls.isEmpty)
     }

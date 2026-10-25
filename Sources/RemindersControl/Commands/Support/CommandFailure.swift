@@ -20,24 +20,58 @@ public struct CommandFailure: Error {
     }
 }
 
+extension WriteOutcome {
+    public static func failure(_ code: String, _ message: String, json: Bool,
+                               context: [(String, JSONValue)] = []) -> WriteOutcome {
+        CommandFailure(code, message, context: context).outcome(json: json)
+    }
+}
+
+public enum FailureRendering {
+    public static func outcome(_ error: Error, json: Bool) -> WriteOutcome {
+        if let failure = error as? CommandFailure { return failure.outcome(json: json) }
+        if let failure = error as? CLIError {
+            return CommandFailure(failure.code ?? "invalid_request", failure.message,
+                                  context: failure.context).outcome(json: json)
+        }
+        if let failure = error as? RemindersDBUnavailable {
+            return CommandFailure("database_unavailable", failure.message).outcome(json: json)
+        }
+        if let failure = error as? WriteError {
+            let message = WriteDispatch.withAccessHint(failure.message)
+            var result = CommandFailure(failure.code, message, context: failure.context).outcome(json: json)
+            result.exitCode = failure.exitCode
+            return result
+        }
+        if let failure = error as? SmartListFilterError {
+            return CommandFailure("invalid_smart_list_filter", failure.message).outcome(json: json)
+        }
+        if let failure = error as? PrivateStepFailure {
+            return CommandFailure("private_write_failed", failure.message).outcome(json: json)
+        }
+        return CommandFailure("command_failed", "\(error)").outcome(json: json)
+    }
+}
+
 extension WriteDispatch {
-    /// `perform` for commands that follow the JSON error convention: every failure, including
-    /// the shared target-resolution `CLIError`s, renders through `CommandFailure`.
-    public static func perform(json: Bool, _ body: () async throws -> WriteOutcome) async -> WriteOutcome {
+    public static func perform(json: Bool = false, _ body: () async throws -> WriteOutcome) async -> WriteOutcome {
         do { return try await body() }
-        catch let failure as CommandFailure { return failure.outcome(json: json) }
-        catch let error as CLIError {
-            return CommandFailure(error.code ?? "invalid_request", error.message).outcome(json: json)
-        }
-        catch let error as RemindersDBUnavailable {
-            return CommandFailure("database_unavailable", error.message).outcome(json: json)
-        }
-        catch let error as WriteError { return CommandFailure("write_failed", error.message).outcome(json: json) }
-        catch { return CommandFailure("command_failed", "\(error)").outcome(json: json) }
+        catch { return FailureRendering.outcome(error, json: json) }
     }
 
+    public static func runShell(json: Bool = false, _ body: @escaping (RemindersStore, RemindersWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+        await perform(json: json) { try await body(try RemindersStore.open(), WriterFactory.make()) }
+    }
+
+    public static func runShellBoth(json: Bool = false, _ body: @escaping (RemindersStore, RemindersWriter, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+        await perform(json: json) {
+            try await body(try RemindersStore.open(), WriterFactory.make(), PrivateWriterFactory.make())
+        }
+    }
+}
+extension WriteDispatch {
     /// `runShellPrivate` with the JSON error convention.
-    public static func runShellPrivate(json: Bool, _ body: @escaping (RemindersStore, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
+    public static func runShellPrivate(json: Bool = false, _ body: @escaping (RemindersStore, PrivateWriter) async throws -> WriteOutcome) async -> WriteOutcome {
         await perform(json: json) {
             try await body(try RemindersStore.open(), PrivateWriterFactory.make())
         }

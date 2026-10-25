@@ -239,8 +239,12 @@ enum ReminderStateBatch {
                 ("results", .array(items.map { itemJSON($0, successStatus: operation.successStatus, row: rows[$0.id]) })),
             ]
             if !duplicates.isEmpty { pairs.append(("duplicatesIgnored", .array(duplicates.map { .int($0) }))) }
-            return WriteOutcome(stdout: JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n",
-                                exitCode: exitCode)
+            if !failed.isEmpty {
+                return .failure(succeeded.isEmpty ? "batch_failed" : "batch_partial",
+                                "\(failed.count) reminder(s) could not be \(operation.verb.lowercased()).",
+                                json: true, context: [("summary", .object(pairs))])
+            }
+            return WriteOutcome(stdout: JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n")
         }
 
         var stdout = ""

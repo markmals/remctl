@@ -67,7 +67,7 @@ struct Add: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth(json: json) { store, writer, priv in
             try await Self.perform(
                 title: args.title, list: args.list, listId: args.listId, notes: args.notes,
                 due: args.due, priority: args.priority, recurrence: args.recurrence, alarm: args.alarm,
@@ -103,7 +103,7 @@ struct Add: AsyncParsableCommand {
 
         // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
         if assign != nil && unassign {
-            throw CLIError("pass either --assign or --unassign, not both.")
+            throw CLIError("pass either --assign or --unassign, not both.", code: "invalid_assignment")
         }
 
         // wantsPrivate (hybrid imply-rule; `--private` removed): ANY private-ONLY flag present.
@@ -140,7 +140,8 @@ struct Add: AsyncParsableCommand {
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)",
+                                 code: "invalid_recurrence", context: [("field", .string("recurrence")), ("input", .string(recurrence))])
             }
             parsedRecurrence = r
         }
@@ -148,7 +149,8 @@ struct Add: AsyncParsableCommand {
         var parsedAlarm: AlarmWrite? = nil
         if let alarm, !alarm.isEmpty {
             guard let al = WriteParsing.parseAlarmSpec(alarm, allowClear: false) else {
-                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm)). Use 15m, 1h, 1d, or an absolute date.")
+                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm)). Use 15m, 1h, 1d, or an absolute date.",
+                                 code: "invalid_alarm", context: [("field", .string("alarm")), ("input", .string(alarm))])
             }
             parsedAlarm = al
         }
@@ -156,7 +158,7 @@ struct Add: AsyncParsableCommand {
         var priorityValue: Int? = nil
         if let priority, !priority.isEmpty {
             guard let p = WriteParsing.parsePriority(priority, allowAliases: true) else {
-                throw WriteError("priority must be high, medium, low, or none.")
+                throw WriteError("priority must be high, medium, low, or none.", code: "invalid_priority")
             }
             priorityValue = p
         }
@@ -172,7 +174,7 @@ struct Add: AsyncParsableCommand {
         // 2a. Early-Reminder due-date guard (cmd_add:5156): a non-clear early-reminder requires a
         //     due date on the new reminder. Runs AFTER due/priority/alarm/recurrence validation.
         if case .set = parsedEarly, dueDate == nil {
-            throw CLIError("Early Reminder requires a reminder due date.")
+            throw CLIError("Early Reminder requires a reminder due date.", code: "early_reminder_requires_due_date")
         }
 
         // 2a'. Relative-alarm due-date guard (cmd_add:8773): a relative alarm counts back from the
@@ -198,7 +200,7 @@ struct Add: AsyncParsableCommand {
         //     (remctl-bridge.swift:359) that EventKitWriter.create reproduces — NO trimming,
         //     so a whitespace-only title is accepted. Runs AFTER due-validation (exit 2 wins)
         //     and the Phase-3 stub guard (private-refusal fires first), matching parity.
-        if title.isEmpty { throw WriteError("title is required for create") }
+        if title.isEmpty { throw WriteError("title is required for create", code: "invalid_title") }
 
         // 3. List resolution (only when a list name / id was given). EventKit uses the
         //    default list otherwise. Capture the resolution method for the resolvedList output.
@@ -254,11 +256,11 @@ struct Add: AsyncParsableCommand {
                     store: store, listPk: resolution?.id, section: section, sectionId: sectionId,
                     newSection: newSection, smartList: smartList, smartListId: smartListId)
             } catch let error as CLIError where json {
-                return CommandFailure(error.code ?? "invalid_section_target", error.message).outcome(json: true)
+                return FailureRendering.outcome(error, json: true)
             }
             if let assign {
                 guard let listPk = resolution?.id else {
-                    throw CLIError("--assign requires a target shared list via -l/--list or --list-id.")
+                    throw CLIError("--assign requires a target shared list via -l/--list or --list-id.", code: "invalid_assignment")
                 }
                 _ = try resolveSharee(store: store, listPk: listPk, value: assign)
                 _ = try resolveAssignmentOriginator(store: store, listPk: listPk)
@@ -510,7 +512,7 @@ struct Edit: AsyncParsableCommand {
 
     func run() async throws {
         let args = self
-        WriteDispatch.emit(await WriteDispatch.runShellBoth { store, writer, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellBoth(json: json) { store, writer, priv in
             try await Self.perform(
                 id: args.id, title: args.title, list: args.list, listId: args.listId,
                 notes: args.notes, due: args.due, priority: args.priority, url: args.url,
@@ -551,13 +553,15 @@ struct Edit: AsyncParsableCommand {
 
         // validate_private_args (upstream 683c362): --assign and --unassign are exclusive.
         if assign != nil && unassign {
-            throw CLIError("pass either --assign or --unassign, not both.")
+            throw CLIError("pass either --assign or --unassign, not both.", code: "invalid_assignment")
         }
 
         // 1. Resolve pk -> (title, ckid) with the "edit it" refusal, and read the current row
         //    for ZDUEDATE / ZDISPLAYDATEDATE / ZLIST (needed for nudge / carry / clear).
         let (_, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "edit it")
-        guard let row = store.reminder(pk: id) else { throw WriteError("#\(id) not found") }
+        guard let row = store.reminder(pk: id) else {
+            throw WriteError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
+        }
         let currentDue = timedDueRaw(row, calendar: calendar, hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: id) })
         let currentDisplay = row.double("ZDISPLAYDATEDATE")
 
@@ -624,7 +628,7 @@ struct Edit: AsyncParsableCommand {
         if let priority, !priority.isEmpty {
             // edit has NO short aliases (allowAliases: false).
             guard let p = WriteParsing.parsePriority(priority, allowAliases: false) else {
-                throw WriteError("priority must be high, medium, low, or none.")
+                throw WriteError("priority must be high, medium, low, or none.", code: "invalid_priority")
             }
             priorityValue = p
         }
@@ -634,7 +638,8 @@ struct Edit: AsyncParsableCommand {
         var parsedRecurrence: RecurrenceWrite? = nil
         if let recurrence, !recurrence.isEmpty, !clearRecurrence {
             guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)")
+                throw WriteError("could not parse recurrence \(WriteFormatting.pyRepr(recurrence)). \(WriteParsing.recurrenceGrammarHint)",
+                                 code: "invalid_recurrence", context: [("field", .string("recurrence")), ("input", .string(recurrence))])
             }
             parsedRecurrence = r
         }
@@ -655,7 +660,7 @@ struct Edit: AsyncParsableCommand {
         //     only when no new due is given AND the reminder has no existing ZDUEDATE.
         if case .set = parsedEarly {
             if dueIsClear || (dueDate == nil && currentDue == nil) {
-                throw CLIError("Early Reminder requires a reminder due date.")
+                throw CLIError("Early Reminder requires a reminder due date.", code: "early_reminder_requires_due_date")
             }
         }
 
@@ -675,7 +680,8 @@ struct Edit: AsyncParsableCommand {
             if let al = WriteParsing.parseAlarmSpec(alarm!, allowClear: true, calendar: calendar) {
                 if al == .clear { clearAlarm = true } else { parsedAlarm = al }
             } else {
-                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm!)). Use 15m, 1h, 1d, an absolute date, or clear.")
+                throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm!)). Use 15m, 1h, 1d, an absolute date, or clear.",
+                                 code: "invalid_alarm", context: [("field", .string("alarm")), ("input", .string(alarm!))])
             }
         }
 
@@ -702,7 +708,7 @@ struct Edit: AsyncParsableCommand {
                 store: store, listPk: resolution?.id ?? row.int("ZLIST"), section: section, sectionId: sectionId,
                 newSection: newSection, smartList: smartList, smartListId: smartListId) : nil
         } catch let error as CLIError where json {
-            return CommandFailure(error.code ?? "invalid_section_target", error.message).outcome(json: true)
+            return FailureRendering.outcome(error, json: true)
         }
 
         // 4b. Parent-with-subtasks list move (upstream ed5e982): EventKit cannot carry a subtask
@@ -902,9 +908,15 @@ struct Edit: AsyncParsableCommand {
             // reminder an hour (or a day) off. Put the original back before reporting
             // (port of warn_if_nudged_due_stranded, remctl:3185).
             guard nudgeSucceeded, let dueDate else { throw error }
-            var outcome = await WriteDispatch.perform { throw error }
-            if let warning = await restoreNudgedDue(writer: writer, ckid: ckid, due: dueDate, allDay: dueAllDay) {
-                outcome.stderr = warning + outcome.stderr
+            let warning = await restoreNudgedDue(writer: writer, ckid: ckid, due: dueDate, allDay: dueAllDay)
+            var outcome = FailureRendering.outcome(error, json: json)
+            if let warning {
+                if json, case let .object(fields)? = OrderedJSON.parse(Data(outcome.stderr.utf8)) {
+                    let payload = JSONValue.object(fields + [("warning", .string(warning.trimmingCharacters(in: .newlines)))])
+                    outcome.stderr = payload.serialized(indent: nil, ensureAscii: false) + "\n"
+                } else {
+                    outcome.stderr = warning + outcome.stderr
+                }
             }
             return outcome
         }
@@ -1100,7 +1112,7 @@ struct Done: AsyncParsableCommand {
 
     func run() async throws {
         let ids = [id] + moreIds, date = self.date, json = self.json, batch = self.batch
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShell(json: json) { store, writer in
             guard batch || ids.count > 1 else {
                 return try await Self.perform(id: ids[0], date: date, json: json, store: store, writer: writer)
             }
@@ -1199,7 +1211,7 @@ struct Undone: AsyncParsableCommand {
 
     func run() async throws {
         let ids = [id] + moreIds, json = self.json, batch = self.batch
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShell(json: json) { store, writer in
             guard batch || ids.count > 1 else {
                 return try await Self.perform(id: ids[0], json: json, store: store, writer: writer)
             }
@@ -1233,7 +1245,7 @@ struct Delete: AsyncParsableCommand {
 
     func run() async throws {
         let ids = [id] + moreIds, force = self.force, json = self.json, batch = self.batch
-        WriteDispatch.emit(await WriteDispatch.runShell { store, writer in
+        WriteDispatch.emit(await WriteDispatch.runShell(json: json) { store, writer in
             guard batch || ids.count > 1 else {
                 return try await Self.perform(id: ids[0], force: force, json: json, store: store,
                                               writer: writer, confirm: .standard)
@@ -1269,7 +1281,7 @@ struct FlagCmd: AsyncParsableCommand {
 
     func run() async throws {
         let id = self.id, json = self.json
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await FlagCmd.performFlag(id: id, flagged: true, json: json, store: store, private: priv)
         })
     }
@@ -1282,7 +1294,7 @@ struct Unflag: AsyncParsableCommand {
 
     func run() async throws {
         let id = self.id, json = self.json
-        WriteDispatch.emit(await WriteDispatch.runShellPrivate { store, priv in
+        WriteDispatch.emit(await WriteDispatch.runShellPrivate(json: json) { store, priv in
             try await FlagCmd.performFlag(id: id, flagged: false, json: json, store: store, private: priv)
         })
     }
@@ -1382,7 +1394,7 @@ struct Link: AsyncParsableCommand {
         let ansi = Ansi.resolve(noColorFlag: noColor)
         // link is READ-ONLY: no writer needed. WriteDispatch.perform maps thrown
         // CLIError / RemindersDBUnavailable to a WriteOutcome ("Error: <msg>", exit 1).
-        let outcome = await WriteDispatch.perform {
+        let outcome = await WriteDispatch.perform(json: json) {
             let store = try RemindersStore.open()
             return try Self.perform(ids: ids, list: list, listId: listId,
                                     completed: completed, json: json, store: store, ansi: ansi)
@@ -1396,7 +1408,7 @@ struct Link: AsyncParsableCommand {
         var ids = ids
         // 1. IDs and a list target are mutually exclusive (remctl:5910).
         if !ids.isEmpty && (list != nil || listId != nil) {
-            throw CLIError("pass reminder IDs or a list target, not both.")
+            throw CLIError("pass reminder IDs or a list target, not both.", code: "invalid_list_target")
         }
         // 2. A list target expands to that list's top-level reminders (remctl:5913-5916).
         //    resolveRequiredListTarget's own errors (not found / ambiguous) pass through.
@@ -1408,7 +1420,9 @@ struct Link: AsyncParsableCommand {
         // 3. Nothing to do (remctl:5917-5919). NOTE: cmd_link prints this line WITHOUT an "Error: "
         //    prefix (unlike the "not both" message), so return the bare stderr rather than a CLIError.
         if ids.isEmpty {
-            return WriteOutcome(stderr: "No reminders specified.\n", exitCode: 1)
+            return json
+                ? .failure("invalid_request", "No reminders specified.", json: true)
+                : WriteOutcome(stderr: "No reminders specified.\n", exitCode: 1)
         }
         // 4. Resolve each id. Missing -> warn (non-fatal); NULL ckid -> silently skip (remctl:5921-5927).
         var results: [(id: Int, title: String, link: String, listName: String?)] = []
@@ -1462,7 +1476,7 @@ struct Open: AsyncParsableCommand {
 
     func run() async throws {
         let id = self.id
-        let outcome = await WriteDispatch.perform {
+        let outcome = await WriteDispatch.perform(json: false) {
             // The store is only needed for the specific-reminder branch; open it lazily there.
             return try Self.perform(id: id, store: { try RemindersStore.open() }, launch: Self.launchWithOpen)
         }
@@ -1492,7 +1506,7 @@ struct Open: AsyncParsableCommand {
             let s = try store()
             guard let r = s.reminder(pk: id) else {
                 // Specific-reminder not-found is FATAL here (unlike link's warn) — remctl:5941-5943.
-                throw CLIError("#\(id) not found")
+                throw CLIError("#\(id) not found", code: "not_found", context: [("id", .int(id))])
             }
             if let ckid = r.string("ZCKIDENTIFIER"), !ckid.isEmpty {
                 launch([reminderDeepLink(ckid)])   // x-apple-reminderkit://REMCDReminder/<ckid>
