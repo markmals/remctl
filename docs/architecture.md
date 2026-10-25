@@ -139,6 +139,15 @@ Private writes cover the parts of Reminders that EventKit does not:
   has verified materialize correctly.
 - **Templates:** whole-list template create/apply/delete.
 
+Dispatch is defensive about the private surface: every change-item context it
+touches (section, attachment, hashtag, flagged, urgent, assignment, subtask) is
+checked before use, so a context ReminderKit no longer vends fails loudly rather
+than reporting a silent success; the account fallback accepts only writable
+CloudKit accounts (`No active iCloud Reminders account found` otherwise); and
+capability-dependent operations — grocery categorization and smart-list pinning —
+pick the receiver and argument type the host's ReminderKit actually exposes, or
+fail before a save request is created.
+
 These call private APIs that are reverse-engineered and may change across macOS
 releases. They are **sync-safe because they never write SQLite directly** — they
 go through ReminderKit save requests, so they will not corrupt the store or
