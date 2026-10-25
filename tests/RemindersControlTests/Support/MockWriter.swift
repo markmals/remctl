@@ -17,6 +17,10 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
     var resultID: String? = "EK-NEW"
     var resultTitle: String? = ""
     var throwError: WriteError?
+    /// 1-based indexes of `update` calls that throw, so a test can fail the real write while the
+    /// preceding nudge succeeds.
+    var failingUpdateCalls: Set<Int> = []
+    private var updateCount = 0
 
     private func resultOr(_ status: String) throws -> WriteResult {
         if let e = throwError { throw e }
@@ -24,7 +28,12 @@ final class MockWriter: RemindersWriter, @unchecked Sendable {
     }
     func authorize() async throws -> AuthSummary { calls.append(.authorize); return AuthSummary(calendarCount: 1, defaultList: "Reminders") }
     func create(_ w: ReminderWrite) async throws -> WriteResult { calls.append(.create(w)); return try resultOr("created") }
-    func update(id: String, _ w: ReminderWrite) async throws -> WriteResult { calls.append(.update(id: id, w)); return try resultOr("updated") }
+    func update(id: String, _ w: ReminderWrite) async throws -> WriteResult {
+        calls.append(.update(id: id, w))
+        updateCount += 1
+        if failingUpdateCalls.contains(updateCount) { throw WriteError("update failed") }
+        return try resultOr("updated")
+    }
     func delete(id: String) async throws -> WriteResult { calls.append(.delete(id: id)); return try resultOr("deleted") }
     func complete(id: String, completionDate: Date?) async throws -> WriteResult { calls.append(.complete(id: id, completionDate: completionDate)); return try resultOr("completed") }
     func uncomplete(id: String) async throws -> WriteResult { calls.append(.uncomplete(id: id)); return try resultOr("uncompleted") }

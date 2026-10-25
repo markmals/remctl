@@ -650,13 +650,27 @@ struct Edit: AsyncParsableCommand {
         }
 
         // 9. Fire the nudge first (separate update), then the real update.
+        var nudgeSucceeded = false
         if let nudgeDate {
             var nudge = ReminderWrite()
             nudge.due = .set(nudgeDate)
             if dueAllDay { nudge.allDay = true }
             _ = try await writer.update(id: ckid, nudge)
+            nudgeSucceeded = true
         }
-        _ = try await writer.update(id: ckid, write)
+        do {
+            _ = try await writer.update(id: ckid, write)
+        } catch {
+            // The nudge already moved the due date, so a failed real write would strand the
+            // reminder an hour (or a day) off. Put the original back before reporting
+            // (port of warn_if_nudged_due_stranded, remctl:3185).
+            guard nudgeSucceeded, let dueDate else { throw error }
+            var outcome = await WriteDispatch.perform { throw error }
+            if let warning = await restoreNudgedDue(writer: writer, ckid: ckid, due: dueDate, allDay: dueAllDay) {
+                outcome.stderr = warning + outcome.stderr
+            }
+            return outcome
+        }
 
         // 9a. Private fan-out (only when wantsPrivate) on the resolved ckid (cmd_edit:5549).
         var privateResults: [PrivateResult] = []
@@ -713,6 +727,18 @@ struct Edit: AsyncParsableCommand {
             return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
         }
         return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
+    }
+
+    /// Port of `rollback_nudged_due` (remctl:3168): put the pre-nudge due date back after a failed
+    /// real write. Returns nil when the reminder is back to its original due date, or the warning
+    /// to print above the error when even the rollback write failed.
+    private static func restoreNudgedDue(writer: RemindersWriter, ckid: String, due: Date, allDay: Bool) async -> String? {
+        var restore = ReminderWrite()
+        restore.due = .set(due)
+        if allDay { restore.allDay = true }
+        if let result = try? await writer.update(id: ckid, restore), result.status == "updated" { return nil }
+        let offset = allDay ? "1 day" : "1 hour"
+        return "Warning: reminder due date may be wrong by \(offset) (reminder id \(ckid)); check it in Reminders.\n"
     }
 
     /// Adapter: parse tags (CSV) and forward to the shared `PrivateChanges.apply` fan-out. The

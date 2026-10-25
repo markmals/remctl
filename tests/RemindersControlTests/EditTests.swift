@@ -111,6 +111,78 @@ import GRDB
         } else { Issue.record("second call should be the real update") }
     }
 
+    /// A store whose reminder 42 is already due at `instant`, so re-setting that due fires the nudge.
+    private func withDue(_ instant: Date) throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Work',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',\(AppleEpoch.toTs(instant)))")
+        }
+    }
+
+    /// The same instant rendered as the `yyyy-MM-dd HH:mm` text `-d` accepts.
+    private func dueText(_ instant: Date, _ cal: Calendar) -> String {
+        let df = DateFormatter(); df.calendar = cal; df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = cal.timeZone; df.dateFormat = "yyyy-MM-dd HH:mm"; return df.string(from: instant)
+    }
+
+    @Test func failedWriteAfterNudgeRestoresOriginalDue() async throws {
+        let cal = Calendar.current
+        let instant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let (s, dir) = try withDue(instant); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.failingUpdateCalls = [2]   // nudge succeeds, real write fails
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, title: "New", due: dueText(instant, cal), json: false,
+                                   store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        }
+        #expect(out.exitCode == 1)
+        #expect(m.calls.count == 3)   // nudge, failed write, rollback
+        if case let .update(_, restore) = m.calls[2] {
+            #expect(restore.due == .set(instant))
+            #expect(restore.title == nil)
+        } else { Issue.record("third call should be the rollback update, got \(m.calls)") }
+        // Rollback worked, so only the write error is reported.
+        #expect(out.stderr == "Error: update failed\n")
+    }
+
+    @Test func failedRollbackWarnsAboutStrandedDue() async throws {
+        let cal = Calendar.current
+        let instant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let (s, dir) = try withDue(instant); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.failingUpdateCalls = [2, 3]   // real write AND rollback fail
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, due: dueText(instant, cal), json: false,
+                                   store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Warning: reminder due date may be wrong by 1 hour (reminder id ABC); check it in Reminders.\n"
+            + "Error: update failed\n")
+    }
+
+    @Test func failedRollbackOnAllDayWarnsAboutOneDay() async throws {
+        let cal = Calendar.current
+        let instant = cal.date(from: DateComponents(year: 2026, month: 6, day: 1))!   // local midnight
+        let (s, dir) = try withDue(instant); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.failingUpdateCalls = [2, 3]
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, due: "2026-06-01", json: false,
+                                   store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        }
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.hasPrefix("Warning: reminder due date may be wrong by 1 day (reminder id ABC)"))
+        if case let .update(_, restore) = m.calls[2] { #expect(restore.allDay == true) }
+    }
+
+    @Test func failedWriteWithoutNudgeDoesNotRollBack() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.failingUpdateCalls = [1]
+        let out = await WriteDispatch.perform {
+            try await Edit.perform(id: 42, title: "New", json: false, store: s, writer: m, private: MockPrivateWriter())
+        }
+        #expect(out.exitCode == 1)
+        #expect(m.calls.count == 1)
+        #expect(out.stderr == "Error: update failed\n")
+    }
+
     // MARK: - All-day edits (port upstream ee8a120)
 
     @Test func dateOnlyDueEditSetsAllDay() async throws {
