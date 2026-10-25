@@ -77,7 +77,9 @@ public protocol PrivateWriter {
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult
-    func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult
+    /// `existingSectionIds` are the target list's current section CKIDs in display order; the new
+    /// section is appended to them so creating a section does not wipe the existing ordering.
+    func addSectionAndAssign(id: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult
     func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult
     func clearAssignment(id: String) async throws -> PrivateResult
     func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult

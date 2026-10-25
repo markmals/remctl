@@ -132,8 +132,8 @@ final class PrivateWriterTests: XCTestCase {
 
     func testAddSectionAndAssignRecordsCall() async throws {
         let mock = MockPrivateWriter()
-        _ = try await mock.addSectionAndAssign(id: "R4", name: "Morning")
-        XCTAssertEqual(mock.calls, [.addSectionAndAssign(id: "R4", name: "Morning")])
+        _ = try await mock.addSectionAndAssign(id: "R4", name: "Morning", existingSectionIds: ["S1", "S2"])
+        XCTAssertEqual(mock.calls, [.addSectionAndAssign(id: "R4", name: "Morning", existingSectionIds: ["S1", "S2"])])
     }
 
     func testAddSubtasksRecordsCall() async throws {

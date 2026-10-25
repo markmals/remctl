@@ -8,7 +8,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case assignSection(id: String, sectionId: String)
         case assignSharee(id: String, assigneeId: String, originatorId: String)
         case clearAssignment(id: String)
-        case addSectionAndAssign(id: String, name: String)
+        case addSectionAndAssign(id: String, name: String, existingSectionIds: [String])
         case addSubtasks(id: String, subtasks: [SubtaskSpec])
         case addAttachments(id: String, images: [String])
         case setUrgent(id: String, urgent: Bool)
@@ -38,6 +38,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     /// Per-method result override for `cloneReminderTree` so a list-move test can return the
     /// cloned reminder's `newId` without disturbing the shared `result`.
     var cloneResult: PrivateResult?
+    /// Per-method result override for `setUrgent` so tests can fail ONE step in the middle of the
+    /// fan-out (the partial-failure path) while the earlier steps still succeed.
+    var urgentResult: PrivateResult?
     var throwError: Error?
 
     private func resultOr(_ status: String) throws -> PrivateResult {
@@ -50,10 +53,10 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func assignSection(id: String, sectionId: String) async throws -> PrivateResult { calls.append(.assignSection(id: id, sectionId: sectionId)); return try resultOr("updated") }
     func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult { calls.append(.assignSharee(id: id, assigneeId: assigneeId, originatorId: originatorId)); return try resultOr("updated") }
     func clearAssignment(id: String) async throws -> PrivateResult { calls.append(.clearAssignment(id: id)); return try resultOr("updated") }
-    func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult { calls.append(.addSectionAndAssign(id: id, name: name)); return try resultOr("updated") }
+    func addSectionAndAssign(id: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult { calls.append(.addSectionAndAssign(id: id, name: name, existingSectionIds: existingSectionIds)); return try resultOr("updated") }
     func addSubtasks(id: String, subtasks: [SubtaskSpec]) async throws -> PrivateResult { calls.append(.addSubtasks(id: id, subtasks: subtasks)); if let e = throwError { throw e }; return subtasksResult ?? result }
     func addAttachments(id: String, images: [String]) async throws -> PrivateResult { calls.append(.addAttachments(id: id, images: images)); return try resultOr("updated") }
-    func setUrgent(id: String, urgent: Bool) async throws -> PrivateResult { calls.append(.setUrgent(id: id, urgent: urgent)); return try resultOr("updated") }
+    func setUrgent(id: String, urgent: Bool) async throws -> PrivateResult { calls.append(.setUrgent(id: id, urgent: urgent)); if let e = throwError { throw e }; return urgentResult ?? result }
     func setEarlyReminder(id: String, spec: EarlyReminderWrite) async throws -> PrivateResult { calls.append(.setEarlyReminder(id: id, spec: spec)); return try resultOr("updated") }
     func addLocationAlarm(id: String, location: PrivateLocation) async throws -> PrivateResult { calls.append(.addLocationAlarm(id: id, location: location)); return try resultOr("updated") }
     func categorizeGroceryItems(listId: String, reminderIds: [String]) async throws -> PrivateResult { calls.append(.categorizeGroceryItems(listId: listId, reminderIds: reminderIds)); if let e = throwError { throw e }; return groceryResult ?? result }

@@ -468,7 +468,8 @@ import GRDB
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter(); let mp = MockPrivateWriter()
         _ = try await Edit.perform(id: 42, newSection: "Inbox", json: false, store: s, writer: m, private: mp)
-        #expect(mp.calls == [.addSectionAndAssign(id: "ABC", name: "Inbox")])
+        // The list has no sections yet, so the ordering the helper receives is just the new one.
+        #expect(mp.calls == [.addSectionAndAssign(id: "ABC", name: "Inbox", existingSectionIds: [])])
     }
 
     @Test func earlyReminderNoDueExitsOne() async throws {

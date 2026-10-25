@@ -590,6 +590,86 @@ import GRDB
         ])
     }
 
+    // MARK: - Private step failure after the reminder exists (upstream 504f504)
+
+    /// A 'Work' list plus the reminder row the MockWriter pretends to create, so the partial
+    /// report can resolve the numeric id.
+    private func withCreatedReminder() throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (42,'Buy milk',10,1,0,'EK-NEW')")
+        }
+    }
+
+    @Test func privateStepFailureAfterCreateReportsPartialJSON() async throws {
+        let (s, dir) = try withCreatedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        mp.urgentResult = PrivateResult(status: "error", message: "rk down")
+        let out = try await Add.perform(
+            title: "Buy milk", tags: "work", urgent: true, json: true,
+            store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        let payload = try #require(try JSONSerialization.jsonObject(
+            with: Data(out.stderr.utf8)) as? [String: Any])
+        #expect(payload["status"] as? String == "error")
+        #expect(payload["code"] as? String == "private_add_partial")
+        #expect(payload["id"] as? String == "EK-NEW")
+        #expect(payload["numericId"] as? Int == 42)
+        #expect(payload["title"] as? String == "Buy milk")
+        #expect(payload["failed"] as? String == "set_urgent")
+        #expect(payload["completed"] as? [String] == ["add_private_metadata"])
+        #expect(payload["error"] as? String == "rk down")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("Created reminder #42"))
+        #expect(message.contains("Do NOT re-run add"))
+    }
+
+    @Test func privateStepFailureAfterCreateReportsPartialHuman() async throws {
+        let (s, dir) = try withCreatedReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        mp.urgentResult = PrivateResult(status: "error", message: "rk down")
+        let out = try await Add.perform(
+            title: "Buy milk", tags: "work", urgent: true, json: false,
+            store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr == """
+            Created reminder #42 ('Buy milk') but failed to apply set_urgent; re-run edit to finish. Do NOT re-run add (would duplicate).
+            Completed: add_private_metadata
+            Error: rk down
+
+            """)
+    }
+
+    @Test func unknownSectionFailsBeforeCreating() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        await #expect(throws: CLIError.self) {
+            _ = try await Add.perform(
+                title: "T", list: "Work", section: "Nope", json: false,
+                store: s, writer: m, private: mp)
+        }
+        #expect(m.calls.isEmpty)      // nothing created
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func assignWithoutListFailsBeforeCreating() async throws {
+        let (s, dir) = try withWorkList(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); m.resultID = "EK-NEW"
+        let mp = MockPrivateWriter()
+        await #expect(throws: CLIError.self) {
+            _ = try await Add.perform(
+                title: "T", assign: "someone", json: false,
+                store: s, writer: m, private: mp)
+        }
+        #expect(m.calls.isEmpty)
+        #expect(mp.calls.isEmpty)
+    }
+
     /// The recorded create ReminderWrite, for an exact `.create` equality assertion.
     private func createdWriteValue(_ m: MockWriter) -> ReminderWrite {
         for c in m.calls { if case let .create(w) = c { return w } }

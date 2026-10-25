@@ -213,8 +213,11 @@ public final class ReminderKitWriter: PrivateWriter {
         return await dispatchWithRetry(req)
     }
 
-    public func addSectionAndAssign(id: String, name: String) async throws -> PrivateResult {
-        let req: [String: Any] = ["action": "add_section_and_assign", "id": id, "name": name]
+    public func addSectionAndAssign(id: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult {
+        let req: [String: Any] = [
+            "action": "add_section_and_assign", "id": id, "name": name,
+            "existingSectionIds": existingSectionIds,
+        ]
         return await dispatchWithRetry(req)
     }
 

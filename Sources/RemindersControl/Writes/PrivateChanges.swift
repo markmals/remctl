@@ -1,5 +1,18 @@
 import Foundation
 
+/// A private step the helper refused. Carries the steps that already landed so `add` can tell the
+/// user exactly what the created reminder is missing (port of `fail_private_add_partial`, 504f504).
+/// Commands that do not report partial state render it as a plain `Error: <message>`.
+public struct PrivateStepFailure: Error, CustomStringConvertible, Equatable {
+    public let action: String
+    public let message: String
+    public let completed: [String]
+    public init(action: String, message: String, completed: [String]) {
+        self.action = action; self.message = message; self.completed = completed
+    }
+    public var description: String { message }
+}
+
 /// The private-metadata fan-out. Port of `apply_private_changes` (remctl:3003).
 ///
 /// Given a reminder's ZCKIDENTIFIER and the parsed/validated private fields, this emits one
@@ -45,24 +58,45 @@ public enum PrivateChanges {
         groceryAttempts: Int = 24, groceryDelay: Double = 0.25
     ) async throws -> [PrivateResult] {
         var results: [PrivateResult] = []
+        var completed: [String] = []
+
+        // Every private step must land; a refused one aborts the fan-out carrying the steps that
+        // already succeeded (upstream `private_action` + `partial_context`).
+        func step(_ action: String, _ result: PrivateResult) throws -> PrivateResult {
+            guard result.status != "error" else {
+                throw PrivateStepFailure(
+                    action: action,
+                    message: result.message ?? "private helper failed",
+                    completed: completed)
+            }
+            completed.append(action)
+            return result
+        }
 
         // 1. add_private_metadata — urls=[url] if present, tags as-is (already split by caller).
         let urls = url.map { [$0] } ?? []
         if !urls.isEmpty || !tags.isEmpty {
-            results.append(try await p.addPrivateMetadata(id: reminderCkid, urls: urls, tags: tags))
+            results.append(try step("add_private_metadata", await p.addPrivateMetadata(id: reminderCkid, urls: urls, tags: tags)))
         }
 
         // 2. assign_section — pre-resolve the section CKID via the store (resolve_section_ckid:2803).
         if section != nil || sectionId != nil {
             let resolved = try store.resolveSectionCkid(listPk: listPk ?? 0, section: section, sectionId: sectionId)
             if let resolved {
-                results.append(try await p.assignSection(id: reminderCkid, sectionId: resolved))
+                results.append(try step("assign_section", await p.assignSection(id: reminderCkid, sectionId: resolved)))
             }
         }
 
-        // 3. add_section_and_assign — create a section by name and assign this reminder to it.
+        // 3. add_section_and_assign — create a section by name and assign this reminder to it. The
+        //    list's current section CKIDs ride along so the helper appends instead of replacing the
+        //    whole ordering (upstream ac73ea8).
         if let newSection {
-            results.append(try await p.addSectionAndAssign(id: reminderCkid, name: newSection))
+            let sectionListPk = listPk ?? store.reminder(identifier: reminderCkid)?.int("ZLIST")
+            let existingSectionIds = sectionListPk.map { pk in
+                store.sections(listPk: pk).compactMap { $0.string("ZCKIDENTIFIER") }.filter { !$0.isEmpty }
+            } ?? []
+            results.append(try step("add_section_and_assign", await p.addSectionAndAssign(
+                id: reminderCkid, name: newSection, existingSectionIds: existingSectionIds)))
         }
 
         // 4. add_subtasks — create the children, then fan each created child out to its public
@@ -72,7 +106,7 @@ public enum PrivateChanges {
         //    follow in spec order; within each child, private metadata runs before the bridge update
         //    (apply_private_changes:3053-3061).
         if !subtasks.isEmpty {
-            let subtaskResult = try await p.addSubtasks(id: reminderCkid, subtasks: subtasks)
+            let subtaskResult = try step("add_subtasks", await p.addSubtasks(id: reminderCkid, subtasks: subtasks))
             results.append(subtaskResult)
             // Pair each spec to its created child by index over the echoed `subtasks` array
             // (apply_private_changes uses `zip(subtasks, subtask_result["subtasks"])`).
@@ -80,7 +114,7 @@ public enum PrivateChanges {
             for (spec, child) in zip(subtasks, children) {
                 guard let childId = child.id, !childId.isEmpty else { continue }
                 // 4a. Child PRIVATE metadata (apply_subtask_private_metadata:2398).
-                results.append(contentsOf: try await applySubtaskPrivateMetadata(childId: childId, spec: spec, p: p))
+                results.append(contentsOf: try await applySubtaskPrivateMetadata(childId: childId, spec: spec, p: p, step: step))
                 // 4b. Child PUBLIC fields via the EventKit bridge (bridge_update_subtask:2371).
                 if let bridge = try await bridgeUpdateSubtask(childId: childId, spec: spec, writer: writer, now: now, calendar: calendar) {
                     results.append(bridge)
@@ -91,17 +125,17 @@ public enum PrivateChanges {
         // 5. add_attachments — image attachments on the parent. files[] is always empty (the ObjC
         //    contract rejects generic file/PDF attachments; images only). apply_private_changes:3075.
         if !images.isEmpty {
-            results.append(try await p.addAttachments(id: reminderCkid, images: images))
+            results.append(try step("add_attachments", await p.addAttachments(id: reminderCkid, images: images)))
         }
 
         // 6. set_flagged — collapsed flag/flagged value.
         if let flagged {
-            results.append(try await p.setFlagged(id: reminderCkid, flagged: flagged))
+            results.append(try step("set_flagged", await p.setFlagged(id: reminderCkid, flagged: flagged)))
         }
 
         // 7. set_urgent.
         if let urgent {
-            results.append(try await p.setUrgent(id: reminderCkid, urgent: urgent))
+            results.append(try step("set_urgent", await p.setUrgent(id: reminderCkid, urgent: urgent)))
         }
 
         // 8. set_early_reminder — inject the reminder's existing delta-alert identifiers here, so a
@@ -115,7 +149,7 @@ public enum PrivateChanges {
             case let .set(unit, count, _):
                 spec = .set(unit: unit, count: count, existingIdentifiers: existing)
             }
-            results.append(try await p.setEarlyReminder(id: reminderCkid, spec: spec))
+            results.append(try step("set_early_reminder", await p.setEarlyReminder(id: reminderCkid, spec: spec)))
         }
 
         // 9. add_location_alarm — the parent's location alarm is EventKit-expressible, so it travels
@@ -133,13 +167,13 @@ public enum PrivateChanges {
             }
             let assignee = try resolveSharee(store: store, listPk: listPk, value: assign)
             let originator = try resolveAssignmentOriginator(store: store, listPk: listPk)
-            results.append(try await p.assignSharee(
+            results.append(try step("assign_sharee", await p.assignSharee(
                 id: reminderCkid,
                 assigneeId: assignee.string("ZCKIDENTIFIER") ?? "",
-                originatorId: originator.string("ZCKIDENTIFIER") ?? ""))
+                originatorId: originator.string("ZCKIDENTIFIER") ?? "")))
         }
         if unassign {
-            results.append(try await p.clearAssignment(id: reminderCkid))
+            results.append(try step("clear_assignment", await p.clearAssignment(id: reminderCkid)))
         }
 
         // 10. categorize_grocery_items — the LAST private action (apply_private_changes:3133). Polls
@@ -149,9 +183,9 @@ public enum PrivateChanges {
                 // Mirrors `if list_pk is None: Error: --grocery requires a target list.` (remctl:3137).
                 throw CLIError("--grocery requires a target list.")
             }
-            results.append(try await categorizeGrocery(
+            results.append(try step("categorize_grocery_items", try await categorizeGrocery(
                 listPk: listPk, reminderCkid: reminderCkid, store: store, private: p,
-                attempts: groceryAttempts, delay: groceryDelay))
+                attempts: groceryAttempts, delay: groceryDelay)))
         }
 
         return results
@@ -383,34 +417,35 @@ public enum PrivateChanges {
     /// set_urgent, set_early_reminder, add_location_alarm. Children are newly created, so the
     /// early-reminder carries no existing identifiers (unlike the parent path).
     private static func applySubtaskPrivateMetadata(
-        childId: String, spec: SubtaskSpec, p: PrivateWriter
+        childId: String, spec: SubtaskSpec, p: PrivateWriter,
+        step: (String, PrivateResult) throws -> PrivateResult
     ) async throws -> [PrivateResult] {
         var out: [PrivateResult] = []
 
         if !spec.urls.isEmpty || !spec.tags.isEmpty {
-            out.append(try await p.addPrivateMetadata(id: childId, urls: spec.urls, tags: spec.tags))
+            out.append(try step("add_private_metadata", await p.addPrivateMetadata(id: childId, urls: spec.urls, tags: spec.tags)))
         }
         if !spec.images.isEmpty {
-            out.append(try await p.addAttachments(id: childId, images: spec.images))
+            out.append(try step("add_attachments", await p.addAttachments(id: childId, images: spec.images)))
         }
         if let flagged = spec.flagged {
-            out.append(try await p.setFlagged(id: childId, flagged: flagged))
+            out.append(try step("set_flagged", await p.setFlagged(id: childId, flagged: flagged)))
         }
         if let urgent = spec.urgent {
-            out.append(try await p.setUrgent(id: childId, urgent: urgent))
+            out.append(try step("set_urgent", await p.setUrgent(id: childId, urgent: urgent)))
         }
         if let early = spec.earlyReminder {
             // parse_subtask_specs validated the format; re-parse to the unit/count or clear spec.
             // No existing identifiers — the child was just created.
             let parsed = try PrivateParsing.parseEarlyReminder(early)
-            out.append(try await p.setEarlyReminder(id: childId, spec: parsed))
+            out.append(try step("set_early_reminder", await p.setEarlyReminder(id: childId, spec: parsed)))
         }
         if let lat = spec.latitude, let lon = spec.longitude {
             let loc = PrivateLocation(
                 title: spec.locationTitle ?? "Location",
                 latitude: lat, longitude: lon,
                 radius: spec.radius ?? 100, proximity: spec.proximity ?? 1)
-            out.append(try await p.addLocationAlarm(id: childId, location: loc))
+            out.append(try step("add_location_alarm", await p.addLocationAlarm(id: childId, location: loc)))
         }
 
         return out

@@ -34,10 +34,11 @@ High-value guardrails:
 
 - Recurrence and normal `--alarm` are EventKit features. `--early-reminder` is a separate Reminders Early Reminder (a private due-date delta alert), not an EventKit alarm.
 - Location alarms (`--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`) are written through EventKit structured-location alarms; verify in `info --json` under `alarms`.
-- Synced rich URLs require public `http`/`https` hosts; loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts fail before writing. With no other private metadata present, `--url` is just a notes append and `add --tags` writes inline title hashtags.
+- Synced rich URLs require public `http`/`https` hosts; loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts fail before writing. With no other private metadata present, `--url` is just a notes append and `add --tags` writes inline title hashtags.
 - Human output strips terminal control characters; use JSON when exact raw values matter.
 - Invalid due dates, recurrence, alarms, priorities, and location payloads fail before writing. `upcoming DAYS` accepts 1–3650.
-- Verify smart-list pinning with `smart-lists --json`, not `lists --json`.
+- Verify smart-list pinning with `smart-lists --json`, not `lists --json`. Built-in smart-list pinning depends on the host's ReminderKit and fails before saving when unsupported; custom smart lists always pin.
+- If `add` fails after creating the reminder (`code: "private_add_partial"`), finish the missing private step with `edit <numericId>` — never re-run `add`, which would duplicate.
 - Do not promise template link creation or editing individual reminders inside a template.
 - Reminders.app materializes only one included list per smart list — do not build multi-list aggregates.
 
@@ -132,10 +133,10 @@ Private metadata rules:
 - `--url` creates a synced web rich link (public `http`/`https` host required) when other private metadata is present; otherwise it appends to notes.
 - `-t/--tags` creates synced tags when private metadata is present or on `edit`; on a bare `add` it writes inline `#hashtag` title tokens.
 - `edit -l/--list` and `edit --list-id` move a reminder. A reminder with subtasks (or a move EventKit refuses across accounts) is moved by clone-delete and gets a **new id**: read `id` (new) and `oldId` from `--json` (`method: "clone-delete"`, `subtasksMoved`, `originalDeleted`) and chain the new id afterwards. Such a move cannot be combined with other edit flags — move first, then edit.
-- `--section` resolves by name (single non-empty match wins on duplicates); use `--section-id` for exact assignment.
+- `--section` resolves by name (single non-empty match wins on duplicates); use `--section-id` for exact assignment. Both are resolved before `add` creates anything. `--new-section` appends to the list's existing section order.
 - `--early-reminder` writes Reminders' Early Reminder due-date delta alert: `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`; non-clear values require a due date. Verify in `info --json`.
 - `--location-title` + `--latitude`/`--longitude` persist through EventKit structured-location alarms; verify in `info --json` under `alarms`.
-- `--subtask` accepts a plain child title or a JSON object: `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields. A date-only `due` makes the child all-day; `recurrence` takes a string spec or an exported recurrence object. Rich subtask URLs follow the public-host rule.
+- `--subtask` accepts a plain child title or a JSON object: `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields. A date-only `due` makes the child all-day; `recurrence` takes a string spec or an exported recurrence object. Rich subtask URLs follow the public-host rule. Repeated `--subtask` values land in the given order after existing subtasks (`subtaskPlacement` reports where).
 - Rich-link and image edits are additive (RemCTL adds, never removes/replaces). Generic file/PDF attachments are rejected; only images attach.
 - `add -f/--flag`, `flag`, and `unflag` write the real flag through ReminderKit (there is no EventKit flag API); a failed flag write exits 1 with `code: flag_failed` under `--json` instead of changing the priority.
 - `list-symbols` prints the 71 official emblem names (its terminal glyph column is approximate). `list-symbols --preview` opens a native-asset HTML contact sheet; `list-symbols --html PATH` writes one. `--symbol` accepts only official names (arbitrary SF Symbols render as the default icon); use `--emoji` for custom badges. `list-create --color NAME` uses EventKit; a `#RRGGBB` hex, `--symbol`, or `--emoji` uses the ReminderKit appearance path — verify via `color`/`badge`/`badgeEmblem` in `lists --json`/`smart-lists --json`.

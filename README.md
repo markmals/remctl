@@ -126,7 +126,8 @@ A few rules keep this safe and predictable:
 - Where a flag has both a public and a private meaning, RemCTL picks the path from context — with no other private metadata present, `--url` appends to notes and `add --tags` writes inline `#hashtag` title tokens (public); alongside other private metadata they become a synced rich link and synced tags. `edit --tags` is always a synced-tag write. `add -f/--flag` always writes the real flag (like `edit --flagged`), so it takes the private path on its own.
 - `edit -l/--list` and `edit --list-id` are ordinary EventKit moves.
 - Location alarms are written through EventKit's structured-location path (they persist reliably there); verify in `info --json` under `alarms`.
-- `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, and unresolved hosts are rejected before writing.
+- `--url` and rich subtask URLs must be public `http`/`https` hosts. Loopback, `.local`, private, link-local, multicast, reserved, fake-IP (`198.18.0.0/15`) literals, IPv4-mapped IPv6 spellings of those, and unresolved hosts are rejected before writing.
+- If a private step fails after `add` created the reminder, RemCTL reports the created reminder, what completed, and what failed (`code: "private_add_partial"`, exit 1) — finish it with `edit`, never a second `add`.
 - Rich-link and image edits are additive — RemCTL adds, it does not remove or replace existing links/images.
 - `--early-reminder` accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Non-clear values require a due date.
 - `list-create --color NAME` uses EventKit for normal color names; pass a `#RRGGBB` hex, `--symbol`, or `--emoji` for the ReminderKit appearance path.

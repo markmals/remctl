@@ -62,15 +62,33 @@ import GRDB
         #expect(mp.calls == [.assignSection(id: "R1", sectionId: "SEC-1")])
     }
 
-    @Test func newSectionEmitsAddSectionAndAssign() async throws {
-        let (s, dir) = try withListSectionReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+    @Test func newSectionCarriesExistingSectionIdsSoOrderingSurvives() async throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (1,5,'Errands',10,'SEC-1',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASESECTION (Z_PK,Z_ENT,ZDISPLAYNAME,ZLIST,ZCKIDENTIFIER,ZMARKEDFORDELETION) VALUES (2,5,'Later',10,'SEC-2',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (42,'T',10,1,0,'R1')")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
         let mp = MockPrivateWriter()
         _ = try await PrivateChanges.apply(
             reminderCkid: "R1", url: nil, tags: [],
             section: nil, sectionId: nil, newSection: "Inbox",
             flagged: nil, urgent: nil, earlyReminder: nil,
             store: s, listPk: 10, writer: MockWriter(), private: mp)
-        #expect(mp.calls == [.addSectionAndAssign(id: "R1", name: "Inbox")])
+        #expect(mp.calls == [.addSectionAndAssign(id: "R1", name: "Inbox", existingSectionIds: ["SEC-1", "SEC-2"])])
+    }
+
+    @Test func newSectionWithoutListPkReadsTheReminderList() async throws {
+        // `edit --new-section` has no resolved list; the reminder row supplies ZLIST.
+        let (s, dir) = try withListSectionReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        _ = try await PrivateChanges.apply(
+            reminderCkid: "R1", url: nil, tags: [],
+            section: nil, sectionId: nil, newSection: "Inbox",
+            flagged: nil, urgent: nil, earlyReminder: nil,
+            store: s, listPk: nil, writer: MockWriter(), private: mp)
+        #expect(mp.calls == [.addSectionAndAssign(id: "R1", name: "Inbox", existingSectionIds: ["SEC-1"])])
     }
 
     @Test func flaggedCollapsedToSetFlagged() async throws {
@@ -437,5 +455,29 @@ import GRDB
         }
         // The helper WAS called (once; non-transient → no retry).
         #expect(mp.calls == [.categorizeGroceryItems(listId: "CK-G", reminderIds: ["GR1"])])
+    }
+
+    @Test func refusedStepAbortsTheFanOutAndNamesWhatLanded() async throws {
+        let (s, dir) = try withListSectionReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter()
+        mp.urgentResult = PrivateResult(status: "error", message: "rk down")
+        do {
+            _ = try await PrivateChanges.apply(
+                reminderCkid: "R1", url: "https://x", tags: [],
+                section: nil, sectionId: nil, newSection: nil,
+                flagged: nil, urgent: true,
+                earlyReminder: .clear(existingIdentifiers: []),
+                store: s, listPk: 10, writer: MockWriter(), private: mp)
+            Issue.record("expected throw")
+        } catch let failure as PrivateStepFailure {
+            #expect(failure.action == "set_urgent")
+            #expect(failure.message == "rk down")
+            #expect(failure.completed == ["add_private_metadata"])
+        }
+        // The early-reminder step after the refused one never ran.
+        #expect(mp.calls == [
+            .addPrivateMetadata(id: "R1", urls: ["https://x"], tags: []),
+            .setUrgent(id: "R1", urgent: true),
+        ])
     }
 }

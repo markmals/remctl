@@ -211,6 +211,22 @@ struct Add: AsyncParsableCommand {
         if let parsedRecurrence { write.recurrence = parsedRecurrence }
         if let parsedAlarm { write.alarm = parsedAlarm }
 
+        // 5b. validate_private_add_ready (upstream 504f504): resolve the private targets that can
+        //     fail BEFORE the reminder exists, so an unknown --section or --assign never strands a
+        //     created reminder that the user must finish with `edit`.
+        if wantsPrivate {
+            if section != nil || sectionId != nil {
+                _ = try store.resolveSectionCkid(listPk: resolution?.id ?? 0, section: section, sectionId: sectionId)
+            }
+            if let assign {
+                guard let listPk = resolution?.id else {
+                    throw CLIError("--assign requires a target shared list via -l/--list or --list-id.")
+                }
+                _ = try resolveSharee(store: store, listPk: listPk, value: assign)
+                _ = try resolveAssignmentOriginator(store: store, listPk: listPk)
+            }
+        }
+
         // 6. Create.
         let result = try await writer.create(write)
 
@@ -219,17 +235,24 @@ struct Add: AsyncParsableCommand {
         //    early-reminder (cmd_add:5211-5220 apply_private_changes).
         var privateResults: [PrivateResult] = []
         if wantsPrivate {
-            privateResults = try await PrivateChanges.apply(
-                reminderCkid: result.id ?? "",
-                url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
-                section: section, sectionId: sectionId, newSection: newSection,
-                subtasks: subtaskSpecs, images: imagePaths,
-                flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
-                assign: assign, unassign: unassign,
-                grocery: grocery,
-                store: store, listPk: resolution?.id,
-                writer: writer, private: priv, now: now, calendar: calendar,
-                groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
+            do {
+                privateResults = try await PrivateChanges.apply(
+                    reminderCkid: result.id ?? "",
+                    url: url, tags: tags.map(PrivateParsing.splitCSV) ?? [],
+                    section: section, sectionId: sectionId, newSection: newSection,
+                    subtasks: subtaskSpecs, images: imagePaths,
+                    flagged: flag ? true : nil, urgent: urgent, earlyReminder: parsedEarly,
+                    assign: assign, unassign: unassign,
+                    grocery: grocery,
+                    store: store, listPk: resolution?.id,
+                    writer: writer, private: priv, now: now, calendar: calendar,
+                    groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
+            } catch let failure as PrivateStepFailure {
+                // The reminder already exists, so the generic "Error: …" exit would invite a
+                // duplicate re-run of `add`.
+                return failPrivateAddPartial(
+                    failure, ckid: result.id ?? "", title: finalTitle, store: store, json: json)
+            }
         }
 
         // 8. Re-read for the numeric Z_PK by the created ZCKIDENTIFIER.
@@ -262,6 +285,39 @@ struct Add: AsyncParsableCommand {
         if let numericId { out += "ID: #\(numericId)\n" }
         if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
         return .ok(out)
+    }
+
+    /// Port of `fail_private_add_partial` (upstream 504f504). The reminder was created but a
+    /// private step failed: report the created identity, the steps that landed, the failed step,
+    /// and that `edit` — never another `add` — finishes the job. Exit 1.
+    static func failPrivateAddPartial(
+        _ failure: PrivateStepFailure, ckid: String, title: String,
+        store: RemindersStore, json: Bool
+    ) -> WriteOutcome {
+        let numericId = store.reminder(identifier: ckid)?.int("Z_PK")
+        let identity = numericId.map { "#\($0)" } ?? (ckid.isEmpty ? "(unknown)" : ckid)
+        let summary = "Created reminder \(identity) ('\(safeDisplay(title))') but failed to apply "
+            + "\(failure.action); re-run edit to finish. Do NOT re-run add (would duplicate)."
+        if json {
+            var pairs: [(String, JSONValue)] = [
+                ("status", .string("error")),
+                ("code", .string("private_add_partial")),
+                ("message", .string(summary)),
+                ("id", .string(ckid)),
+            ]
+            if let numericId { pairs.append(("numericId", .int(numericId))) }
+            pairs.append(("title", .string(title)))
+            pairs.append(("failed", .string(failure.action)))
+            pairs.append(("completed", .array(failure.completed.map { .string($0) })))
+            pairs.append(("error", .string(failure.message)))
+            return WriteOutcome(stderr: JSONValue.object(pairs).serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        var out = summary + "\n"
+        if !failure.completed.isEmpty {
+            out += "Completed: \(failure.completed.joined(separator: ", "))\n"
+        }
+        out += "Error: \(failure.message)\n"
+        return WriteOutcome(stderr: out, exitCode: 1)
     }
 
     /// Build the exit-2 invalid-due-date outcome (mirrors `fail_invalid_due_date`).

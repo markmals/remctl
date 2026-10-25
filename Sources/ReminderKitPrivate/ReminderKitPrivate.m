@@ -480,6 +480,23 @@ static NSURL *sectionURL(NSString *ckIdentifier) {
     return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDListSection/%@", ckIdentifier]];
 }
 
+static NSArray *sectionObjectIDsFromStrings(NSArray *sectionIDs) {
+    NSMutableArray *result = [NSMutableArray array];
+    if (![sectionIDs isKindOfClass:[NSArray class]]) {
+        return result;
+    }
+    for (id raw in sectionIDs) {
+        if (![raw isKindOfClass:[NSString class]] || [raw length] == 0) {
+            continue;
+        }
+        id objectID = [REMObjectID objectIDWithURL:sectionURL(raw)];
+        if (objectID) {
+            [result addObject:objectID];
+        }
+    }
+    return result;
+}
+
 static NSURL *shareeURL(NSString *ckIdentifier) {
     return [NSURL URLWithString:[NSString stringWithFormat:@"x-apple-reminderkit://REMCDSharee/%@", ckIdentifier]];
 }
@@ -1316,6 +1333,7 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                     @"action": action,
                     @"listId": listID,
                     @"remindersCategorized": @(reminderIDs.count),
+                    @"selector": categorizationSelector,
                 };
             }
 
@@ -1549,7 +1567,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 id membership = [[REMMembership alloc] initWithMemberIdentifier:[objectID uuid] groupIdentifier:[sectionObjectID uuid] isObsolete:NO modifiedOn:[NSDate date]];
                 id memberships = [[REMMemberships alloc] initWithMemberships:@[membership]];
                 [sectionContext setUnsavedMembershipsOfRemindersInSections:memberships];
-                [sectionContext setUnsavedSectionIDsOrdering:@[sectionObjectID]];
+                NSMutableArray *ordering = [NSMutableArray arrayWithArray:sectionObjectIDsFromStrings(cmd[@"existingSectionIds"])];
+                [ordering addObject:sectionObjectID];
+                [sectionContext setUnsavedSectionIDsOrdering:ordering];
                 [sectionContext setShouldUpdateSectionsOrdering:YES];
                 details[@"sectionURL"] = [[sectionObjectID urlRepresentation] absoluteString] ?: @"";
             } else if ([action isEqualToString:@"assign_sharee"]) {

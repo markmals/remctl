@@ -60,7 +60,7 @@ remctl edit 23880 --early-reminder clear
 
 - `--section NAME` resolves by name inside the target list. If duplicate section names exist, RemCTL uses the only non-empty matching section when there is exactly one; if it remains ambiguous, the command fails before writing and prints the available stable IDs.
 - `--section-id ID` assigns to an exact section by its stable identifier.
-- `--new-section NAME` creates a section and assigns to it.
+- `--new-section NAME` creates a section and assigns to it. The list's existing section IDs are sent with the request and the new section is appended to them, so creating a section keeps the current section order instead of replacing it.
 
 ### Assignments
 
@@ -232,6 +232,20 @@ remctl template-delete "Packing Template" --force
 Template support is **whole-list only**: RemCTL does not append individual reminders to existing templates, copy selected reminders into a template, or strip subtasks or due dates while saving. Existing iCloud template links are **read-only** — they appear as `publicLink` when present, but RemCTL does not create or revoke iCloud sharing links.
 
 Verify templates with `templates --json` and `template-info`, and verify an applied template's new list with `lists --json` and `show <new list> --json`.
+
+## When a private step fails
+
+A private write that ReminderKit refuses stops the command with the helper's message and exit 1; no later private step runs.
+
+`add` is the dangerous case, because the reminder already exists by the time the private fan-out runs. RemCTL therefore resolves the targets it can check up front — `--section`/`--section-id` and `--assign` are resolved **before** the reminder is created, so a typo fails with nothing written. If a private step still fails afterwards, RemCTL reports the created reminder instead of a bare error, and tells you to finish it with `edit`:
+
+```
+Created reminder #23880 ('Buy milk') but failed to apply set_urgent; re-run edit to finish. Do NOT re-run add (would duplicate).
+Completed: add_private_metadata
+Error: <helper message>
+```
+
+With `--json` the same information is a structured stderr object with exit 1: `{"status":"error","code":"private_add_partial","message":…,"id":…,"numericId":…,"title":…,"failed":"<action>","completed":["<action>",…],"error":"<helper message>"}`. Re-running `add` would create a duplicate; use the reported `numericId` with `edit`.
 
 ## Verifying writes
 
