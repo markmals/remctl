@@ -166,16 +166,48 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(args)) }) ?? []
     }
 
-    /// q_search — LIKE escape (backslash, then % and _), match ZTITLE OR ZNOTES, ORDER BY Z_PK DESC LIMIT 100.
-    public func search(_ query: String, completed: Bool = false) -> [Row] {
-        let safe = query.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
-        let pat = "%\(safe)%"
-        var w = [liveReminderSQL,
-                 "(r.ZTITLE LIKE ? ESCAPE '\\' OR r.ZNOTES LIKE ? ESCAPE '\\')"]
-        if !completed { w.append("r.ZCOMPLETED = 0") }
-        return reminderListView(where: w.joined(separator: " AND "), args: [pat, pat], order: "r.Z_PK DESC LIMIT 100")
+    /// Search page size and ceiling (upstream `SEARCH_DEFAULT_LIMIT` / `SEARCH_MAX_LIMIT`).
+    public static let searchDefaultLimit = 100
+    public static let searchMaxLimit = 500
+
+    /// q_search — one page of matches in titles, notes, and saved rich links, newest first.
+    public func search(_ query: String, completed: Bool = false, listPk: Int? = nil,
+                       limit: Int = RemindersStore.searchDefaultLimit, offset: Int = 0) -> [Row] {
+        let (clause, args) = searchWhere(query, completed: completed, listPk: listPk)
+        return reminderListView(where: clause, args: args + [limit, offset],
+                                order: "r.Z_PK DESC LIMIT ? OFFSET ?")
+    }
+
+    /// q_search_count — how many reminders match, across every page.
+    public func searchCount(_ query: String, completed: Bool = false, listPk: Int? = nil) -> Int {
+        let (clause, args) = searchWhere(query, completed: completed, listPk: listPk)
+        let sql = "SELECT COUNT(*) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE \(clause)"
+        return (try? queue.read { try Int.fetchOne($0, sql: sql, arguments: StatementArguments(args)) ?? 0 }) ?? 0
+    }
+
+    /// WHERE body + arguments shared by the search page and its total count (`_search_where`).
+    /// Matching runs instr() over folded text instead of LIKE, so `%`, `_` and `\` in a query are
+    /// ordinary characters. A saved rich link lives in a ZREMCDOBJECT row, not in the notes, so it
+    /// needs its own EXISTS (upstream b8b601c).
+    private func searchWhere(_ query: String, completed: Bool, listPk: Int?)
+        -> (clause: String, args: [DatabaseValueConvertible])
+    {
+        let hasURL = tableColumnNames("ZREMCDOBJECT").contains("ZURL")  // OUTSIDE the read (reentrancy)
+        let folded = searchFold(query)
+        var fields = ["instr(remctl_fold(r.ZTITLE), ?) > 0", "instr(remctl_fold(r.ZNOTES), ?) > 0"]
+        var args: [DatabaseValueConvertible] = [folded, folded]
+        if hasURL {
+            fields.append("EXISTS (SELECT 1 FROM ZREMCDOBJECT o WHERE o.ZREMINDER2 = r.Z_PK "
+                + "AND o.ZURL IS NOT NULL AND +o.ZMARKEDFORDELETION = 0 AND instr(remctl_fold(o.ZURL), ?) > 0)")
+            args.append(folded)
+        }
+        var clauses = [liveReminderSQL, "(\(fields.joined(separator: " OR ")))"]
+        if !completed { clauses.append("r.ZCOMPLETED = 0") }
+        if let listPk {
+            clauses.append("r.ZLIST = ?")
+            args.append(listPk)
+        }
+        return (clauses.joined(separator: " AND "), args)
     }
 
     public func dueToday(includeOverdue: Bool = true, now: Date = Date()) -> [Row] {
@@ -207,4 +239,23 @@ extension RemindersStore {
         let w = urgentWhereClause()  // OUTSIDE the read
         return reminderListView(where: "\(liveReminderSQL) AND r.ZCOMPLETED = 0 AND \(w)", args: [], order: "r.ZDUEDATE NULLS LAST")
     }
+}
+
+/// Fold text for search: NFKD-decompose, drop the combining marks that decomposition split off,
+/// then case-fold, so `cafe` matches `Café` and `strasse` matches `Straße`. The query and every
+/// searched field go through the same fold (upstream `search_fold`).
+public func searchFold(_ value: String) -> String {
+    let decomposed = (value as NSString).decomposedStringWithCompatibilityMapping
+    var scalars = String.UnicodeScalarView()
+    for scalar in decomposed.unicodeScalars where scalar.properties.canonicalCombiningClass == .notReordered {
+        scalars.append(scalar)
+    }
+    return unicodeCasefold(String(scalars))
+}
+
+/// `remctl_fold(text)` for the search SQL: SQLite folds neither case beyond ASCII nor accents.
+/// Registered on the read-only connection in `RemindersStore.open`.
+let searchFoldFunction = DatabaseFunction("remctl_fold", argumentCount: 1, pure: true) { values in
+    guard let text = String.fromDatabaseValue(values[0]) else { return "" }
+    return searchFold(text)
 }

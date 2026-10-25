@@ -7,7 +7,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 ## Conventions
 
 - **Nouns are read-only inspectors** (`lists`, `smart-lists`, `templates`, `today`, `stats`); **verb commands are writes** (`add`, `edit`, `delete`, `list-create`, `smart-list-create`, `template-create`). List management uses the `list-*` prefix, custom smart-list writes use `smart-list-*`, template writes use `template-*`.
-- **List-name resolution** is conservative: exact match → case-insensitive → normalized fallback that ignores decorative punctuation and emoji prefixes (so `Weekly 513` resolves `🗓️ Weekly 513` when unambiguous). If more than one list matches, RemCTL fails and prints the candidate IDs — pass `--list-id` to disambiguate. Passing both a name and `--list-id` is an error. `show`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, and `list-delete` accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
+- **List-name resolution** is conservative: exact match → case-insensitive → normalized fallback that ignores decorative punctuation and emoji prefixes (so `Weekly 513` resolves `🗓️ Weekly 513` when unambiguous). If more than one list matches, RemCTL fails and prints the candidate IDs — pass `--list-id` to disambiguate. Passing both a name and `--list-id` is an error. `show`, `search`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, and `list-delete` accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
 - **`--json`** works on every command. For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command, so both `remctl --format table show Work` and `remctl show Work --format table` are valid. `export --format json|csv` selects a file format, not a display style.
 - **`NO_COLOR=1`** (or `--no-color`) disables ANSI color.
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
@@ -43,12 +43,19 @@ remctl overdue
 remctl overdue --json
 ```
 
-### `search <query> [--completed]`
-Search reminder titles and notes. Active reminders only by default; `--completed` includes completed reminders.
+### `search <query> [--completed] [-l NAME|--list-id ID] [--limit N] [--offset N]`
+Search reminder titles, notes, and saved rich links. Active reminders only by default; `--completed` includes completed reminders.
 ```bash
 remctl search "milk"
 remctl search "milk" --completed --json
+remctl search "macstories.net" --list Work
+remctl search "invoice" --list-id 153 --limit 50 --offset 50 --json
+remctl search -- -urgent
 ```
+
+Matching ignores case and accents, so `cafe` finds `Café`, and `%`, `_`, and `\` are ordinary characters. `-l/--list NAME` or `--list-id ID` limits the search to one list; if several lists share a name, the command stops and prints the candidate ids. Results are newest first, 100 per page. A query that starts with `-` needs the `--` separator.
+
+With `--json` and no paging option the output stays a plain array, and stderr warns when matches were cut off. `--limit N` (1 to 500) or `--offset N` switch `--json` to a page object: `{"query", "items", "count", "total", "offset", "limit", "hasMore", "nextOffset"}`, plus `"list"` when the search is scoped. Pass `nextOffset` as the next `--offset` until `hasMore` is false. An out-of-range `--limit` or a negative `--offset` exits `1` before any read (`invalid_limit` / `invalid_offset` under `--json`).
 
 ### `flagged`
 Reminders with the real flag set (shown with `⚑`).
@@ -115,7 +122,7 @@ remctl info 23880 --json
 
 ### Limited EventKit Read Fallback (`--via-eventkit`)
 
-`--via-eventkit` is a limited read-only fallback for hosts that cannot get Full Disk Access. It never opens the Reminders SQLite database — it reads through the in-process EventKit API instead, so only the macOS Reminders permission is needed. It is never the default and is supported only by `show`, `search`, `today`, and `upcoming`. It reads iCloud Reminders lists only: an unnamed scope covers every iCloud list, and a named list in a local or third-party account is refused rather than mixed in. `search` matches titles, notes, and the saved rich-link URL.
+`--via-eventkit` is a limited read-only fallback for hosts that cannot get Full Disk Access. It never opens the Reminders SQLite database — it reads through the in-process EventKit API instead, so only the macOS Reminders permission is needed. It is never the default and is supported only by `show`, `search`, `today`, and `upcoming`. It reads iCloud Reminders lists only: an unnamed scope covers every iCloud list, and a named list in a local or third-party account is refused rather than mixed in. `search` matches titles, notes, and the saved rich-link URL, and takes `-l/--list NAME`; `--list-id` and `--limit`/`--offset` are refused (exit `2`, `eventkit_read_unsupported`).
 
 It is not full RemCTL output: no RemCTL numeric IDs, table output, sections, synced tags, private rich links, urgent state, or template/smart-list internals. JSON output is a wrapper object, not the normal read-command array:
 

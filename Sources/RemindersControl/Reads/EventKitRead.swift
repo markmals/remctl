@@ -40,10 +40,12 @@ public struct EventKitReadError: Error {
     }
 }
 
-/// Port of `validate_eventkit_read_args` (remctl:2472).
+/// Port of `validate_eventkit_read_args` (remctl:2472). `pagingRequested` is `search` only:
+/// EventKit has no stable result order to page through.
 public func validateEventKitReadArgs(
     listId: Int?, formatIsTable: Bool,
-    requiresListName: Bool = false, listName: String? = nil
+    requiresListName: Bool = false, listName: String? = nil,
+    pagingRequested: Bool = false
 ) throws {
     if listId != nil {
         throw EventKitReadError("--via-eventkit cannot use RemCTL numeric list ids. Pass a list name instead.")
@@ -53,6 +55,9 @@ public func validateEventKitReadArgs(
     }
     if requiresListName && (listName == nil || listName!.isEmpty) {
         throw EventKitReadError("--via-eventkit show requires a list name.")
+    }
+    if pagingRequested {
+        throw EventKitReadError("--via-eventkit search does not support --limit or --offset.")
     }
 }
 

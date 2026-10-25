@@ -193,43 +193,130 @@ struct Search: AsyncParsableCommand {
     @OptionGroup var opts: ReadDisplayOptions
     @Argument(help: "Search query") var query: String
     @Flag(name: .long, help: "Include completed reminders") var completed = false
+    @Option(name: [.short, .long], help: "Only search one list, by name") var list: String?
+    @Option(name: .long, help: "Only search one list, by stable numeric ID") var listId: Int?
+    @Option(name: .long, help: "Matches per page, 1-\(RemindersStore.searchMaxLimit); \(RemindersStore.searchDefaultLimit) when omitted")
+    var limit: Int?
+    @Option(name: .long, help: "Matches to skip before this page; 0 when omitted") var offset: Int?
     @Flag(name: .long, help: "Limited read-only EventKit fallback; no numeric ids or private metadata") var viaEventkit = false
+
+    /// Port of `search_page_args`: validated page bounds. `paged` means the caller asked for
+    /// pages, which turns the `--json` array into the page object.
+    private func pageArgs() throws -> (limit: Int, offset: Int, paged: Bool) {
+        if let limit, !(1...RemindersStore.searchMaxLimit).contains(limit) {
+            throw pagingFailure("invalid_limit", "--limit must be between 1 and \(RemindersStore.searchMaxLimit).")
+        }
+        if let offset, offset < 0 {
+            throw pagingFailure("invalid_offset", "--offset must be 0 or more.")
+        }
+        return (limit ?? RemindersStore.searchDefaultLimit, offset ?? 0, limit != nil || offset != nil)
+    }
+
+    /// Paging bounds fail before the store is opened, so they report themselves.
+    private func pagingFailure(_ code: String, _ message: String) -> ExitCode {
+        let text: String
+        if opts.effectiveJSON {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string(code)),
+                ("message", .string(message)),
+            ])
+            text = payload.serialized(indent: nil, ensureAscii: true) + "\n"
+        } else {
+            text = "Error: \(message)\n"
+        }
+        FileHandle.standardError.write(Data(text.utf8))
+        return ExitCode(1)
+    }
+
+    private func pageJSON(items: [JSONValue], total: Int, limit: Int, offset: Int, nextOffset: Int?,
+                          listRef: (id: Int, title: String)?) -> JSONValue
+    {
+        var pairs: [(String, JSONValue)] = [
+            ("query", .string(query)),
+            ("items", .array(items)),
+            ("count", .int(items.count)),
+            ("total", .int(total)),
+            ("offset", .int(offset)),
+            ("limit", .int(limit)),
+            ("hasMore", .bool(nextOffset != nil)),
+            ("nextOffset", nextOffset.map { JSONValue.int($0) } ?? .null),
+        ]
+        if let listRef {
+            pairs.append(("list", .object([("id", .int(listRef.id)), ("title", .string(listRef.title))])))
+        }
+        return .object(pairs)
+    }
 
     func run() async throws {
         if viaEventkit {
             await EventKitReadCLI.run(
-                mode: "search", query: query, completed: completed, opts: opts,
+                mode: "search", listId: listId, listName: list, query: query, completed: completed,
+                pagingRequested: limit != nil || offset != nil, opts: opts,
                 heading: "Search: \(safeDisplay(query)) (EventKit limited)",
                 emptyMessage: "No reminders matching '\(safeDisplay(query))' via EventKit")
             return
         }
+        let (limit, offset, paged) = try pageArgs()
         Dispatch.runRead { store in
             let now = Date()
-            let rows = store.search(query, completed: completed)
+            var listRef: (id: Int, title: String)?
+            if list != nil || listId != nil {
+                let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
+                listRef = (target.id, target.title)
+            }
+            let rows = store.search(query, completed: completed, listPk: listRef?.id, limit: limit, offset: offset)
+            let total = store.searchCount(query, completed: completed, listPk: listRef?.id)
+            let nextOffset = offset + rows.count < total ? offset + rows.count : nil
             let pks = rows.compactMap { $0.int("Z_PK") }
             let (counts, tags) = store.preloadExtras(pks)
             let ansi = opts.ansi()
 
             if opts.effectiveJSON {
-                Dispatch.printJSON(.array(serializeReminders(rows, store: store).map { .object($0) }), ensureAscii: true)
+                let items = serializeReminders(rows, store: store).map { JSONValue.object($0) }
+                if paged {
+                    Dispatch.printJSON(pageJSON(items: items, total: total, limit: limit, offset: offset,
+                                                nextOffset: nextOffset, listRef: listRef), ensureAscii: true)
+                    return
+                }
+                // The bare array stays for existing scripts; stderr says when it is cut short.
+                if let nextOffset {
+                    FileHandle.standardError.write(Data(
+                        ("Warning: showing \(rows.count) of \(total) matches. "
+                         + "Pass --offset \(nextOffset) --limit \(limit) for the next page.\n").utf8))
+                }
+                Dispatch.printJSON(.array(items), ensureAscii: true)
                 return
             }
             if opts.useTable {
                 print(fmtTable(remindersToTableData(rows, ansi: ansi, now: now), ansi: ansi,
                                dateColumn: completed ? .completed : .due))
+                if let nextOffset {
+                    FileHandle.standardError.write(Data(
+                        "Showing \(rows.count) of \(total) matches. Next page: --offset \(nextOffset)\n".utf8))
+                }
                 return
             }
+            let scope = listRef.map { " in \(safeDisplay($0.title))" } ?? ""
             if rows.isEmpty {
-                print("No reminders matching '\(safeDisplay(query))'")
+                if total > 0 && offset > 0 {
+                    print("No reminders matching '\(safeDisplay(query))'\(scope) past offset \(offset) (\(total) total)")
+                } else {
+                    print("No reminders matching '\(safeDisplay(query))'\(scope)")
+                }
                 return
             }
-            print("Search: \(ansi.bold(safeDisplay(query)))")
+            print("Search: \(ansi.bold(safeDisplay(query)))\(scope)")
             for r in rows {
                 let pk = r.int("Z_PK") ?? 0
                 print(fmt(r, tags: tags[pk] ?? [], subtaskCount: counts[pk] ?? 0, ansi: ansi, now: now, verbose: opts.verbose, assigneeName: store.assignmentAssignee(pk: pk), earlyFallback: store.earlyReminderAlerts))
             }
-            let n = rows.count
-            print("\n\(n) result\(n == 1 ? "" : "s")")
+            if rows.count == total {
+                print("\n\(total) result\(total == 1 ? "" : "s")")
+                return
+            }
+            print("\nShowing \(offset + 1)-\(offset + rows.count) of \(total) results")
+            if let nextOffset { print("Next page: --offset \(nextOffset)") }
         }
     }
 }

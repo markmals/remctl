@@ -82,6 +82,10 @@ _remctl() {
         search)
             _arguments \
                 '--completed[Include completed reminders]' \
+                '(-l --list --list-id)'{-l,--list}'[Only search one list]:list:' \
+                '(-l --list)--list-id[Only search one list by stable numeric ID]:id:' \
+                '--limit[Matches per page]:limit:' \
+                '--offset[Matches to skip before this page]:offset:' \
                 '--via-eventkit[Limited read-only EventKit fallback; no numeric ids or private metadata]' \
                 '(-v --verbose)'{-v,--verbose}'[Verbose output]' \
                 '--json[JSON output]'
@@ -420,7 +424,7 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--list-id --completed --via-eventkit --verbose -v --json" -- "$cur") )
         return
     elif [ "$cmd" = "search" ]; then
-        COMPREPLY=( $(compgen -W "--completed --via-eventkit --verbose -v --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--completed --list -l --list-id --limit --offset --via-eventkit --verbose -v --json" -- "$cur") )
         return
     elif [ "$cmd" = "today" ]; then
         COMPREPLY=( $(compgen -W "--no-overdue --via-eventkit --verbose -v --json" -- "$cur") )
@@ -551,6 +555,10 @@ complete -c remctl -n "__fish_seen_subcommand_from doctor" -l for-agent -d "Prin
 complete -c remctl -n "__fish_seen_subcommand_from show" -l list-id -d "Show list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from show" -l completed -d "Include completed reminders"
 complete -c remctl -n "__fish_seen_subcommand_from show" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
+complete -c remctl -n "__fish_seen_subcommand_from search" -s l -l list -d "Only search one list" -r
+complete -c remctl -n "__fish_seen_subcommand_from search" -l list-id -d "Only search one list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from search" -l limit -d "Matches per page" -r
+complete -c remctl -n "__fish_seen_subcommand_from search" -l offset -d "Matches to skip before this page" -r
 complete -c remctl -n "__fish_seen_subcommand_from search" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
 complete -c remctl -n "__fish_seen_subcommand_from today" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"
 complete -c remctl -n "__fish_seen_subcommand_from upcoming" -l via-eventkit -d "Limited read-only EventKit fallback; no numeric ids or private metadata"

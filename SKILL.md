@@ -53,6 +53,7 @@ remctl lists --json
 remctl show Work --json
 remctl show --list-id 153 --json
 remctl search "query" --completed --json
+remctl search "macstories.net" --list Work --limit 50 --offset 50 --json
 remctl info 23880 --json
 remctl add "Review PR" -l Work -d "tomorrow 10:00" -p high --json
 remctl add "Write column" --list-id 156 -d "2026-05-20 15:00" --json
@@ -80,7 +81,8 @@ remctl list-delete --list-id 123 --force --json
 - Nouns are read-only inspectors: `lists`, `smart-lists`, `templates`, `today`, `stats`. Verb commands are writes: `add`, `edit`, `delete`, `list-create`, `smart-list-create`, `template-create`.
 - List management uses the `list-*` prefix; custom smart-list writes use `smart-list-*`; template writes use `template-*`.
 - `--json` works on subcommands. For tabular read commands (`today`, `upcoming`, `overdue`, `flagged`, `urgent`, `lists`, `show`, `search`), `--format json|table|plain` can be passed globally before the command or on the command. `export --format json|csv` selects a file format, not display style.
-- List targets resolve exact name → case-insensitive → normalized (e.g. `Weekly 513` for `🗓️ Weekly 513`). If multiple match, RemCTL fails; use `--list-id`. `show`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, and smart-list `--include-list-id` accept numeric targeting; `list-pin`/`list-unpin` also accept `--smart-list-id`. Passing both a name and `--list-id` is an error.
+- List targets resolve exact name → case-insensitive → normalized (e.g. `Weekly 513` for `🗓️ Weekly 513`). If multiple match, RemCTL fails; use `--list-id`. `show`, `search`, `add`, `edit`, `link`, `export`, `list-edit`, `list-pin`, `list-unpin`, `list-rename`, `list-delete`, and smart-list `--include-list-id` accept numeric targeting; `list-pin`/`list-unpin` also accept `--smart-list-id`. Passing both a name and `--list-id` is an error.
+- `search` matches titles, notes, and saved rich links of active reminders, ignoring case and accents (`cafe` finds `Café`); `%`, `_`, and `\` are literal. Add `--completed` for completed ones, `-l/--list NAME` or `--list-id ID` to scope it to one list. Results are newest first, 100 per page: with `--limit`/`--offset`, `--json` returns `{"query", "items", "count", "total", "offset", "limit", "hasMore", "nextOffset"}` — keep calling with `offset: nextOffset` while `hasMore` is true. Plain `--json` stays an array and warns on stderr when matches were cut off. `--via-eventkit search` takes `--list` but refuses `--list-id` and paging.
 - Note on exit codes: argument-parse errors (unknown flag, bad choice, missing argument) exit with `64` (Swift Argument Parser's `EX_USAGE`), not `2`. In-command validation errors (e.g. an unparseable due date) still exit `1`/`2` as documented per command.
 - `delete`, `list-delete`, `smart-list-delete`, and `template-delete` require `--force` whenever `--json` is set or stdin is not a terminal — without it they exit `1` with `code: confirmation_required` on stderr and write nothing. Always pass `--force` when scripting.
 - `import` takes a JSON file path or `-` for piped stdin (max 8 MiB; a terminal is refused). `--dry-run` validates the whole document and prints `{"status": "valid", "count": N, "created": 0}` without creating anything.

@@ -42,7 +42,7 @@ largest `Data-*.sqlite` under the store directory through
 [GRDB.swift](https://github.com/groue/GRDB.swift) with `Configuration.readonly = true`.
 RemCTL opens the database **read-only and never writes to SQLite**. Queries live
 alongside it in `Sources/RemindersControl/Store/Queries+*.swift`, with the schema
-column lookups cached on the store.
+column lookups cached on the store. The connection also carries one custom SQL function, `remctl_fold(text)`, because SQLite folds neither case beyond ASCII nor accents and `search` matches on folded text.
 
 Direct reads are the fast, detailed path. They expose fields EventKit does not
 surface cleanly for list views, in tens of milliseconds:

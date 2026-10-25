@@ -14,6 +14,8 @@ public final class RemindersStore {
         let dbPath = try Paths.findMainDB(storeDir: storeDir)
         var config = Configuration()
         config.readonly = true   // SQLITE_OPEN_READONLY ~ ?mode=ro; no WAL change
+        // `search` folds case and accents in SQL, which SQLite cannot do on its own (upstream b8b601c).
+        config.prepareDatabase { $0.add(function: searchFoldFunction) }
         let q = try DatabaseQueue(path: dbPath.path, configuration: config)
         // Schema guard (port upstream aba7cf5): refuse a sqlite file that isn't a
         // Reminders store, instead of failing later with confusing query errors.

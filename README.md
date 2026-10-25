@@ -223,14 +223,15 @@ Use JSON when scripting:
 remctl today --json
 remctl show Work --json
 remctl search "query" --completed --json
+remctl search "macstories.net" --list Work --limit 50 --json
 remctl info 23880 --json
 remctl doctor --for-agent --json
 ```
 
-- `search` matches titles and notes; `--completed` includes completed reminders.
+- `search` matches titles, notes, and saved rich links, ignoring case and accents (`cafe` finds `Café`); `--completed` includes completed reminders, `-l/--list` or `--list-id` scopes it to one list. `--limit`/`--offset` turn `--json` into a page object with `total`, `hasMore`, and `nextOffset`; without them the array stops at 100 matches and stderr says how to get the rest.
 - For fast writes, call `remctl add ... --json`, use the returned `numericId` when present, then verify with `remctl info <numericId> --json`. `info --json` includes rich-link URLs, attachments, alarms, location alarms, Early Reminders, and recurrence — so agents do not need raw SQLite checks.
 - Pass deterministic due dates (ideally `YYYY-MM-DD HH:MM` resolved in the user's timezone). On an invalid date, RemCTL exits before writing with a structured `invalid_due_date` JSON error on stderr; retry with a corrected date rather than creating then patching.
-- List names resolve exact → case-insensitive → normalized (handles emoji prefixes). If more than one matches, RemCTL fails and asks for `--list-id`. `show`, `add`, `edit`, `link`, `export`, and the `list-*` commands accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
+- List names resolve exact → case-insensitive → normalized (handles emoji prefixes). If more than one matches, RemCTL fails and asks for `--list-id`. `show`, `search`, `add`, `edit`, `link`, `export`, and the `list-*` commands accept `--list-id`; `list-pin`/`list-unpin` also accept `--smart-list-id`.
 - For shared-list assignments, call `remctl sharees LIST --json` first; `--assign` accepts a unique name, email/phone address, numeric sharee ID, object UUID, or `me` — prefer `address`, `id`, or `objectUUID` in automation because names can collide. Verify with `remctl info ID --json` under `assignment`.
 - Do not use `--via-eventkit` by default. It is a limited read-only fallback (`show`, `search`, `today`, `upcoming`) for hosts without Full Disk Access; its `eventKitId` values are not RemCTL numeric IDs and must never be passed to numeric-ID commands.
 - Never mutate the Reminders SQLite database — use RemCTL commands.

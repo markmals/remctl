@@ -219,12 +219,14 @@ enum EventKitReadCLI {
     static func run(
         mode: String, listId: Int? = nil, listName: String? = nil, requiresListName: Bool = false,
         query: String? = nil, completed: Bool = false, days: Int = 7, includeOverdue: Bool = true,
+        pagingRequested: Bool = false,
         opts: ReadDisplayOptions, heading: String, emptyMessage: String, groupByDay: Bool = false
     ) async {
         let json = opts.effectiveJSON
         do {
             try validateEventKitReadArgs(listId: listId, formatIsTable: opts.format == .table,
-                                         requiresListName: requiresListName, listName: listName)
+                                         requiresListName: requiresListName, listName: listName,
+                                         pagingRequested: pagingRequested)
             let items = try await EventKitReader().read(
                 mode: mode, list: listName, query: query, completed: completed,
                 days: days, includeOverdue: includeOverdue)
