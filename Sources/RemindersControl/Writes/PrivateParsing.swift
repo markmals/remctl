@@ -147,9 +147,12 @@ public enum PrivateParsing {
                 }
             }
 
-            // due — we pass through the raw string; the caller (P12/P13) parses it
+            // due — we pass through the raw string; the caller (P12/P13) parses it. Date-only text
+            // ("today", "2026-06-01", "+3d") makes the child all-day, exactly as on the parent.
             if let dueAny = spec["due"], !(dueAny is NSNull) {
-                result.due = "\(dueAny)"
+                let dueText = "\(dueAny)"
+                result.due = dueText
+                result.allDay = WriteParsing.dueSpecIsAllDay(dueText)
             }
 
             // priority
@@ -166,9 +169,14 @@ public enum PrivateParsing {
                 result.alarm = "\(alarmAny)"
             }
 
-            // recurrence — pass through as raw string
+            // recurrence — a CLI string spec or an exported recurrence object. Validated here so a
+            // malformed value (including `{}`, `[]`, `false`) fails before any write; `null` and an
+            // absent key both mean "no recurrence" (upstream 467ac55).
             if let recAny = spec["recurrence"], !(recAny is NSNull) {
-                result.recurrence = "\(recAny)"
+                guard let canonical = recurrenceSpecText(recAny) else {
+                    throw CLIError("could not parse subtask recurrence \(recurrenceValueRepr(recAny)). Use daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', or an exported recurrence object.")
+                }
+                result.recurrence = canonical
             }
 
             // earlyReminder / early_reminder
@@ -297,6 +305,28 @@ public enum PrivateParsing {
             if ["0", "false", "no", "off"].contains(low) { return false }
         }
         throw CLIError("subtask \(field) must be a boolean.")
+    }
+
+    /// Validate a subtask `recurrence` value and return the text `bridge_update_subtask` re-parses:
+    /// the original string spec, or an exported recurrence object re-serialized as JSON.
+    private static func recurrenceSpecText(_ value: Any) -> String? {
+        guard let json = recurrenceJSON(value), WriteParsing.parseRecurrence(json) != nil else { return nil }
+        if case let .string(spec) = json { return spec }
+        return json.serialized(indent: nil, ensureAscii: true)
+    }
+
+    /// Re-decode a JSONSerialization value into an ordered JSONValue, so booleans stay booleans and
+    /// integers stay integers — a distinction the recurrence validator relies on.
+    private static func recurrenceJSON(_ value: Any) -> JSONValue? {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+        else { return nil }
+        return OrderedJSON.parse(data)
+    }
+
+    /// Quote a rejected recurrence value: Python-style repr for a string, compact JSON otherwise.
+    private static func recurrenceValueRepr(_ value: Any) -> String {
+        if let text = value as? String { return WriteFormatting.pyRepr(text) }
+        return recurrenceJSON(value)?.serialized(indent: nil, ensureAscii: true) ?? "\(value)"
     }
 
     /// Port of `is_web_url`: http or https scheme with a non-empty host.

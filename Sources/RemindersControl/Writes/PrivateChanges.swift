@@ -343,7 +343,10 @@ public enum PrivateChanges {
             guard let parsed = WriteParsing.parseDue(due, now: now, calendar: calendar) else {
                 throw CLIError("could not parse subtask due date \(WriteFormatting.pyRepr(due)). Use ISO (YYYY-MM-DD [HH:MM]) or shortcuts like today/tomorrow/eod/+3d.")
             }
-            write.due = .set(parsed); hasBridgeField = true
+            write.due = .set(parsed)
+            // Date-only due text makes an all-day child, exactly as on the parent (upstream 3203f22).
+            if spec.allDay { write.allDay = true }
+            hasBridgeField = true
         }
 
         if let priority = spec.priority {
@@ -362,8 +365,9 @@ public enum PrivateChanges {
         }
 
         if let recurrence = spec.recurrence, !recurrence.isEmpty {
-            guard let r = WriteParsing.parseRecurrenceSpec(recurrence) else {
-                throw CLIError("subtask recurrence must be daily, weekly, monthly, yearly, 'weekly mon,wed,fri', or 'monthly 1,15'.")
+            // parse_subtask_specs already validated the spec (string grammar or exported object).
+            guard let r = WriteParsing.parseRecurrenceSpec(recurrence, calendar: calendar) else {
+                throw CLIError("could not parse subtask recurrence \(WriteFormatting.pyRepr(recurrence)). Use daily, weekly, monthly, yearly, 'weekly mon,wed,fri', 'monthly 1,15', or an exported recurrence object.")
             }
             write.recurrence = r; hasBridgeField = true
         }

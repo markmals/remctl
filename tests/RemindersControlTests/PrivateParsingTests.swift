@@ -289,6 +289,40 @@ import GRDB
         }
     }
 
+    @Test func parseSubtaskSpecs_dateOnlyDueIsAllDay() throws {
+        for due in ["today", "tomorrow", "2026-06-01", "+3d", "eow"] {
+            let result = try PrivateParsing.parseSubtaskSpecs([#"{"title":"Task","due":"\#(due)"}"#])
+            #expect(result[0].due == due)
+            #expect(result[0].allDay, "expected an all-day child for due \(due)")
+        }
+        for due in ["2026-06-01 09:00", "today at 3pm", "eod"] {
+            let result = try PrivateParsing.parseSubtaskSpecs([#"{"title":"Task","due":"\#(due)"}"#])
+            #expect(!result[0].allDay, "expected a timed child for due \(due)")
+        }
+    }
+
+    @Test func parseSubtaskSpecs_recurrenceStringAndObject() throws {
+        #expect(try PrivateParsing.parseSubtaskSpecs([#"{"title":"T","recurrence":"weekly mon,wed"}"#])[0].recurrence
+            == "weekly mon,wed")
+        // An exported recurrence object is kept as JSON instead of being stringified into junk.
+        let object = #"{"title":"T","recurrence":{"frequency":"weekly","interval":2,"daysOfWeek":[2]}}"#
+        let spec = try PrivateParsing.parseSubtaskSpecs([object])[0].recurrence
+        #expect(WriteParsing.parseRecurrenceSpec(spec ?? "")
+            == RecurrenceWrite(frequency: "weekly", interval: 2, daysOfWeek: [2]))
+        // An absent or null recurrence stays absent.
+        #expect(try PrivateParsing.parseSubtaskSpecs([#"{"title":"T","recurrence":null}"#])[0].recurrence == nil)
+        #expect(try PrivateParsing.parseSubtaskSpecs([#"{"title":"T"}"#])[0].recurrence == nil)
+    }
+
+    @Test func parseSubtaskSpecs_invalidRecurrence_throws() {
+        for value in ["{}", "[]", "false", "0", #""""#, #""daily mon""#,
+                      #"{"frequency":"daily","count":false}"#] {
+            #expect(throws: CLIError.self, "expected rejection of recurrence \(value)") {
+                try PrivateParsing.parseSubtaskSpecs([#"{"title":"T","recurrence":\#(value)}"#])
+            }
+        }
+    }
+
     @Test func parseSubtaskSpecs_earlyReminder_camelCase() throws {
         let json = #"{"title":"Task","earlyReminder":"15m"}"#
         let result = try PrivateParsing.parseSubtaskSpecs([json])

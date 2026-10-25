@@ -248,7 +248,7 @@ A recurrence **object** — exactly the shape `export` and `info --json` emit (`
 
 ### Subtasks
 
-`--subtask` (repeatable on `add` and `edit`) accepts a plain child title or a JSON object with: `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields. Rich subtask URLs follow the public-host rule. Subtask image/link edits are additive; only images attach (generic file/PDF attachments are rejected).
+`--subtask` (repeatable on `add` and `edit`) accepts a plain child title or a JSON object with: `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields. A date-only `due` makes the child all-day; `recurrence` takes a string spec or an exported recurrence object. Rich subtask URLs follow the public-host rule. Subtask image/link edits are additive; only images attach (generic file/PDF attachments are rejected).
 
 ```bash
 remctl add "Prepare screenshots" -l Projects --image ~/Desktop/mockup.png --subtask "Export PNG"

@@ -14,6 +14,7 @@ public struct SubtaskSpec: Sendable, Equatable {
     public var title: String
     public var notes: String?
     public var due: String?            // ISO string
+    public var allDay: Bool            // date-only `due` text ⇒ the child is all-day
     public var priority: String?       // high/medium/low/none
     public var alarm: String?
     public var recurrence: String?
@@ -28,8 +29,8 @@ public struct SubtaskSpec: Sendable, Equatable {
     public var locationTitle: String?
     public var radius: Double?
     public var proximity: Int?         // 1=enter, 2=leave
-    public init(title: String, notes: String? = nil, due: String? = nil, priority: String? = nil, alarm: String? = nil, recurrence: String? = nil, earlyReminder: String? = nil, urls: [String] = [], tags: [String] = [], images: [String] = [], flagged: Bool? = nil, urgent: Bool? = nil, latitude: Double? = nil, longitude: Double? = nil, locationTitle: String? = nil, radius: Double? = nil, proximity: Int? = nil) {
-        self.title = title; self.notes = notes; self.due = due; self.priority = priority
+    public init(title: String, notes: String? = nil, due: String? = nil, allDay: Bool = false, priority: String? = nil, alarm: String? = nil, recurrence: String? = nil, earlyReminder: String? = nil, urls: [String] = [], tags: [String] = [], images: [String] = [], flagged: Bool? = nil, urgent: Bool? = nil, latitude: Double? = nil, longitude: Double? = nil, locationTitle: String? = nil, radius: Double? = nil, proximity: Int? = nil) {
+        self.title = title; self.notes = notes; self.due = due; self.allDay = allDay; self.priority = priority
         self.alarm = alarm; self.recurrence = recurrence; self.earlyReminder = earlyReminder
         self.urls = urls; self.tags = tags; self.images = images
         self.flagged = flagged; self.urgent = urgent

@@ -190,6 +190,55 @@ import GRDB
         if case .set = w.due {} else { Issue.record("expected child due .set") }
     }
 
+    @Test func subtaskDateOnlyDueCreatesAllDayChild() async throws {
+        // A date-only child due must set allDay on the bridge write, like the parent path does.
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult([(id: "C1", title: "x")])
+        let mw = MockWriter()
+        let specs = try PrivateParsing.parseSubtaskSpecs([#"{"title":"x","due":"2026-06-01"}"#])
+        _ = try await PrivateChanges.apply(
+            reminderCkid: "R1", url: nil, tags: [],
+            section: nil, sectionId: nil, newSection: nil,
+            subtasks: specs, images: [],
+            flagged: nil, urgent: nil, earlyReminder: nil,
+            store: s, listPk: nil, writer: mw, private: mp,
+            now: Date(timeIntervalSince1970: 1_700_000_000), calendar: .current)
+        guard case let .update(_, w)? = mw.calls.first else { Issue.record("expected child update"); return }
+        #expect(w.allDay == true)
+
+        // A timed child due stays timed.
+        let mw2 = MockWriter()
+        let mp2 = MockPrivateWriter(); mp2.subtasksResult = childResult([(id: "C1", title: "x")])
+        let timed = try PrivateParsing.parseSubtaskSpecs([#"{"title":"x","due":"2026-06-01 09:00"}"#])
+        _ = try await PrivateChanges.apply(
+            reminderCkid: "R1", url: nil, tags: [],
+            section: nil, sectionId: nil, newSection: nil,
+            subtasks: timed, images: [],
+            flagged: nil, urgent: nil, earlyReminder: nil,
+            store: s, listPk: nil, writer: mw2, private: mp2,
+            now: Date(timeIntervalSince1970: 1_700_000_000), calendar: .current)
+        guard case let .update(_, w2)? = mw2.calls.first else { Issue.record("expected child update"); return }
+        #expect(w2.allDay == nil)
+    }
+
+    @Test func subtaskExportedRecurrenceObjectReachesTheBridge() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let mp = MockPrivateWriter(); mp.subtasksResult = childResult([(id: "C1", title: "x")])
+        let mw = MockWriter()
+        let specs = try PrivateParsing.parseSubtaskSpecs([
+            #"{"title":"x","recurrence":{"frequency":"monthly","interval":1,"daysOfWeek":[6],"weekNumbers":[4]}}"#
+        ])
+        _ = try await PrivateChanges.apply(
+            reminderCkid: "R1", url: nil, tags: [],
+            section: nil, sectionId: nil, newSection: nil,
+            subtasks: specs, images: [],
+            flagged: nil, urgent: nil, earlyReminder: nil,
+            store: s, listPk: nil, writer: mw, private: mp,
+            now: Date(timeIntervalSince1970: 1_700_000_000), calendar: .current)
+        guard case let .update(_, w)? = mw.calls.first else { Issue.record("expected child update"); return }
+        #expect(w.recurrence == RecurrenceWrite(frequency: "monthly", interval: 1, daysOfWeek: [6], weekNumbers: [4]))
+    }
+
     @Test func subtaskWithPrivateChildFields() async throws {
         // flagged/urgent/tags route to the private writer on the created child "C1".
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }

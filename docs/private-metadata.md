@@ -72,7 +72,7 @@ Shared lists support assigning a reminder to a participant. `--assign USER` reso
 
 `title`, `notes`, `due`, `priority`, `alarm`, `recurrence`, `earlyReminder`, `url`/`urls`, `tags`, `image`/`images`, `flagged`, `urgent`, and location fields (`locationTitle`, `latitude`, `longitude`, `radius`, `proximity`).
 
-Subtask due dates, priority, recurrence, and alarms use the same validators as parent reminders, and rich subtask URLs follow the same public-host rule. Invalid parent or subtask values fail before RemCTL creates or edits anything, so private metadata is never silently dropped onto a partially-created reminder.
+Subtask due dates, priority, recurrence, and alarms use the same validators as parent reminders, and rich subtask URLs follow the same public-host rule. A date-only `due` (`today`, `2026-06-01`, `+3d`) creates an **all-day** child, exactly as on the parent; `recurrence` takes a string spec or an exported recurrence object. Invalid parent or subtask values fail before RemCTL creates or edits anything, so private metadata is never silently dropped onto a partially-created reminder.
 
 ### Attachments
 
