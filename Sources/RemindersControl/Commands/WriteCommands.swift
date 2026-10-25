@@ -552,9 +552,12 @@ struct Edit: AsyncParsableCommand {
         //     tree across lists, so the move goes through ReminderKit's verified clone-delete.
         //     It replaces the whole edit, so it refuses to combine with other field changes.
         let movingToDifferentList = listTarget != nil && listTarget!.id != row.int("ZLIST")
+        // Upstream omits the location flags here, which silently drops a location alarm edit
+        // that rides along with a clone-delete move; count them as edits so the move refuses.
         let hasOtherChangesForMove = (title?.isEmpty == false) || notes != nil
             || (priority?.isEmpty == false) || (due?.isEmpty == false) || (url?.isEmpty == false)
             || parsedRecurrence != nil || clearAlarm || parsedAlarm != nil || wantsPrivate
+            || latitude != nil
         var childRowsForMove: [Row] = []
         if movingToDifferentList {
             childRowsForMove = store.subtasksForMove(parentPk: id)

@@ -74,6 +74,18 @@ import GRDB
         #expect(out.stderr.contains(#""code": "list_move_with_subtasks_conflicts_with_edits""#))
     }
 
+    @Test func cloneDeleteRefusesToDropALocationAlarmEdit() async throws {
+        let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let p = clonedAs("NEW-CK")
+        let out = try await Edit.perform(id: 42, list: "Home", latitude: 45.0, longitude: 9.0,
+                                         json: true, store: s, writer: m, private: p)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains(#""code": "list_move_with_subtasks_conflicts_with_edits""#))
+        #expect(m.calls.isEmpty)
+        #expect(p.calls.isEmpty)
+    }
+
     @Test func unverifiedCloneLeavesTheOriginalInPlace() async throws {
         let (s, dir) = try store(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
