@@ -26,6 +26,10 @@ public func smartListToDict(_ row: ReminderRow) -> [(String, JSONValue)] {
     if row.has("ZCOLOR"), let blob = row.data("ZCOLOR"), !blob.isEmpty {
         let c = parseListColor(blob)
         payload.append(("color", .object([("name", .string(c.name)), ("hex", .string(c.hex))])))
+    } else if smartType == Constants.customSmartListType {
+        // Reminders shows a custom smart list saved without a color in its default blue.
+        let c = parseListColor(nil)
+        payload.append(("color", .object([("name", .string(c.name)), ("hex", .string(c.hex))])))
     }
     if row.has("ZBADGEEMBLEM"), let raw = row.string("ZBADGEEMBLEM"), !raw.isEmpty {
         if let badge = parseBadgeEmblem(raw) { payload.append(("badge", .object(badge))) }

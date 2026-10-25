@@ -372,7 +372,7 @@ Supported filter families:
 - **Selected tags:** `--tags a,b` with optional `--tag-match all|any`
 - **Date:** `--date any|today` (with `--date-today-include-past-due`), `--date-on YYYY-MM-DD`, `--date-before`, `--date-after`, `--date-range START,END`
 - **Time of day:** `--time morning|afternoon|evening|night`
-- **Priority:** `--priority high|medium|low`; comma-separated values map to Priority: Any
+- **Priority:** `--priority high|medium|low|none` (`none` is Reminders' No Priority); comma-separated values map to Priority: Any
 - **Flag:** `--flagged`
 - **Vehicle:** `--vehicle connected`
 - **Specific location:** `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`

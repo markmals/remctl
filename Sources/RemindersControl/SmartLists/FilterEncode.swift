@@ -151,7 +151,7 @@ func normalizePriorities(_ priorities: [String]) throws -> [String] {
     for priority in priorities {
         let value = priority.trimmingCharacters(in: .whitespaces).lowercased()
         guard supportedPriorities.contains(value) else {
-            throw SmartListFilterError("Unsupported smart list priority. Use low, medium, or high.")
+            throw SmartListFilterError("Unsupported smart list priority. Use high, medium, low, or none.")
         }
         if !normalized.contains(value) { normalized.append(value) }
     }

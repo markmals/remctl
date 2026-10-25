@@ -60,7 +60,7 @@ struct SmartListFilterOptions: ParsableArguments {
     @Option(name: .long, help: "Match all or any supplied filters") var match: String = "all"
     @Option(name: .customLong("filter-json"), help: "Advanced: raw official smart-list filter JSON or @path") var filterJson: String?
     @Flag(name: .long, help: "Filter to flagged reminders") var flagged = false
-    @Option(name: .long, help: "Priority filter: high, medium, low, or comma-separated values") var priority: String?
+    @Option(name: .long, help: "Priority filter: high, medium, low, none, or comma-separated values") var priority: String?
     @Option(name: .long, help: "Selected tag filter, comma-separated; # prefix optional") var tags: String?
     @Option(name: .customLong("tag-match"), help: "Selected tag matching mode") var tagMatch: String = "any"
     @Flag(name: .customLong("any-tag"), help: "Filter to reminders with any tag") var anyTag = false

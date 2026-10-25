@@ -1,6 +1,7 @@
 import Foundation
 
-let supportedPriorities: Set<String> = ["low", "medium", "high"]
+/// Reminders.app stores its No Priority filter as "none".
+let supportedPriorities: Set<String> = ["none", "low", "medium", "high"]
 let supportedVehicles: Set<String> = ["connected", "disconnected"]
 
 /// Result of decode_smart_list_filter_blob.

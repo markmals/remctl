@@ -218,7 +218,7 @@ _remctl() {
                 '--symbol[Official Reminders list symbol]:symbol:' \
                 '--emoji[Private Reminders emoji badge]:emoji:' \
                 '--flagged[Filter to flagged reminders]' \
-                '--priority[Priority filter]:priority:(high medium low)' \
+                '--priority[Priority filter]:priority:(high medium low none)' \
                 '--match[Match all or any filters]:match:(all any)' \
                 '--tags[Selected tag filter, comma-separated; # prefix optional]:tags:' \
                 '--tag-match[Selected tag matching mode]:match:(all any)' \
@@ -249,7 +249,7 @@ _remctl() {
                 '--symbol[Official Reminders list symbol]:symbol:' \
                 '--emoji[Private Reminders emoji badge]:emoji:' \
                 '--flagged[Filter to flagged reminders]' \
-                '--priority[Priority filter]:priority:(high medium low)' \
+                '--priority[Priority filter]:priority:(high medium low none)' \
                 '--match[Match all or any filters]:match:(all any)' \
                 '--tags[Selected tag filter, comma-separated; # prefix optional]:tags:' \
                 '--tag-match[Selected tag matching mode]:match:(all any)' \

@@ -30,6 +30,19 @@ import GRDB
         #expect(summaryField(r, "description")?.asStringT == "Priority: high")
         #expect(summaryField(r, "supported")?.asBoolT == true)
     }
+    @Test func noPriorityFilterIsSupported() {
+        // Reminders.app saves its No Priority filter as "none".
+        let r = decode(#"{"priorities":["none"]}"#)
+        #expect(summaryField(r, "kind")?.asStringT == "priority")
+        #expect(summaryField(r, "description")?.asStringT == "Priority: none")
+        #expect(summaryField(r, "supported")?.asBoolT == true)
+    }
+    @Test func noPriorityEncodesAndNormalizes() throws {
+        #expect(try normalizePriorities(["None", "high"]) == ["none", "high"])
+        let payload = OrderedJSON.parse(Data(#"{"priorities":["none"]}"#.utf8))!
+        #expect(String(data: try encodeSupportedFilterPayload(payload), encoding: .utf8)
+                == #"{"priorities":["none"]}"#)
+    }
     @Test func legacySelectedTagsUnsupportedNonMaterializing() {
         let r = decode(#"{"hashtags":{"hashtags":["remctl"]}}"#)
         // single hashtags family that is unsupported -> top-level unsupported
@@ -99,6 +112,28 @@ import GRDB
         #expect(filter?["kind"] as? String == "priority")
         let filterJSON = custom?["filterJSON"] as? [String: Any]
         #expect((filterJSON?["priorities"] as? [String]) == ["high"])
+    }
+
+    /// Reminders shows a custom smart list saved without a color in its default blue;
+    /// built-in smart lists keep no color at all (upstream 8f84a80).
+    @Test func uncoloredCustomSmartListReportsDefaultBlue() throws {
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: """
+            INSERT INTO ZREMCDBASELIST (Z_PK,ZNAME,ZCKIDENTIFIER,Z_ENT,ZSMARTLISTTYPE,ZCOLOR,ZMARKEDFORDELETION)
+            VALUES (1,NULL,'BUILTIN-1',4,'com.apple.reminders.smartlist.flagged',NULL,0);
+            INSERT INTO ZREMCDBASELIST (Z_PK,ZNAME,ZCKIDENTIFIER,Z_ENT,ZSMARTLISTTYPE,ZCOLOR,ZMARKEDFORDELETION)
+            VALUES (2,'Plain','CUSTOM-1',4,'com.apple.reminders.smartlist.custom',NULL,0);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let r = try CLIRunner.run(["smart-lists", "--json"], storeDir: dir)
+        #expect(r.exit == 0)
+        let arr = try JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [[String: Any]]
+        #expect(arr?[0]["color"] == nil)
+        let color = arr?[1]["color"] as? [String: Any]
+        #expect(color?["name"] as? String == "blue")
+        #expect(color?["hex"] as? String == "#007AFF")
     }
 }
 

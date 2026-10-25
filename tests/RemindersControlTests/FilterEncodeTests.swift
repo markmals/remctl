@@ -104,7 +104,7 @@ import GRDB
         do {
             _ = try buildSupportedFilterPayload(priorities: ["urgent"])
         } catch let e as SmartListFilterError {
-            #expect(e.message == "Unsupported smart list priority. Use low, medium, or high.")
+            #expect(e.message == "Unsupported smart list priority. Use high, medium, low, or none.")
         } catch { Issue.record("wrong error") }
     }
 

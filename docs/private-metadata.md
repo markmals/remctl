@@ -182,7 +182,7 @@ remctl smart-list-delete "Flagged Review" --force
 - **Selected tags** — `--tags` (plus optional `--tag-match all|any`)
 - **Date** — `--date any|today`, `--date-today-include-past-due`, `--date-on`, `--date-before`, `--date-after`, `--date-range START,END`
 - **Time of day** — `--time morning|afternoon|evening|night`
-- **Priority** — `--priority high|medium|low`; comma-separated (e.g. `high,medium`) = Priority: Any
+- **Priority** — `--priority high|medium|low|none` (`none` is Reminders' No Priority); comma-separated (e.g. `high,medium`) = Priority: Any
 - **Flag** — `--flagged`
 - **Vehicle** — `--vehicle connected`
 - **Specific location** — `--location-title`/`--latitude`/`--longitude`/`--radius`/`--proximity`
