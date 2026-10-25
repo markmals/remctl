@@ -153,8 +153,39 @@ import GRDB
     @Test func alarmParses() async throws {
         let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Add.perform(title: "T", alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
+        _ = try await Add.perform(title: "T", due: "2026-09-30 09:00", alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(createdWrite(m)?.alarm == .relativeOffset(-900))
+    }
+
+    @Test func relativeAlarmWithoutDueRefused() async throws {
+        // A relative alarm counts back from the due date; without one it never fires
+        // (upstream 3f09015).
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Add.perform(title: "T", alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: A relative alarm (15m, 1h, 1d) needs a due date to count back from. "
+            + "Add a due date, or use an absolute alarm such as '2026-09-30 09:00'. "
+            + "No reminder was created or changed.\n")
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func relativeAlarmWithoutDueRefusedJSON() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Add.perform(title: "T", alarm: "1d", json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "relative_alarm_requires_due_date""#))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func absoluteAlarmWithoutDueAllowed() async throws {
+        let (s, dir) = try store { _ in }; defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Add.perform(title: "T", alarm: "2026-09-30 09:00", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(createdWrite(m)?.alarm != nil)
     }
 
     @Test func urlGoesToNotesAppendField() async throws {

@@ -234,7 +234,7 @@ import GRDB
     @Test func alarmRelative() async throws {
         let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
         let m = MockWriter()
-        _ = try await Edit.perform(id: 42, alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
+        _ = try await Edit.perform(id: 42, due: "2026-09-30 09:00", alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
         #expect(updatedWrite(m)?.write.alarm == .relativeOffset(-900))
     }
 
@@ -350,6 +350,89 @@ import GRDB
         #expect(out.stderr == "Error: Early Reminder requires a reminder due date.\n")
         #expect(m.calls.isEmpty)
         #expect(mp.calls.isEmpty)
+    }
+
+    // MARK: - Guards Reminders itself would refuse (upstream 3f09015)
+
+    /// Reminder pk 42 with a weekly recurrence rule attached (Z_ENT=34, FK ZREMINDER4).
+    private func withRepeatingReminder() throws -> (RemindersStore, URL) {
+        try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'Gym',10,1,0,0,'ABC',700000000.0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZMARKEDFORDELETION,ZREMINDER4,ZFREQUENCY,ZINTERVAL) VALUES (1,34,0,42,2,1)")
+        }
+    }
+
+    @Test func dueClearOnRepeatingReminderRefused() async throws {
+        let (s, dir) = try withRepeatingReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter(); let mp = MockPrivateWriter()
+        let out = try await Edit.perform(id: 42, title: "New", due: "clear", json: false, store: s, writer: m, private: mp)
+        #expect(out.exitCode == 1)
+        #expect(out.stderr == "Error: A repeating reminder needs a due date, so RemCTL cannot clear it. "
+            + "Turn off the repeat in Reminders first, or pass a new due date. No reminder was changed.\n")
+        #expect(m.calls.isEmpty)   // refused BEFORE the title write
+        #expect(mp.calls.isEmpty)
+    }
+
+    @Test func dueClearOnRepeatingReminderJSON() async throws {
+        let (s, dir) = try withRepeatingReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "clear", json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stdout.isEmpty)
+        #expect(out.stderr.contains(#""code": "repeating_reminder_requires_due_date""#))
+        #expect(out.stderr.contains(#""id": 42"#))
+    }
+
+    @Test func dueClearOnNonRepeatingReminderAllowed() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(updatedWrite(m)?.write.due == .clear)
+    }
+
+    @Test func relativeAlarmWithoutDueRefused() async throws {
+        // Reminder 42 has no ZDUEDATE and the edit sets none → the alarm would never fire.
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains("A relative alarm (15m, 1h, 1d) needs a due date to count back from."))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func relativeAlarmWithDueClearRefused() async throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',700000000.0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, due: "clear", alarm: "1h", json: true, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 1)
+        #expect(out.stderr.contains(#""code": "relative_alarm_requires_due_date""#))
+        #expect(m.calls.isEmpty)
+    }
+
+    @Test func relativeAlarmWithExistingDueAllowed() async throws {
+        let (s, dir) = try store { db in
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION,ZCKIDENTIFIER) VALUES (10,3,'Work',0,'CK-W')")
+            try db.execute(sql: "INSERT INTO ZREMCDREMINDER (Z_PK,ZTITLE,ZLIST,ZACCOUNT,ZCOMPLETED,ZMARKEDFORDELETION,ZCKIDENTIFIER,ZDUEDATE) VALUES (42,'T',10,1,0,0,'ABC',700000000.0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, alarm: "15m", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(updatedWrite(m)?.write.alarm == .relativeOffset(-900))
+    }
+
+    @Test func absoluteAlarmWithoutDueAllowed() async throws {
+        let (s, dir) = try withReminder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let out = try await Edit.perform(id: 42, alarm: "2026-09-30 09:00", json: false, store: s, writer: m, private: MockPrivateWriter())
+        #expect(out.exitCode == 0)
+        #expect(m.calls.count == 1)
     }
 
     @Test func earlyReminderWithExistingDueOK() async throws {

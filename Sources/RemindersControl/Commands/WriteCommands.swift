@@ -148,6 +148,12 @@ struct Add: AsyncParsableCommand {
             throw CLIError("Early Reminder requires a reminder due date.")
         }
 
+        // 2a'. Relative-alarm due-date guard (cmd_add:8773): a relative alarm counts back from the
+        //      due date, so without one it never fires.
+        if case .relativeOffset = parsedAlarm, dueDate == nil {
+            return failRelativeAlarmWithoutDue(json: json)
+        }
+
         // 2b. Parse --subtask specs + normalize --image paths up front (validates format; a bad spec
         //     — e.g. subtask location address — throws a CLIError exit 1 before any write). Mirrors
         //     parse_subtask_specs / normalize_image_paths being invoked in apply_private_changes.
@@ -274,6 +280,23 @@ struct Add: AsyncParsableCommand {
         s += "Use exact forms like:\n"
         for e in examples { s += "  \(e)\n" }
         return WriteOutcome(stderr: s, exitCode: 2)
+    }
+
+    /// Port of `fail_relative_alarm_without_due` (remctl:4593). Exit 1, nothing written. Shared
+    /// with `edit`, which refuses the same combination before its first write.
+    static func failRelativeAlarmWithoutDue(json: Bool) -> WriteOutcome {
+        let message = "A relative alarm (15m, 1h, 1d) needs a due date to count back from. "
+            + "Add a due date, or use an absolute alarm such as '2026-09-30 09:00'. "
+            + "No reminder was created or changed."
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("relative_alarm_requires_due_date")),
+                ("message", .string(message)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
     }
 
     /// Port of `due_date_examples` (remctl:3850).
@@ -468,6 +491,13 @@ struct Edit: AsyncParsableCommand {
             }
         }
 
+        // 4b. Repeating-reminder guard (cmd_edit:9204): Reminders refuses to save a repeating
+        //     reminder without a due date, and this edit has no transaction — refuse before the
+        //     first write rather than apply the other fields and fail on the date.
+        if dueIsClear, row.int("recurrence_frequency") != nil {
+            return failRepeatingReminderNeedsDue(id: id, json: json)
+        }
+
         // Alarm: clear-keywords -> .clear; else parse; bad -> exit 1.
         let explicitAlarm = (alarm != nil && !(alarm!.isEmpty))
         var parsedAlarm: AlarmWrite? = nil
@@ -478,6 +508,12 @@ struct Edit: AsyncParsableCommand {
             } else {
                 throw WriteError("could not parse alarm \(WriteFormatting.pyRepr(alarm!)). Use 15m, 1h, 1d, an absolute date, or clear.")
             }
+        }
+
+        // 4c. Relative-alarm due-date guard (cmd_edit:9215): the alarm counts back from the due
+        //     date, so it never fires on a reminder that will have none.
+        if case .relativeOffset = parsedAlarm, dueIsClear || (dueDate == nil && currentDue == nil) {
+            return Add.failRelativeAlarmWithoutDue(json: json)
         }
 
         // Location alarm pairing: lat+long must come as a pair.
@@ -661,6 +697,22 @@ struct Edit: AsyncParsableCommand {
         if let resolution { out += "List: \(safeDisplay(resolution.title))\n" }
         if !privateResults.isEmpty { out += privateMetadataLine(privateResults) }
         return .ok(out)
+    }
+
+    /// Port of `fail_repeating_reminder_needs_due` (remctl:4613). Exit 1, nothing written.
+    private static func failRepeatingReminderNeedsDue(id: Int, json: Bool) -> WriteOutcome {
+        let message = "A repeating reminder needs a due date, so RemCTL cannot clear it. "
+            + "Turn off the repeat in Reminders first, or pass a new due date. No reminder was changed."
+        if json {
+            let payload: JSONValue = .object([
+                ("status", .string("error")),
+                ("code", .string("repeating_reminder_requires_due_date")),
+                ("message", .string(message)),
+                ("id", .int(id)),
+            ])
+            return WriteOutcome(stderr: payload.serialized(indent: nil, ensureAscii: true) + "\n", exitCode: 1)
+        }
+        return WriteOutcome(stderr: "Error: \(message)\n", exitCode: 1)
     }
 
     /// Adapter: parse tags (CSV) and forward to the shared `PrivateChanges.apply` fan-out. The
