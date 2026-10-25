@@ -524,8 +524,9 @@ import GRDB
         df.timeZone = cal.timeZone; df.dateFormat = "yyyy-MM-dd HH:mm"; return df.string(from: date)
     }
 
-    /// TWO absolute alarms both == old due. Gate requires exactly ONE alarm -> no carry.
-    @Test func carrySuppressedByTwoAlarms() async throws {
+    /// TWO absolute alarms both == old due: acknowledged copies of one alarm, which Reminders
+    /// writes per device. Both move to the new due time (upstream b69fed6).
+    @Test func carriesDuplicateAcknowledgedAlarmCopies() async throws {
         let cal = Calendar.current
         let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
         let blob = dateComponentsBlob(oldInstant, calendar: cal)
@@ -541,7 +542,64 @@ import GRDB
         _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
         let u = updatedWrite(m)
         #expect(u?.write.due == .set(newInstant))
+        #expect(u?.write.alarm == .absolute(newInstant))
+    }
+
+    /// Two absolute alarms, only one at the old due: a custom alarm setup, left alone.
+    @Test func carrySuppressedByASecondUnrelatedAlarm() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let otherInstant = cal.date(from: DateComponents(year: 2024, month: 5, day: 31, hour: 18, minute: 0, second: 0))!
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)",
+                           arguments: [self.dateComponentsBlob(oldInstant, calendar: cal)])
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (82,\(Zent.alarm),42,83,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (83,?,0)",
+                           arguments: [self.dateComponentsBlob(otherInstant, calendar: cal)])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        let newInstant = cal.date(from: DateComponents(year: 2024, month: 7, day: 10, hour: 14, minute: 30, second: 0))!
+        _ = try await Edit.perform(id: 42, due: ymdhm(newInstant, cal), json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.due == .set(newInstant))
         #expect(u?.write.alarm == nil)
+    }
+
+    /// Duplicated copies also clear together on `edit -d clear` (upstream b69fed6).
+    @Test func clearsDuplicateAcknowledgedAlarmCopies() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let blob = dateComponentsBlob(oldInstant, calendar: cal)
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)", arguments: [blob])
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (82,\(Zent.alarm),42,83,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (83,?,0)", arguments: [blob])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, due: "clear", json: false, store: s, writer: m, private: MockPrivateWriter(), calendar: cal)
+        #expect(updatedWrite(m)?.write.alarm == .clear)
+    }
+
+    /// Turning a timed reminder into an all-day one removes the matching alarm instead of
+    /// moving it to midnight (upstream fa771b4).
+    @Test func allDayDueClearsTheCarriedAlarm() async throws {
+        let cal = Calendar.current
+        let oldInstant = cal.date(from: DateComponents(year: 2024, month: 6, day: 1, hour: 9, minute: 0, second: 0))!
+        let blob = dateComponentsBlob(oldInstant, calendar: cal)
+        let (s, dir) = try reminderWithDue(oldInstant, calendar: cal) { db in
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,Z_ENT,ZREMINDER,ZTRIGGER,ZMARKEDFORDELETION) VALUES (80,\(Zent.alarm),42,81,0)")
+            try db.execute(sql: "INSERT INTO ZREMCDOBJECT (Z_PK,ZDATECOMPONENTSDATA,ZMARKEDFORDELETION) VALUES (81,?,0)", arguments: [blob])
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let m = MockWriter()
+        _ = try await Edit.perform(id: 42, due: "2024-07-10", json: false, store: s, writer: m, private: MockPrivateWriter(), now: fixedNow, calendar: cal)
+        let u = updatedWrite(m)
+        #expect(u?.write.allDay == true)
+        #expect(u?.write.alarm == .clear)
     }
 
     /// One RELATIVE alarm (ZTIMEINTERVAL set). Gate requires an absolute alarm -> no carry.

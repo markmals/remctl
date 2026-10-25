@@ -387,7 +387,7 @@ struct Edit: AsyncParsableCommand {
         //    for ZDUEDATE / ZDISPLAYDATEDATE / ZLIST (needed for nudge / carry / clear).
         let (_, ckid) = try WriteDispatch.resolveReminderForWrite(store, id: id, op: "edit it")
         guard let row = store.reminder(pk: id) else { throw WriteError("#\(id) not found") }
-        let currentDue = row.double("ZDUEDATE")
+        let currentDue = timedDueRaw(row, calendar: calendar, hasAbsoluteAlarm: { store.hasAbsoluteAlarm(pk: id) })
         let currentDisplay = row.double("ZDISPLAYDATEDATE")
 
         // 2. Parse --subtask specs + normalize --image paths up front (validates format; a bad spec
@@ -536,8 +536,9 @@ struct Edit: AsyncParsableCommand {
         // 7. Absolute-alarm carry / clear (only when no explicit --alarm).
         if !explicitAlarm {
             if let dueDate, shouldCarryAbsoluteAlarm(store: store, pk: id, oldDue: currentDue, calendar: calendar) {
-                // Move the matching absolute alarm to follow the new due.
-                write.alarm = .absolute(dueDate); hasChanges = true
+                // Move the matching absolute alarm to follow the new due. An all-day target
+                // has no time to ring at, so drop the alarm instead (upstream fa771b4).
+                write.alarm = dueAllDay ? .clear : .absolute(dueDate); hasChanges = true
             } else if dueIsClear, shouldClearMatchingAbsoluteAlarm(store: store, pk: id, oldDue: currentDue, oldDisplay: currentDisplay, calendar: calendar) {
                 write.alarm = .clear; hasChanges = true
             }
@@ -661,28 +662,32 @@ struct Edit: AsyncParsableCommand {
             groceryAttempts: groceryAttempts, groceryDelay: groceryDelay)
     }
 
-    /// Port of `should_carry_absolute_alarm_to_new_due` (remctl:1522). Returns true only when the
-    /// reminder has exactly ONE alarm, it is absolute, and it equals the OLD due (to the second).
-    private static func shouldCarryAbsoluteAlarm(store: RemindersStore, pk: Int, oldDue: Double?, calendar: Calendar) -> Bool {
-        guard let oldDue else { return false }
+    /// Port of `_absolute_alarm_datetimes` (upstream b69fed6). Dates of the reminder's alarms,
+    /// or nil unless every alarm is absolute. Reminders can store the same alarm more than
+    /// once: each device that handles the notification writes its own acknowledged copy, and
+    /// the copies sync. Callers treat such copies as one alarm.
+    private static func absoluteAlarmDates(store: RemindersStore, pk: Int, calendar: Calendar) -> [Date]? {
         let alarms = alarmRowsToJSON(store.alarms(pk: pk))
-        let absolutes = alarms.filter { alarmType($0) == "absolute" }
-        guard alarms.count == 1, absolutes.count == 1 else { return false }
-        guard let alarmDate = absoluteAlarmDate(absolutes[0], calendar: calendar) else { return false }
-        return sameSecond(alarmDate, appleToDate(oldDue))
+        guard !alarms.isEmpty, alarms.allSatisfy({ alarmType($0) == "absolute" }) else { return nil }
+        let dates = alarms.compactMap { absoluteAlarmDate($0, calendar: calendar) }
+        return dates.count == alarms.count ? dates : nil
     }
 
-    /// Port of `should_clear_matching_absolute_alarm` (remctl:1547). True when the reminder has
-    /// exactly ONE absolute alarm matching the OLD due OR the OLD display date (to the second).
-    private static func shouldClearMatchingAbsoluteAlarm(store: RemindersStore, pk: Int, oldDue: Double?, oldDisplay: Double?, calendar: Calendar) -> Bool {
-        let alarms = alarmRowsToJSON(store.alarms(pk: pk))
-        let absolutes = alarms.filter { alarmType($0) == "absolute" }
-        guard alarms.count == 1, absolutes.count == 1 else { return false }
-        guard let alarmDate = absoluteAlarmDate(absolutes[0], calendar: calendar) else { return false }
-        for candidate in [oldDue, oldDisplay] {
-            if let c = candidate, sameSecond(alarmDate, appleToDate(c)) { return true }
+    /// Port of `should_carry_absolute_alarm_to_new_due` (remctl:1522). True when every alarm is
+    /// absolute and at the OLD due (to the second), however many copies there are.
+    private static func shouldCarryAbsoluteAlarm(store: RemindersStore, pk: Int, oldDue: Double?, calendar: Calendar) -> Bool {
+        guard let oldDue, let alarmDates = absoluteAlarmDates(store: store, pk: pk, calendar: calendar) else {
+            return false
         }
-        return false
+        return alarmDates.allSatisfy { sameSecond($0, appleToDate(oldDue)) }
+    }
+
+    /// Port of `should_clear_matching_absolute_alarm` (remctl:1547). True when every alarm is
+    /// absolute and matches the OLD due OR the OLD display date (to the second).
+    private static func shouldClearMatchingAbsoluteAlarm(store: RemindersStore, pk: Int, oldDue: Double?, oldDisplay: Double?, calendar: Calendar) -> Bool {
+        guard let alarmDates = absoluteAlarmDates(store: store, pk: pk, calendar: calendar) else { return false }
+        let candidates = [oldDue, oldDisplay].compactMap { $0 }.map(appleToDate)
+        return alarmDates.allSatisfy { alarmDate in candidates.contains { sameSecond(alarmDate, $0) } }
     }
 
     /// Apple/CoreData seconds -> Date (mirrors Python `ts()` semantics for the comparison).
