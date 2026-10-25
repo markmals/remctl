@@ -15,7 +15,7 @@ extension RemindersStore {
                 arguments: args)
             for r in subRows { if let p: Int = r["ZPARENTREMINDER"] { counts[p] = r["c"] } }
             let tagRows = try Row.fetchAll(db, sql:
-                "SELECT o.ZREMINDER3 AS rid, h.ZNAME AS name FROM ZREMCDOBJECT o JOIN ZREMCDHASHTAGLABEL h ON o.ZHASHTAGLABEL = h.Z_PK WHERE o.ZREMINDER3 IN (\(placeholders))",
+                "SELECT o.ZREMINDER3 AS rid, h.ZNAME AS name FROM ZREMCDOBJECT o JOIN ZREMCDHASHTAGLABEL h ON o.ZHASHTAGLABEL = h.Z_PK WHERE o.ZREMINDER3 IN (\(placeholders)) AND o.ZMARKEDFORDELETION = 0",
                 arguments: args)
             for r in tagRows { if let rid: Int = r["rid"], let name: String = r["name"] { tags[rid, default: []].append(name) } }
         }
@@ -36,7 +36,7 @@ extension RemindersStore {
     /// q_hashtags — tag names for one reminder via ZREMCDOBJECT.ZREMINDER3 join ZREMCDHASHTAGLABEL.
     public func hashtags(pk: Int) -> [String] {
         (try? queue.read { try String.fetchAll($0, sql:
-            "SELECT h.ZNAME FROM ZREMCDOBJECT o JOIN ZREMCDHASHTAGLABEL h ON o.ZHASHTAGLABEL = h.Z_PK WHERE o.ZREMINDER3 = ?",
+            "SELECT h.ZNAME FROM ZREMCDOBJECT o JOIN ZREMCDHASHTAGLABEL h ON o.ZHASHTAGLABEL = h.Z_PK WHERE o.ZREMINDER3 = ? AND o.ZMARKEDFORDELETION = 0",
             arguments: [pk]) }) ?? []
     }
 

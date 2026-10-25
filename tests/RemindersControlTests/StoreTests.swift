@@ -211,6 +211,18 @@ import GRDB
         #expect(s.hashtags(pk: 42) == ["work","home"])  // row order
         #expect(s.hashtags(pk: 99) == [])
     }
+    @Test func hashtagsSkipSoftDeletedLinks() throws {
+        // Removing a tag in Reminders soft-deletes the link object; it must not show up.
+        let (s, dir) = try store { db in
+            try db.execute(sql: """
+            INSERT INTO ZREMCDHASHTAGLABEL (Z_PK,ZNAME) VALUES (1,'work'),(2,'home');
+            INSERT INTO ZREMCDOBJECT (Z_PK,ZREMINDER3,ZHASHTAGLABEL,ZMARKEDFORDELETION) VALUES (10,42,1,0),(11,42,2,1);
+            """)
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(s.hashtags(pk: 42) == ["work"])
+        #expect(s.preloadExtras([42]).hashtags[42] == ["work"])
+    }
     @Test func attachmentsUnionImageAndFile() throws {
         let (s, dir) = try store { db in
             try db.execute(sql: """
