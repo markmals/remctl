@@ -89,6 +89,23 @@ extension RemindersStore {
         return sections(listPk: listPk).first { unicodeCasefold($0.string("ZCKIDENTIFIER") ?? "") == folded }
     }
 
+    /// Port of `q_reminder_section_ckid`: the live section of the list a reminder is in, or nil.
+    public func reminderSectionCkid(listPk: Int, reminderCkid: String) -> String? {
+        guard let row = try? queue.read({ try Row.fetchOne($0, sql:
+                  "SELECT ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [listPk]) }),
+              let text = row.blobString("ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA"),
+              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let memberships = object["memberships"] as? [[String: Any]] else { return nil }
+        let member = unicodeCasefold(reminderCkid)
+        for membership in memberships where (membership["isObsolete"] as? Bool) != true {
+            guard let memberID = membership["memberID"] as? String, unicodeCasefold(memberID) == member,
+                  let groupID = membership["groupID"] as? String,
+                  let section = liveSection(listPk: listPk, identifier: groupID) else { continue }
+            return section.string("ZCKIDENTIFIER")
+        }
+        return nil
+    }
+
     /// q_section_member_counts (remctl:1339): counts per section CKID from the
     /// `ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA` JSON blob on the list row.
     /// Non-obsolete memberships only. Returns empty dict if blob is absent/invalid.

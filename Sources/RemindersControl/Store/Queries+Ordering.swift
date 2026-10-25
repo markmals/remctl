@@ -31,6 +31,24 @@ extension RemindersStore {
     }
 }
 
+extension RemindersStore {
+    /// Port of `q_sibling_identifiers`: the live reminders of a list that share a parent (the top
+    /// level when `parentPk` is nil), as stable identifier → numeric id.
+    public func siblingIdentifiers(listPk: Int, parentPk: Int?) -> [String: Int] {
+        let level = parentPk == nil ? "(r.ZPARENTREMINDER IS NULL OR r.ZPARENTREMINDER = 0)" : "r.ZPARENTREMINDER = ?"
+        let args: [DatabaseValueConvertible] = [listPk] + (parentPk.map { [$0] } ?? [])
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: """
+            SELECT r.Z_PK, r.ZCKIDENTIFIER FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK
+            WHERE \(liveReminderSQL) AND r.ZLIST = ? AND \(level)
+            """, arguments: StatementArguments(args)) }) ?? []
+        var siblings: [String: Int] = [:]
+        for row in rows {
+            if let ckid = row.string("ZCKIDENTIFIER"), !ckid.isEmpty, let pk = row.int("Z_PK") { siblings[ckid] = pk }
+        }
+        return siblings
+    }
+}
+
 /// Port of `decode_manual_sort_hint_blob`: JSON after an optional leading 0x01 byte, with string
 /// top-level ids and a string-array map for the second level. Anything else is unreadable.
 func decodeManualSortHint(_ value: DatabaseValue?) -> (topLevel: [String], secondary: [String: [String]])? {

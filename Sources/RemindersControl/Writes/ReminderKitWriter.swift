@@ -420,4 +420,12 @@ public final class ReminderKitWriter: PrivateWriter {
             "manualOrderingId": manualOrderingId, "listType": 2, "topLevelElementIds": topLevelElementIds,
         ])
     }
+
+    public func moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String,
+                                        anchorId: String?) async throws -> PrivateResult {
+        var req: [String: Any] = ["action": "move_reminder_in_hierarchy", "id": id, "listId": listId, "position": position]
+        if let parentId { req["parentId"] = parentId }
+        if let anchorId { req["anchorId"] = anchorId }
+        return await dispatchWithRetry(req)
+    }
 }

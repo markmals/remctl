@@ -123,4 +123,8 @@ public protocol PrivateWriter {
     /// Replaces an unsectioned custom smart list's manual order with `topLevelElementIds`.
     func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String,
                                  topLevelElementIds: [String]) async throws -> PrivateResult
+    /// Nests a reminder under `parentId` (the top level when nil) at `position` (before/after
+    /// `anchorId`, or `append`). The reminder keeps its identifier.
+    func moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String,
+                                 anchorId: String?) async throws -> PrivateResult
 }

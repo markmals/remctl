@@ -125,11 +125,11 @@ import GRDB
         #expect(p.calls.isEmpty)
     }
 
-    @Test func subtasksAreNotReorderedAsListReminders() async throws {
+    @Test func aSubtaskAnchorPointsAtItsParent() async throws {
         let (store, dir) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
         let p = MockPrivateWriter()
-        let out = await move(ReminderMoveRequest(id: 104, last: true), store: store, private: p)
-        #expect(try json(out.stderr)["code"] as? String == "subtask_move_unsupported")
+        let out = await move(ReminderMoveRequest(id: 101, before: 104), json: false, store: store, private: p)
+        #expect(out.stderr == "Error: anchor #104 is a subtask. Pass --parent 100 to place #101 among its subtasks.\n")
         #expect(p.calls.isEmpty)
     }
 

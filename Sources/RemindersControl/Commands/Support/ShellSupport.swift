@@ -33,7 +33,7 @@ _remctl() {
         'done:Complete a reminder'
         'undone:Uncomplete a reminder'
         'edit:Edit a reminder'
-        'reminder-move:Reorder a reminder in a list or custom smart list'
+        'reminder-move:Reorder a reminder, or nest it under another, in a list or custom smart list'
         'delete:Delete a reminder'
         'search:Search reminders'
         'today:Due today + overdue'
@@ -216,6 +216,8 @@ _remctl() {
                 '--after[Place after reminder ID]:id:' \
                 '--first[Place first in the current ordering]' \
                 '--last[Place last in the current ordering]' \
+                '--parent[Make it a subtask of reminder ID]:id:' \
+                '--top-level[Make a subtask a top-level reminder]' \
                 '--smart-list[Target custom smart list]:smart-list:' \
                 '--smart-list-id[Target custom smart list by numeric ID]:id:' \
                 '--json[JSON output]'
@@ -511,7 +513,7 @@ _remctl() {
         COMPREPLY=( $(compgen -W "--private --grocery --section --section-id --new-section --subtask --image --assign --unassign --flagged --no-flagged --urgent --no-urgent --early-reminder --location-title --latitude --longitude --radius --proximity --location-address --title --list -l --list-id --url --tags -t --set-tags --clear-tags --remove-tag --notes -n --due -d --priority -p --recurrence --alarm --json" -- "$cur") )
         return
     elif [ "$cmd" = "reminder-move" ]; then
-        COMPREPLY=( $(compgen -W "--before --after --first --last --smart-list --smart-list-id --json" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--before --after --first --last --parent --top-level --smart-list --smart-list-id --json" -- "$cur") )
         return
     elif [ "$cmd" = "done" ]; then
         COMPREPLY=( $(compgen -W "--date --batch --json" -- "$cur") )
@@ -645,7 +647,7 @@ complete -c remctl -n "__fish_use_subcommand" -a add -d "Add a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a done -d "Complete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a undone -d "Uncomplete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a edit -d "Edit a reminder"
-complete -c remctl -n "__fish_use_subcommand" -a reminder-move -d "Reorder a reminder in a list or custom smart list"
+complete -c remctl -n "__fish_use_subcommand" -a reminder-move -d "Reorder a reminder, or nest it under another, in a list or custom smart list"
 complete -c remctl -n "__fish_use_subcommand" -a delete -d "Delete a reminder"
 complete -c remctl -n "__fish_use_subcommand" -a search -d "Search reminders"
 complete -c remctl -n "__fish_use_subcommand" -a today -d "Due today + overdue"
@@ -887,6 +889,8 @@ complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l before -d "
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l after -d "Place after reminder ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l first -d "Place first in the current ordering"
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l last -d "Place last in the current ordering"
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l parent -d "Make it a subtask of reminder ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l top-level -d "Make a subtask a top-level reminder"
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l smart-list -d "Target custom smart list" -r
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l smart-list-id -d "Target custom smart list by numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from reminder-move" -l json -d "JSON output"

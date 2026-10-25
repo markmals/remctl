@@ -29,17 +29,20 @@ struct MovePosition {
     let relation: String
     let anchorId: Int?
 
-    /// Port of `reminder_move_relation`: exactly one placement, never relative to itself.
-    init(id: Int, before: Int?, after: Int?, first: Bool, last: Bool) throws {
+    /// Port of `reminder_move_relation`: one placement, never relative to itself. Only a
+    /// `--parent`/`--top-level` move may leave it out (nil), and then picks its own default.
+    static func parse(id: Int, before: Int?, after: Int?, first: Bool, last: Bool,
+                      hierarchyMove: Bool) throws -> MovePosition? {
         let choices: [(String, Int?)] = [before.map { ("before", $0) }, after.map { ("after", $0) },
                                          first ? ("first", nil) : nil, last ? ("last", nil) : nil].compactMap { $0 }
+        if choices.isEmpty && hierarchyMove { return nil }
         guard choices.count == 1 else {
             throw CommandFailure("invalid_move", "pass exactly one of --before, --after, --first, or --last.")
         }
-        (relation, anchorId) = choices[0]
-        if anchorId == id {
+        if choices[0].1 == id {
             throw CommandFailure("invalid_move", "a reminder cannot be positioned relative to itself.")
         }
+        return MovePosition(relation: choices[0].0, anchorId: choices[0].1)
     }
 }
 

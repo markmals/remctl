@@ -35,6 +35,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case deleteGroup(groupId: String)
         case moveReminderInList(id: String, listId: String, position: String, anchorId: String?)
         case setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String])
+        case moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String, anchorId: String?)
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
@@ -65,7 +66,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func setFlagged(id: String, flagged: Bool) async throws -> PrivateResult { calls.append(.setFlagged(id: id, flagged: flagged)); return try resultOr("updated") }
     func addPrivateMetadata(id: String, urls: [String], tags: [String]) async throws -> PrivateResult { calls.append(.addPrivateMetadata(id: id, urls: urls, tags: tags)); return try resultOr("updated") }
     func setTags(id: String, tags: [String]) async throws -> PrivateResult { calls.append(.setTags(id: id, tags: tags)); return try resultOr("updated") }
-    func assignSection(id: String, sectionId: String) async throws -> PrivateResult { calls.append(.assignSection(id: id, sectionId: sectionId)); return try resultOr("updated") }
+    func assignSection(id: String, sectionId: String) async throws -> PrivateResult { try record(.assignSection(id: id, sectionId: sectionId)) }
     func assignSharee(id: String, assigneeId: String, originatorId: String) async throws -> PrivateResult { calls.append(.assignSharee(id: id, assigneeId: assigneeId, originatorId: originatorId)); return try resultOr("updated") }
     func clearAssignment(id: String) async throws -> PrivateResult { calls.append(.clearAssignment(id: id)); return try resultOr("updated") }
     func addSectionAndAssign(id: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult { calls.append(.addSectionAndAssign(id: id, name: name, existingSectionIds: existingSectionIds)); return try resultOr("updated") }
@@ -94,6 +95,7 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func deleteGroup(groupId: String) async throws -> PrivateResult { try record(.deleteGroup(groupId: groupId)) }
     func moveReminderInList(id: String, listId: String, position: String, anchorId: String?) async throws -> PrivateResult { try record(.moveReminderInList(id: id, listId: listId, position: position, anchorId: anchorId)) }
     func setSmartListManualOrder(id: String, smartListId: String, manualOrderingId: String, topLevelElementIds: [String]) async throws -> PrivateResult { try record(.setSmartListManualOrder(id: id, smartListId: smartListId, manualOrderingId: manualOrderingId, topLevelElementIds: topLevelElementIds)) }
+    func moveReminderInHierarchy(id: String, listId: String, parentId: String?, position: String, anchorId: String?) async throws -> PrivateResult { try record(.moveReminderInHierarchy(id: id, listId: listId, parentId: parentId, position: position, anchorId: anchorId)) }
 
     private func record(_ call: Call) throws -> PrivateResult {
         calls.append(call)
