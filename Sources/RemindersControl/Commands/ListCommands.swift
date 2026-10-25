@@ -122,19 +122,22 @@ struct ListCreate: AsyncParsableCommand {
             try await Self.perform(
                 name: args.name, color: args.color, symbol: args.symbol, emoji: args.emoji,
                 groceries: args.groceries, groceryLocale: args.groceryLocale, json: args.json,
-                writer: writer, priv: priv)
+                writer: writer, priv: priv, lookup: .standard)
         })
     }
 
     /// Testable core (no print/exit). Mirrors `cmd_list_create` (remctl:6085).
     /// Routes to the private path (ReminderKit `create_list`) when hex color, symbol, emoji,
     /// or grocery metadata is present; otherwise stays on the public EventKit path.
+    /// Both paths then wait for the new row through `lookup` so the output can name the list's
+    /// numeric id (port upstream b8b601c).
     /// PHASE-2 DIVERGENCE: the Python `if not bridge_available()` guard is MOOT (writer always
-    /// present). The duplicate-name preflight (private-only) is likewise dropped.
+    /// present). The duplicate-name preflight (private-only) is likewise dropped — which is why
+    /// the private path takes its own before-snapshot where Python can assume an empty one.
     static func perform(
         name: String, color: String? = nil, symbol: String? = nil, emoji: String? = nil,
         groceries: Bool = false, standard: Bool = false, groceryLocale: String? = nil,
-        json: Bool, writer: RemindersWriter, priv: PrivateWriter
+        json: Bool, writer: RemindersWriter, priv: PrivateWriter, lookup: NewListIDLookup
     ) async throws -> WriteOutcome {
         // 1. Validate appearance args using P5 hex-allowed validators.
         //    CLIErrors propagate out and are mapped to "Error: <msg>" exit 1 by WriteDispatch.perform.
@@ -146,6 +149,10 @@ struct ListCreate: AsyncParsableCommand {
         let privateNeeded = symbol != nil || emoji != nil || groceries || standard
             || (groceryLocale != nil && !(groceryLocale!.isEmpty))
             || (color.map { isHexColor($0) } ?? false)
+
+        // Lists with this name BEFORE the write, so the new row can be told apart from an older
+        // namesake. A store that cannot be read only costs the id, never the create.
+        let existingIds = lookup.idsNamed(name) ?? []
 
         if privateNeeded {
             // 3a. PRIVATE PATH: build appearance and call priv.createList.
@@ -168,6 +175,7 @@ struct ListCreate: AsyncParsableCommand {
             }
 
             // 4a. Output — private path.
+            let createdId = await waitForNewListID(name: name, before: existingIds, using: lookup)
             if json {
                 var privatePairs: [(String, JSONValue)] = [("status", .string(result.status))]
                 for key in result.fields.keys.sorted() {
@@ -177,7 +185,7 @@ struct ListCreate: AsyncParsableCommand {
                     ("status", .string("created")),
                     ("name", .string(name)),
                     ("private", .object(privatePairs)),
-                ])
+                ] + identityPairs(createdId))
                 return .ok(obj.serialized(indent: nil, ensureAscii: false) + "\n")
             }
 
@@ -217,11 +225,26 @@ struct ListCreate: AsyncParsableCommand {
         }
 
         // 4b. Output — public path.
+        let createdId = await waitForNewListID(name: name, before: existingIds, using: lookup)
         if json {
-            let obj: JSONValue = .object([("status", .string("created")), ("name", .string(name))])
+            let obj: JSONValue = .object(
+                [("status", .string("created")), ("name", .string(name))] + identityPairs(createdId))
             return .ok(obj.serialized(indent: nil, ensureAscii: true) + "\n")
         }
-        return .ok("Created list: \(safeDisplay(name))\n")
+        var out = "Created list: \(safeDisplay(name))\n"
+        if let createdId { out += "ID: \(createdId)\n" }
+        return .ok(out)
+    }
+
+    /// The JSON tail that names the new list: its numeric `id`, or upstream's warning when the
+    /// store never showed the row (the list exists either way, so this is not an error).
+    private static func identityPairs(_ id: Int?) -> [(String, JSONValue)] {
+        guard let id else {
+            return [("warnings", .array([.string(
+                "list_id_unavailable: the list was created, but its numeric id was not visible yet. "
+                + "Find it with lists.")]))]
+        }
+        return [("id", .int(id))]
     }
 }
 

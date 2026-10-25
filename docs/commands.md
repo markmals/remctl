@@ -304,6 +304,8 @@ remctl lists --json
 
 ### `list-create <name>`
 Create a list. Appearance: `--color NAME` (named colors `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `brown`, `gray`, `cyan`, `teal` use EventKit; an unrecognized name is an error, not a silently colorless list). A `--symbol` or `--emoji` uses the ReminderKit appearance path. Groceries: `--groceries` with `--grocery-locale en_US`. New lists are created in the iCloud Reminders account; without one, `list-create` fails instead of writing to a local or third-party account.
+
+After the write, `list-create` polls the local store for the new row (eight tries, 0.25 s apart) and reports its numeric `id` — in JSON, and as an `ID:` line in human output. If the row is not visible yet, the list still exists: JSON then carries `warnings: ["list_id_unavailable: …"]` instead of `id`, and `lists` will show it.
 ```bash
 remctl list-create "Project X" --color blue
 remctl list-create "Research" --color orange --symbol education3

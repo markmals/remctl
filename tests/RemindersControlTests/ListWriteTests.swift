@@ -15,20 +15,43 @@ import GRDB
         return (try RemindersStore.open(storeDir: dir), dir)
     }
 
+    /// A box the `@Sendable` lookup closures count through.
+    private final class LookupLog: @unchecked Sendable {
+        var polls = 0
+        var waits = 0
+    }
+
+    /// A new-list-id lookup whose Nth read returns `reads[N - 1]` (the last entry repeats). The
+    /// first read is `list-create`'s pre-create snapshot, the rest are the polls after the write;
+    /// nil stands for a store that cannot be read.
+    private func lookup(_ reads: [Set<Int>?], log: LookupLog) -> NewListIDLookup {
+        NewListIDLookup(
+            idsNamed: { _ in
+                log.polls += 1
+                return reads[min(log.polls, reads.count) - 1]
+            },
+            wait: { log.waits += 1 })
+    }
+
+    /// A store that never shows the new row, for the cases that are not about the id.
+    private var unseenNewList: NewListIDLookup {
+        NewListIDLookup(idsNamed: { _ in [] }, wait: {})
+    }
+
     // MARK: - list-create (public path — named color or no color, EventKit writer)
 
     @Test func createBasic() async throws {
         let m = MockWriter()
         let priv = MockPrivateWriter()
-        let human = try await ListCreate.perform(name: "Projects", json: false, writer: m, priv: priv)
+        let human = try await ListCreate.perform(name: "Projects", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls == [.createList(title: "Projects", color: nil)])
         #expect(priv.calls.isEmpty)
         #expect(human == WriteOutcome.ok("Created list: Projects\n"))
 
         let m2 = MockWriter()
         let priv2 = MockPrivateWriter()
-        let js = try await ListCreate.perform(name: "Projects", json: true, writer: m2, priv: priv2)
-        #expect(js.stdout == #"{"status": "created", "name": "Projects"}"# + "\n")
+        let js = try await ListCreate.perform(name: "Projects", json: true, writer: m2, priv: priv2, lookup: unseenNewList)
+        #expect(js.stdout == #"{"status": "created", "name": "Projects", "warnings": ["list_id_unavailable: the list was created, but its numeric id was not visible yet. Find it with lists."]}"# + "\n")
         #expect(m2.calls == [.createList(title: "Projects", color: nil)])
         #expect(priv2.calls.isEmpty)
     }
@@ -36,7 +59,7 @@ import GRDB
     @Test func createWithColor() async throws {
         let m = MockWriter()
         let priv = MockPrivateWriter()
-        let out = try await ListCreate.perform(name: "Projects", color: "red", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", color: "red", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls == [.createList(title: "Projects", color: "red")])
         #expect(priv.calls.isEmpty)
         #expect(out.exitCode == 0)
@@ -45,7 +68,7 @@ import GRDB
     @Test func createTealAccepted() async throws {
         let m = MockWriter()
         let priv = MockPrivateWriter()
-        let out = try await ListCreate.perform(name: "Projects", color: "teal", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", color: "teal", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls == [.createList(title: "Projects", color: "teal")])
         #expect(priv.calls.isEmpty)
         #expect(out.exitCode == 0)
@@ -55,7 +78,7 @@ import GRDB
     @Test func createNamedColorStaysPublic() async throws {
         let m = MockWriter()
         let priv = MockPrivateWriter()
-        let out = try await ListCreate.perform(name: "Projects", color: "red", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", color: "red", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls == [.createList(title: "Projects", color: "red")])
         #expect(priv.calls.isEmpty)
         #expect(out.exitCode == 0)
@@ -67,7 +90,7 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         let out = await WriteDispatch.perform {
-            try await ListCreate.perform(name: "Projects", color: "mauve", json: false, writer: m, priv: priv)
+            try await ListCreate.perform(name: "Projects", color: "mauve", json: false, writer: m, priv: priv, lookup: unseenNewList)
         }
         #expect(out.stderr == "Error: unsupported list color 'mauve'. Use red, orange, yellow, green, blue, purple, brown, gray, cyan, or #RRGGBB.\n")
         #expect(out.exitCode == 1)
@@ -80,7 +103,7 @@ import GRDB
         let priv = MockPrivateWriter()
         m.throwError = WriteError("boom")
         let out = await WriteDispatch.perform {
-            try await ListCreate.perform(name: "Projects", json: false, writer: m, priv: priv)
+            try await ListCreate.perform(name: "Projects", json: false, writer: m, priv: priv, lookup: unseenNewList)
         }
         #expect(out.stderr == "Error: Failed to create list 'Projects': boom\n")
         #expect(out.exitCode == 1)
@@ -93,7 +116,7 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "created", fields: ["id": .string("UUID-1"), "url": .string("x-apple-reminderkit://REMCDList/UUID-1")])
-        let out = try await ListCreate.perform(name: "Projects", symbol: "education3", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", symbol: "education3", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls.isEmpty)
         #expect(priv.calls.count == 1)
         if case .createList(let name, let appearance) = priv.calls[0] {
@@ -111,7 +134,7 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "created", fields: ["id": .string("UUID-1")])
-        let out = try await ListCreate.perform(name: "Projects", symbol: "education3", json: true, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", symbol: "education3", json: true, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls.isEmpty)
         #expect(out.exitCode == 0)
         let data = Data(out.stdout.utf8)
@@ -130,7 +153,7 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "created")
-        let out = try await ListCreate.perform(name: "Projects", color: "#aabbcc", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", color: "#aabbcc", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls.isEmpty)
         #expect(priv.calls.count == 1)
         if case .createList(_, let appearance) = priv.calls[0] {
@@ -147,7 +170,7 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "created")
-        let out = try await ListCreate.perform(name: "Projects", groceries: true, groceryLocale: "en-US", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", groceries: true, groceryLocale: "en-US", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls.isEmpty)
         #expect(priv.calls.count == 1)
         if case .createList(_, let appearance) = priv.calls[0] {
@@ -166,7 +189,7 @@ import GRDB
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "error", message: "boom")
         let out = await WriteDispatch.perform {
-            try await ListCreate.perform(name: "Projects", symbol: "education3", json: false, writer: m, priv: priv)
+            try await ListCreate.perform(name: "Projects", symbol: "education3", json: false, writer: m, priv: priv, lookup: unseenNewList)
         }
         #expect(out.stderr == "Error: Failed to create list 'Projects': boom\n")
         #expect(out.exitCode == 1)
@@ -177,10 +200,108 @@ import GRDB
         let m = MockWriter()
         let priv = MockPrivateWriter()
         priv.result = PrivateResult(status: "created")
-        let out = try await ListCreate.perform(name: "Projects", color: "red", symbol: "education3", json: false, writer: m, priv: priv)
+        let out = try await ListCreate.perform(name: "Projects", color: "red", symbol: "education3", json: false, writer: m, priv: priv, lookup: unseenNewList)
         #expect(m.calls.isEmpty)
         #expect(out.exitCode == 0)
         #expect(out.stdout == "Created list: Projects\nApplied private metadata: color=red, symbol=education3\n")
+    }
+
+    // MARK: - list-create: the new list's numeric id (upstream b8b601c)
+
+    /// The store already holds an older list named 'Projects'; only the row that appears after
+    /// the write is reported.
+    @Test func createReportsTheNewListId() async throws {
+        let log = LookupLog()
+        let out = try await ListCreate.perform(
+            name: "Projects", json: true, writer: MockWriter(), priv: MockPrivateWriter(),
+            lookup: lookup([[10], [10, 42]], log: log))
+        #expect(out.exitCode == 0)
+        #expect(out.stdout == #"{"status": "created", "name": "Projects", "id": 42}"# + "\n")
+        #expect(log.waits == 0)
+    }
+
+    @Test func createHumanOutputNamesTheNewListId() async throws {
+        let out = try await ListCreate.perform(
+            name: "Projects", json: false, writer: MockWriter(), priv: MockPrivateWriter(),
+            lookup: lookup([[], [42]], log: LookupLog()))
+        #expect(out.stdout == "Created list: Projects\nID: 42\n")
+    }
+
+    /// Reminders writes the row from its own process, so the id can take a few polls to show up.
+    @Test func createWaitsForTheRowToAppear() async throws {
+        let log = LookupLog()
+        let out = try await ListCreate.perform(
+            name: "Projects", json: true, writer: MockWriter(), priv: MockPrivateWriter(),
+            lookup: lookup([[], [], [], [42]], log: log))
+        #expect(out.stdout == #"{"status": "created", "name": "Projects", "id": 42}"# + "\n")
+        #expect(log.waits == 2)
+    }
+
+    /// Eight attempts, then the list stands without an id — a warning, not a failure.
+    @Test func createWarnsWhenTheRowNeverAppears() async throws {
+        let log = LookupLog()
+        let out = try await ListCreate.perform(
+            name: "Projects", json: true, writer: MockWriter(), priv: MockPrivateWriter(),
+            lookup: lookup([[]], log: log))
+        #expect(out.exitCode == 0)
+        #expect(log.polls == 9)   // the pre-create snapshot plus eight attempts
+        #expect(log.waits == 7)
+        #expect(out.stdout == #"{"status": "created", "name": "Projects", "warnings": ["list_id_unavailable: the list was created, but its numeric id was not visible yet. Find it with lists."]}"# + "\n")
+    }
+
+    /// Two new rows share the name: neither can be claimed as the created one, so polling stops.
+    @Test func createWarnsWhenTwoNewRowsShareTheName() async throws {
+        let log = LookupLog()
+        let out = try await ListCreate.perform(
+            name: "Projects", json: true, writer: MockWriter(), priv: MockPrivateWriter(),
+            lookup: lookup([[10], [10, 42, 43]], log: log))
+        #expect(out.exitCode == 0)
+        #expect(out.stdout.contains(#""warnings": ["list_id_unavailable:"#))
+        #expect(log.waits == 0)
+    }
+
+    /// An unreadable store costs the id only: the create still reports success.
+    @Test func createSucceedsWhenTheStoreCannotBeRead() async throws {
+        let log = LookupLog()
+        let m = MockWriter()
+        let out = try await ListCreate.perform(
+            name: "Projects", json: false, writer: m, priv: MockPrivateWriter(),
+            lookup: lookup([nil], log: log))
+        #expect(out == WriteOutcome.ok("Created list: Projects\n"))
+        #expect(m.calls == [.createList(title: "Projects", color: nil)])
+        #expect(log.waits == 0)
+    }
+
+    /// Private path: the id follows the `private` object in JSON; human output keeps its own shape.
+    @Test func createPrivatePathReportsTheNewListId() async throws {
+        let priv = MockPrivateWriter()
+        priv.result = PrivateResult(status: "created", fields: ["id": .string("UUID-1")])
+        let out = try await ListCreate.perform(
+            name: "Projects", symbol: "education3", json: true, writer: MockWriter(), priv: priv,
+            lookup: lookup([[], [42]], log: LookupLog()))
+        #expect(out.stdout == #"{"status": "created", "name": "Projects", "private": {"status": "created", "id": "UUID-1"}, "id": 42}"# + "\n")
+
+        let priv2 = MockPrivateWriter()
+        priv2.result = PrivateResult(status: "created")
+        let human = try await ListCreate.perform(
+            name: "Projects", symbol: "education3", json: false, writer: MockWriter(), priv: priv2,
+            lookup: lookup([[], [42]], log: LookupLog()))
+        #expect(human.stdout == "Created list: Projects\nApplied private metadata: symbol=education3\n")
+    }
+
+    /// The store read behind the lookup: live regular lists with that EXACT name, nothing else.
+    @Test func listIdsNamedMatchesLiveRegularListsExactly() throws {
+        let dir = try FixtureDB.tempStore { db in
+            try FixtureDB.createRemindersSchema(db)
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (10,3,'Projects',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (11,3,'Projects',1)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (12,4,'Projects',0)")
+            try db.execute(sql: "INSERT INTO ZREMCDBASELIST (Z_PK,Z_ENT,ZNAME,ZMARKEDFORDELETION) VALUES (13,3,'projects',0)")
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s = try RemindersStore.open(storeDir: dir)
+        #expect(s.listIdsNamed("Projects") == [10])
+        #expect(s.listIdsNamed("Nothing").isEmpty)
     }
 
     // MARK: - list-rename

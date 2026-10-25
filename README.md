@@ -131,7 +131,7 @@ A few rules keep this safe and predictable:
 - If a private step fails after `add` created the reminder, RemCTL reports the created reminder, what completed, and what failed (`code: "private_add_partial"`, exit 1) — finish it with `edit`, never a second `add`.
 - Rich-link and image edits are additive — RemCTL adds, it does not remove or replace existing links/images.
 - `--early-reminder` accepts `15m`, `1h`, `2d`, `1w`, `1mo`, or `clear`. Non-clear values require a due date.
-- `list-create --color NAME` uses EventKit for normal color names; pass a `#RRGGBB` hex, `--symbol`, or `--emoji` for the ReminderKit appearance path.
+- `list-create --color NAME` uses EventKit for normal color names; pass a `#RRGGBB` hex, `--symbol`, or `--emoji` for the ReminderKit appearance path. Either way the new list's numeric `id` is reported once the row reaches the local store (`warnings: ["list_id_unavailable: …"]` when it is not visible yet).
 - `list-symbols` prints the 71 official Reminders emblem names; `--symbol` only accepts those (arbitrary SF Symbol names render as the default icon). Use `--emoji` for custom emoji badges. `list-symbols --preview` opens a native-asset HTML contact sheet.
 - Groceries writes verify Reminders' automatic sorter first, then use the private categorizer only if needed.
 - Generic file/PDF attachments are intentionally rejected; only images attach.
