@@ -11,10 +11,44 @@ let liveReminderSQL =
     "+r.ZMARKEDFORDELETION = 0 AND r.ZACCOUNT IS NOT NULL "
     + "AND l.Z_PK IS NOT NULL AND +l.ZMARKEDFORDELETION = 0"
 
+/// Port of `sort_reminder_rows_by_identifier_order`. Rows absent from the ordering payload keep
+/// their query order and follow the positioned rows, so a reminder that has not finished merging
+/// into the list's ordering record is still listed.
+func sortReminderRows(_ rows: [Row], identifierOrder: [String]) -> [Row] {
+    var positions: [String: Int] = [:]
+    for (index, identifier) in identifierOrder.enumerated() where !identifier.isEmpty {
+        let key = unicodeCasefold(identifier)
+        if positions[key] == nil { positions[key] = index }
+    }
+    guard !positions.isEmpty else { return rows }
+    func position(_ row: Row) -> Int? {
+        row.string("ZCKIDENTIFIER").flatMap { positions[unicodeCasefold($0)] }
+    }
+    return rows.enumerated().sorted { a, b in
+        switch (position(a.element), position(b.element)) {
+        case let (x?, y?): return x == y ? a.offset < b.offset : x < y
+        case (_?, nil): return true
+        case (nil, _?): return false
+        case (nil, nil): return a.offset < b.offset
+        }
+    }.map { $0.element }
+}
+
 extension RemindersStore {
-    /// q_reminders: WHERE base + optional list/parent/topLevel + completed filter; ORDER BY r.Z_PK LIMIT n.
+    /// q_reminders: WHERE base + optional list/parent/topLevel + completed filter.
+    /// `manualOrder` (and any subtask read, which always follows its parent list's record)
+    /// returns rows in Reminders' persisted display order; otherwise ORDER BY r.Z_PK.
     public func reminders(listPk: Int? = nil, completed: Bool = false,
-                          parentPk: Int? = nil, topLevel: Bool = false, limit: Int = 500) -> [Row] {
+                          parentPk: Int? = nil, topLevel: Bool = false, limit: Int = 500,
+                          manualOrder: Bool = false) -> [Row] {
+        var identifierOrder: [String] = []
+        if manualOrder, let listPk { identifierOrder = listReminderOrder(listPk: listPk) }
+        if let parentPk, identifierOrder.isEmpty {
+            // Subtasks share their parent's list, whose ordering record holds their display order.
+            if let parentList = reminderListPk(parentPk) {
+                identifierOrder = listReminderOrder(listPk: parentList)
+            }
+        }
         var c = [liveReminderSQL]
         var args: [DatabaseValueConvertible] = []
         if !completed { c.append("r.ZCOMPLETED = 0") }
@@ -22,9 +56,31 @@ extension RemindersStore {
         if let parentPk { c.append("r.ZPARENTREMINDER = ?"); args.append(parentPk) }
         else if topLevel { c.append("(r.ZPARENTREMINDER IS NULL OR r.ZPARENTREMINDER = 0)") }
         let cols = remCols()  // built OUTSIDE the read (reentrancy)
-        args.append(limit)
-        let sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE \(c.joined(separator: " AND ")) ORDER BY r.Z_PK LIMIT ?"
-        return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(args)) }) ?? []
+        var sql = "SELECT \(cols) FROM ZREMCDREMINDER r LEFT JOIN ZREMCDBASELIST l ON r.ZLIST = l.Z_PK WHERE \(c.joined(separator: " AND ")) ORDER BY r.Z_PK"
+        if identifierOrder.isEmpty {
+            sql += " LIMIT ?"
+            args.append(limit)
+        }
+        let rows = (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: StatementArguments(args)) }) ?? []
+        guard !identifierOrder.isEmpty else { return rows }
+        return Array(sortReminderRows(rows, identifierOrder: identifierOrder).prefix(limit))
+    }
+
+    /// Port of `q_list_reminder_order`: the list's persisted display order as stable identifiers.
+    /// Missing column, unreadable blob, or a non-array payload all mean "no manual order".
+    func listReminderOrder(listPk: Int) -> [String] {
+        guard tableColumnNames("ZREMCDBASELIST").contains("ZREMINDERIDSMERGEABLEORDERING_V2_JSON") else { return [] }
+        let row = (try? queue.read { try Row.fetchOne($0, sql:
+            "SELECT ZREMINDERIDSMERGEABLEORDERING_V2_JSON FROM ZREMCDBASELIST WHERE Z_PK = ? AND ZMARKEDFORDELETION = 0",
+            arguments: [listPk]) }) ?? nil
+        guard let blob = row?.blobString("ZREMINDERIDSMERGEABLEORDERING_V2_JSON"),
+              let data = blob.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return [] }
+        return parsed.compactMap { $0 as? String }.filter { !$0.isEmpty }
+    }
+
+    private func reminderListPk(_ pk: Int) -> Int? {
+        (try? queue.read { try Int.fetchOne($0, sql: "SELECT ZLIST FROM ZREMCDREMINDER WHERE Z_PK = ?", arguments: [pk]) }) ?? nil
     }
 
     public func reminder(pk: Int) -> Row? {

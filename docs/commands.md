@@ -69,7 +69,7 @@ remctl tags
 ```
 
 ### `subtasks <id>`
-Show a reminder's subtasks. `--json`.
+Show a reminder's subtasks, in Reminders' stored display order. `--json`.
 ```bash
 remctl subtasks 23880
 remctl subtasks 23880 --json
@@ -95,7 +95,7 @@ remctl stats
 ```
 
 ### `show [LIST] [--list-id ID] [--completed]`
-Reminders in a list (name positionally or `--list-id`). Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories.
+Reminders in a list (name positionally or `--list-id`), in Reminders' stored manual display order when the list has one; reminders not yet in that record follow, in id order. Tabular: `--format`, `-v`. `--completed` includes completed reminders. `--via-eventkit` is a limited no-FDA fallback (requires a list name, not `--list-id`). Groceries lists show `🥕`; `show --json` includes `sectionEmoji` for known Groceries categories.
 ```bash
 remctl show Shopping
 remctl show --list-id 153 --json

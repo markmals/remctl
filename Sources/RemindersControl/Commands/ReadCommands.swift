@@ -564,7 +564,7 @@ struct Show: AsyncParsableCommand {
             let target = try resolveRequiredListTarget(store: store, name: list, listId: listId)
             let pk = target.id
             let isGroceries = store.listIsGroceries(pk)
-            let items = store.reminders(listPk: pk, completed: completed, topLevel: true)
+            let items = store.reminders(listPk: pk, completed: completed, topLevel: true, manualOrder: true)
             let secs = store.sectionsForList(pk)
             let memberships = secs.isEmpty ? [:] : store.sectionMemberships(pk)
             let ansi = opts.ansi()
