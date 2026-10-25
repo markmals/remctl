@@ -65,7 +65,9 @@ private func extractKeyedArchiveJSON(_ data: Data) -> Data? {
 }
 
 /// Port of summarize_smart_list_filter. Returns the ordered summary object or nil.
-public func summarizeSmartListFilter(_ payload: JSONValue?) -> [(String, JSONValue)]? {
+/// `strict` rejects unparseable date strings; encoding passes it so a raw `--filter-json`
+/// cannot store a date Reminders would not understand, while decoding stays lenient.
+public func summarizeSmartListFilter(_ payload: JSONValue?, strict: Bool = false) -> [(String, JSONValue)]? {
     guard let payload, let pairs = payload.asObject else { return nil }
     let keys = pairs.map { $0.0 }.sorted()
     func keysJSON() -> JSONValue { .array(keys.map { .string($0) }) }
@@ -91,7 +93,7 @@ public func summarizeSmartListFilter(_ payload: JSONValue?) -> [(String, JSONVal
     var parts: [[(String, JSONValue)]] = []
     var unsupported: [[(String, JSONValue)]] = []
     for (key, value) in withoutOp {
-        let summary = summarizeFilterFamily(key, value)
+        let summary = summarizeFilterFamily(key, value, strict: strict)
         if (summary.first(where: { $0.0 == "supported" })?.1.asBool) == true { parts.append(summary) }
         else { unsupported.append(summary) }
     }
@@ -112,7 +114,7 @@ public func summarizeSmartListFilter(_ payload: JSONValue?) -> [(String, JSONVal
 }
 
 /// Port of _summarize_filter_family.
-public func summarizeFilterFamily(_ key: String, _ value: JSONValue) -> [(String, JSONValue)] {
+public func summarizeFilterFamily(_ key: String, _ value: JSONValue, strict: Bool = false) -> [(String, JSONValue)] {
     func unsupported() -> [(String, JSONValue)] {
         [("kind", .string(key)), ("description", .string("Unsupported \(key) filter")), ("supported", .bool(false))]
     }
@@ -158,7 +160,7 @@ public func summarizeFilterFamily(_ key: String, _ value: JSONValue) -> [(String
             _ = h
         }
     }
-    if key == "date", value.asObject != nil { return summarizeDateFilter(value) }
+    if key == "date", value.asObject != nil { return summarizeDateFilter(value, strict: strict) }
     if key == "time", let obj = value.asObject {
         for (timeKey, label) in [("morning", "Morning"), ("afternoon", "Afternoon"), ("evening", "Evening"), ("night", "Night"), ("noTime", "No time")] {
             if obj.count == 1, obj[0].0 == timeKey, obj[0].1.asStr == "" {
@@ -199,7 +201,7 @@ public func summarizeFilterFamily(_ key: String, _ value: JSONValue) -> [(String
 }
 
 /// Port of _summarize_date_filter.
-public func summarizeDateFilter(_ value: JSONValue) -> [(String, JSONValue)] {
+public func summarizeDateFilter(_ value: JSONValue, strict: Bool = false) -> [(String, JSONValue)] {
     guard let obj = value.asObject else { return unsupportedDate() }
     if obj.count == 1, obj[0].0 == "any", obj[0].1.asStr == "" {
         return [("kind", .string("date")), ("description", .string("Any date")), ("supported", .bool(true)), ("date", .string("any"))]
@@ -214,12 +216,14 @@ public func summarizeDateFilter(_ value: JSONValue) -> [(String, JSONValue)] {
     }
     for (key, label) in [("onDate", "On date"), ("beforeDate", "Before date"), ("afterDate", "After date")] {
         if obj.count == 1, obj[0].0 == key, let s = obj[0].1.asStr {
+            if strict, !isValidFilterDateString(s) { return unsupportedDate() }
             return [("kind", .string("date")), ("description", .string("\(label): \(s)")), ("supported", .bool(true)),
                     ("date", .string(key)), ("value", .string(s))]
         }
     }
     if obj.count == 1, obj[0].0 == "dateRange", let range = obj[0].1.asArray, range.count == 2, range.allSatisfy({ $0.asStr != nil }) {
         let a = range[0].asStr!, b = range[1].asStr!
+        if strict, !isValidFilterDateString(a) || !isValidFilterDateString(b) { return unsupportedDate() }
         return [("kind", .string("date")), ("description", .string("Date range: \(a) to \(b)")), ("supported", .bool(true)),
                 ("date", .string("dateRange")), ("range", .array(range))]
     }

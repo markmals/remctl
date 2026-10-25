@@ -182,6 +182,13 @@ func normalizeFilterDate(_ value: String) throws -> String {
     throw SmartListFilterError("Smart list dates must be YYYY-MM-DD or DD-MM-YYYY.")
 }
 
+/// Port of `_is_valid_filter_date_string` (remctl_smart_lists.py:318). Encode-only: a raw
+/// `--filter-json` must not store a date Reminders cannot read, while decode stays lenient so
+/// an existing smart list still reports whatever it holds.
+func isValidFilterDateString(_ value: String) -> Bool {
+    (try? normalizeFilterDate(value)) != nil
+}
+
 private enum DateComponentRole { case year, month, day }
 
 /// Strict strptime-style parse for a date with exactly 3 integer components separated by `separator`,
@@ -625,7 +632,7 @@ public func smartListFilterPayloadFromArgs(_ a: SmartListFilterArgs, store: Remi
 /// Port of encode_supported_filter_payload: re-summarize the payload and REJECT if the summary is
 /// nil OR unsupported OR kind=="all"; else serialize with the space-free compact serializer (UTF-8).
 public func encodeSupportedFilterPayload(_ payload: JSONValue) throws -> Data {
-    let summary = summarizeSmartListFilter(payload)
+    let summary = summarizeSmartListFilter(payload, strict: true)
     let supported = summary?.first(where: { $0.0 == "supported" })?.1
     let kind = summary?.first(where: { $0.0 == "kind" })?.1
     let isSupported: Bool = { if case .bool(true)? = supported { return true } else { return false } }()

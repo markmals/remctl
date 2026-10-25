@@ -66,6 +66,22 @@ import GRDB
         #expect(summaryField(r, "description")?.asStringT == "Tags any selected: include a, exclude b")
         #expect(summaryField(r, "supported")?.asBoolT == true)
     }
+    @Test func invalidRawDateStringsAreRejectedOnEncodeOnly() throws {
+        // Decoding an existing list stays lenient...
+        let r = decode(#"{"date":{"onDate":"not-a-date"}}"#)
+        #expect(summaryField(r, "kind")?.asStringT == "date")
+        #expect(summaryField(r, "supported")?.asBoolT == true)
+        // ...while --filter-json may not store a date Reminders cannot read.
+        for raw in [#"{"date":{"onDate":"not-a-date"}}"#,
+                    #"{"date":{"beforeDate":"2026-13-01"}}"#,
+                    #"{"date":{"dateRange":["01-01-2026","nope"]}}"#] {
+            let payload = OrderedJSON.parse(Data(raw.utf8))!
+            #expect(throws: SmartListFilterError.self) { _ = try encodeSupportedFilterPayload(payload) }
+        }
+        let good = OrderedJSON.parse(Data(#"{"date":{"onDate":"01-01-2026"}}"#.utf8))!
+        #expect(String(data: try encodeSupportedFilterPayload(good), encoding: .utf8)
+                == #"{"date":{"onDate":"01-01-2026"}}"#)
+    }
 }
 
 @Suite struct SmartListsCommandTests {
