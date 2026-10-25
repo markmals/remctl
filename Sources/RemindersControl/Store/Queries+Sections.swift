@@ -35,6 +35,50 @@ extension RemindersStore {
         return (try? queue.read { try Row.fetchAll($0, sql: sql, arguments: [listPk]) }) ?? []
     }
 
+    /// A list's live section identifiers in Reminders' display order: the list's persisted
+    /// `ZSECTIONIDSORDERINGASDATA` record first, then live sections it does not mention yet, in
+    /// Z_PK order. Writes that add a section append to this, so they keep the user's order.
+    public func sectionOrder(listPk: Int) -> [String] {
+        let live = sections(listPk: listPk).compactMap { $0.string("ZCKIDENTIFIER") }.filter { !$0.isEmpty }
+        var byFolded: [String: String] = [:]
+        for identifier in live { byFolded[unicodeCasefold(identifier)] = identifier }
+        var ordered: [String] = []
+        for identifier in persistedSectionOrder(listPk: listPk) {
+            if let match = byFolded.removeValue(forKey: unicodeCasefold(identifier)) { ordered.append(match) }
+        }
+        return ordered + live.filter { byFolded[unicodeCasefold($0)] != nil }
+    }
+
+    /// `orderedIdentifiers` of the list's section-ordering record; empty when the column, row, or
+    /// payload is missing or unreadable.
+    private func persistedSectionOrder(listPk: Int) -> [String] {
+        guard tableColumnNames("ZREMCDBASELIST").contains("ZSECTIONIDSORDERINGASDATA"),
+              let row = try? queue.read({ try Row.fetchOne($0, sql:
+                  "SELECT ZSECTIONIDSORDERINGASDATA FROM ZREMCDBASELIST WHERE Z_PK = ?", arguments: [listPk]) }),
+              let text = row.blobString("ZSECTIONIDSORDERINGASDATA"),
+              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let identifiers = object["orderedIdentifiers"] as? [Any]
+        else { return [] }
+        return identifiers.compactMap { $0 as? String }
+    }
+
+    /// Port of `section_name_exists`: whether another live section of the list already carries
+    /// `name` (case-folded), ignoring the section `excluding` names.
+    public func sectionNameExists(listPk: Int, name: String, excluding: String? = nil) -> Bool {
+        let needle = unicodeCasefold(name)
+        let excluded = excluding.map(unicodeCasefold)
+        return sections(listPk: listPk).contains { row in
+            let identifier = unicodeCasefold(row.string("ZCKIDENTIFIER") ?? "")
+            return identifier != excluded && unicodeCasefold(row.string("ZDISPLAYNAME") ?? "") == needle
+        }
+    }
+
+    /// The live section `identifier` names in the list, or nil when it is gone.
+    public func liveSection(listPk: Int, identifier: String) -> Row? {
+        let folded = unicodeCasefold(identifier)
+        return sections(listPk: listPk).first { unicodeCasefold($0.string("ZCKIDENTIFIER") ?? "") == folded }
+    }
+
     /// q_section_member_counts (remctl:1339): counts per section CKID from the
     /// `ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA` JSON blob on the list row.
     /// Non-obsolete memberships only. Returns empty dict if blob is absent/invalid.
@@ -70,7 +114,7 @@ extension RemindersStore {
         let normalizedId = sectionId.flatMap { PrivateParsing.normalizeSectionId($0) }
 
         if section != nil && normalizedId != nil {
-            throw CLIError("pass either --section or --section-id, not both.")
+            throw CLIError("pass either --section or --section-id, not both.", code: "invalid_section_target")
         }
         guard section != nil || normalizedId != nil else { return nil }
 
@@ -83,7 +127,7 @@ extension RemindersStore {
                 "SELECT ZCKIDENTIFIER FROM ZREMCDBASESECTION WHERE ZLIST = ? AND ZMARKEDFORDELETION = 0 AND lower(ZCKIDENTIFIER) = lower(?)",
                 arguments: [listPk, secId]) }
             guard let ckid = row?.string("ZCKIDENTIFIER"), !ckid.isEmpty else {
-                throw CLIError("section ID not found in target list: \(secId)")
+                throw CLIError("section ID not found in target list: \(secId)", code: "section_not_found")
             }
             return ckid
         }
@@ -96,7 +140,7 @@ extension RemindersStore {
         }
 
         if matches.isEmpty {
-            throw CLIError("section not found in target list: \(sectionName)")
+            throw CLIError("section not found in target list: \(sectionName)", code: "section_not_found")
         }
         if matches.count > 1 {
             // Disambiguate via member counts
@@ -111,12 +155,13 @@ extension RemindersStore {
                     let noun = count == 1 ? "reminder" : "reminders"
                     return "\(ckid) (\(count) \(noun))"
                 }.joined(separator: ", ")
-                throw CLIError("multiple sections named \(pyRepr(sectionName)) in target list. Use --section-id with one of: \(options)")
+                throw CLIError("multiple sections named \(pyRepr(sectionName)) in target list. Use --section-id with one of: \(options)",
+                               code: "section_ambiguous")
             }
         }
 
         guard let ckid = matches[0].string("ZCKIDENTIFIER"), !ckid.isEmpty else {
-            throw CLIError("section has no stable CloudKit identifier: \(sectionName)")
+            throw CLIError("section has no stable CloudKit identifier: \(sectionName)", code: "section_missing_identifier")
         }
         return ckid
     }

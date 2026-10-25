@@ -26,6 +26,7 @@ public final class ReminderKitWriter: PrivateWriter {
         "clear_assignment",
         "set_urgent",
         "set_early_reminder",
+        "rename_section",
     ]
 
     // MARK: - Transient-error detection
@@ -362,5 +363,23 @@ public final class ReminderKitWriter: PrivateWriter {
     public func deleteTemplate(templateId: String) async throws -> PrivateResult {
         let req: [String: Any] = ["action": "delete_template", "templateId": templateId]
         return await dispatchWithRetry(req)
+    }
+
+    // MARK: - PrivateWriter — list sections
+
+    public func createSection(listId: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult {
+        let req: [String: Any] = [
+            "action": "create_section", "listId": listId, "name": name,
+            "existingSectionIds": existingSectionIds,
+        ]
+        return await dispatchWithRetry(req)
+    }
+
+    public func renameSection(sectionId: String, name: String) async throws -> PrivateResult {
+        await dispatchWithRetry(["action": "rename_section", "sectionId": sectionId, "name": name])
+    }
+
+    public func deleteSection(sectionId: String) async throws -> PrivateResult {
+        await dispatchWithRetry(["action": "delete_section", "sectionId": sectionId])
     }
 }

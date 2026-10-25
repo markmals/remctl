@@ -104,4 +104,10 @@ public protocol PrivateWriter {
     func createTemplate(name: String, sourceListId: String, includeCompleted: Bool) async throws -> PrivateResult
     func applyTemplate(templateId: String) async throws -> PrivateResult
     func deleteTemplate(templateId: String) async throws -> PrivateResult
+    // list sections (keyed by list / section ckIdentifier)
+    /// `existingSectionIds` is the list's current section order; the new section is appended to it
+    /// because Reminders replaces the whole ordering on save.
+    func createSection(listId: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult
+    func renameSection(sectionId: String, name: String) async throws -> PrivateResult
+    func deleteSection(sectionId: String) async throws -> PrivateResult
 }

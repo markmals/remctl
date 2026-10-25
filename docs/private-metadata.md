@@ -61,6 +61,7 @@ remctl edit 23880 --early-reminder clear
 - `--section NAME` resolves by name inside the target list. If duplicate section names exist, RemCTL uses the only non-empty matching section when there is exactly one; if it remains ambiguous, the command fails before writing and prints the available stable IDs.
 - `--section-id ID` assigns to an exact section by its stable identifier.
 - `--new-section NAME` creates a section and assigns to it. The list's existing section IDs are sent with the request and the new section is appended to them, so creating a section keeps the current section order instead of replacing it.
+- `section-create`, `section-rename`, and `section-delete` manage a list's sections directly (ReminderKit `create_section`/`rename_section`/`delete_section`). Duplicate names within the list are refused before writing; a new section is appended to the list's persisted section order; deleting one leaves its reminders in the list, unsectioned. Each write is read back from the store before it is reported (`verified: true`).
 
 ### Assignments
 

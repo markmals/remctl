@@ -28,10 +28,12 @@ public struct JSONOnlyOptions: ParsableArguments {
     public func ansi() -> Ansi { Ansi.resolve(noColorFlag: noColor) }
 }
 
-/// A command-level validation error → printed as "Error: <message>" with exit code 1.
+/// A command-level validation error → printed as "Error: <message>" with exit code 1. `code` is
+/// the stable identifier commands following the JSON error convention report under `--json`.
 public struct CLIError: Error, CustomStringConvertible {
     public let message: String
-    public init(_ m: String) { self.message = m }
+    public let code: String?
+    public init(_ m: String, code: String? = nil) { self.message = m; self.code = code }
     public var description: String { message }
 }
 

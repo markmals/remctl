@@ -35,6 +35,7 @@
 - (id)updateAccount:(id)account;
 - (id)updateReminder:(id)reminder;
 - (id)updateList:(id)list;
+- (id)updateListSection:(id)section;
 - (id)updateSmartList:(id)smartList;
 - (id)updateTemplate:(id)templateObject;
 - (id)_copyReminder:(id)reminder toListChangeItem:(id)listChangeItem;
@@ -196,6 +197,8 @@
 
 @interface REMListSectionChangeItem : NSObject
 - (id)remObjectID;
+- (void)setDisplayName:(NSString *)displayName;
+- (void)removeFromList;
 @end
 
 @interface REMListSectionContextChangeItem : NSObject
@@ -736,6 +739,124 @@ static NSArray<NSDictionary *> *subtaskSpecArray(NSDictionary *cmd, NSString **o
     return result;
 }
 
+#pragma mark - List sections (upstream c0db904)
+
+static NSString *objectURLString(id objectID) {
+    if (!objectID || ![objectID respondsToSelector:@selector(urlRepresentation)]) return @"";
+    return [[objectID urlRepresentation] absoluteString] ?: @"";
+}
+
+static NSDictionary *createSection(NSDictionary *cmd) {
+    NSString *listID = cmd[@"listId"];
+    NSString *name = cmd[@"name"];
+    if (![listID isKindOfClass:[NSString class]] || listID.length == 0) { RKP_FAIL(@"listId is required"); }
+    if (![name isKindOfClass:[NSString class]] || name.length == 0) { RKP_FAIL(@"name is required"); }
+    id listObjectID = [REMObjectID objectIDWithURL:listURL(listID)];
+    if (!listObjectID) { RKP_FAIL(@"Could not build ReminderKit list object ID"); }
+    NSError *error = nil;
+    REMStore *store = [REMStore new];
+    id list = [store fetchListWithObjectID:listObjectID error:&error];
+    if (!list) { RKP_FAIL(error.localizedDescription ?: @"List not found"); }
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    if (![save respondsToSelector:@selector(addListSectionWithDisplayName:toListSectionContextChangeItem:)]) {
+        RKP_FAIL(@"ReminderKit section creation is unavailable on this macOS version");
+    }
+    id listChange = [save updateList:list];
+    if (!listChange || ![listChange respondsToSelector:@selector(sectionsContextChangeItem)]) {
+        RKP_FAIL(@"ReminderKit list change item does not support sections");
+    }
+    id sectionContext = [listChange sectionsContextChangeItem];
+    if (!sectionContext
+        || ![sectionContext respondsToSelector:@selector(setUnsavedSectionIDsOrdering:)]
+        || ![sectionContext respondsToSelector:@selector(setShouldUpdateSectionsOrdering:)]) {
+        RKP_FAIL(@"ReminderKit section context unavailable");
+    }
+    id sectionChange = [save addListSectionWithDisplayName:name toListSectionContextChangeItem:sectionContext];
+    id sectionObjectID = [sectionChange respondsToSelector:@selector(remObjectID)] ? [sectionChange remObjectID] : nil;
+    if (!sectionObjectID) { RKP_FAIL(@"Could not create section object ID"); }
+    // Reminders replaces the whole ordering, so the list's current order rides along.
+    NSMutableArray *ordering = [NSMutableArray arrayWithArray:sectionObjectIDsFromStrings(cmd[@"existingSectionIds"])];
+    [ordering addObject:sectionObjectID];
+    [sectionContext setUnsavedSectionIDsOrdering:ordering];
+    [sectionContext setShouldUpdateSectionsOrdering:YES];
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit section create failed");
+    }
+    return @{
+        @"status": @"created",
+        @"action": @"create_section",
+        @"listId": listID,
+        @"name": name,
+        @"sectionId": objectUUIDString(sectionObjectID),
+        @"sectionURL": objectURLString(sectionObjectID),
+    };
+}
+
+/// The change item for an existing list section, or nil with *outError set.
+static REMListSectionChangeItem *listSectionChange(REMStore *store, REMSaveRequest *save, NSString *sectionID, NSString **outError) {
+    id sectionObjectID = [REMObjectID objectIDWithURL:sectionURL(sectionID)];
+    if (!sectionObjectID) {
+        *outError = @"Could not build ReminderKit section object ID";
+        return nil;
+    }
+    if (![store respondsToSelector:@selector(fetchListSectionWithObjectID:error:)]
+        || ![save respondsToSelector:@selector(updateListSection:)]) {
+        *outError = @"ReminderKit section editing is unavailable on this macOS version";
+        return nil;
+    }
+    NSError *error = nil;
+    id section = [store fetchListSectionWithObjectID:sectionObjectID error:&error];
+    if (!section) {
+        *outError = error.localizedDescription ?: @"Section not found";
+        return nil;
+    }
+    REMListSectionChangeItem *change = [save updateListSection:section];
+    if (!change) {
+        *outError = @"Could not create ReminderKit section change item";
+    }
+    return change;
+}
+
+static NSDictionary *renameSection(NSDictionary *cmd) {
+    NSString *sectionID = cmd[@"sectionId"];
+    NSString *name = cmd[@"name"];
+    if (![sectionID isKindOfClass:[NSString class]] || sectionID.length == 0) { RKP_FAIL(@"sectionId is required"); }
+    if (![name isKindOfClass:[NSString class]] || name.length == 0) { RKP_FAIL(@"name is required"); }
+    REMStore *store = [REMStore new];
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    NSString *changeError = nil;
+    REMListSectionChangeItem *change = listSectionChange(store, save, sectionID, &changeError);
+    if (!change) { RKP_FAIL(changeError); }
+    if (![change respondsToSelector:@selector(setDisplayName:)]) {
+        RKP_FAIL(@"ReminderKit section change item does not support rename");
+    }
+    [change setDisplayName:name];
+    NSError *error = nil;
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit section rename failed");
+    }
+    return @{@"status": @"updated", @"action": @"rename_section", @"sectionId": sectionID, @"name": name};
+}
+
+static NSDictionary *deleteSection(NSDictionary *cmd) {
+    NSString *sectionID = cmd[@"sectionId"];
+    if (![sectionID isKindOfClass:[NSString class]] || sectionID.length == 0) { RKP_FAIL(@"sectionId is required"); }
+    REMStore *store = [REMStore new];
+    REMSaveRequest *save = [[REMSaveRequest alloc] initWithStore:store];
+    NSString *changeError = nil;
+    REMListSectionChangeItem *change = listSectionChange(store, save, sectionID, &changeError);
+    if (!change) { RKP_FAIL(changeError); }
+    if (![change respondsToSelector:@selector(removeFromList)]) {
+        RKP_FAIL(@"ReminderKit section change item does not support delete");
+    }
+    [change removeFromList];
+    NSError *error = nil;
+    if (![save saveSynchronouslyWithError:&error]) {
+        RKP_FAIL(error.localizedDescription ?: @"ReminderKit section delete failed");
+    }
+    return @{@"status": @"deleted", @"action": @"delete_section", @"sectionId": sectionID};
+}
+
 #pragma mark - Dispatch
 
 NSDictionary *RKPDispatch(NSDictionary *request) {
@@ -761,6 +882,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
                 @"set_early_reminder",
                 @"add_location_alarm",
                 @"create_list",
+                @"create_section",
+                @"rename_section",
+                @"delete_section",
                 @"set_list_appearance",
                 @"set_list_pinned",
                 @"set_smart_list_pinned",
@@ -778,6 +902,9 @@ NSDictionary *RKPDispatch(NSDictionary *request) {
             }
 
             NSError *error = nil;
+            if ([action isEqualToString:@"create_section"]) { return createSection(cmd); }
+            if ([action isEqualToString:@"rename_section"]) { return renameSection(cmd); }
+            if ([action isEqualToString:@"delete_section"]) { return deleteSection(cmd); }
 
             if ([action isEqualToString:@"create_list"]) {
                 NSString *name = cmd[@"name"];

@@ -41,6 +41,9 @@ _remctl() {
         'subtasks:Show subtasks'
         'info:Full detail view'
         'sections:Show sections'
+        'section-create:Create a section in a list'
+        'section-rename:Rename a section in a list'
+        'section-delete:Delete a section in a list'
         'sharees:Show people available for assignment in a shared list'
         'stats:Statistics'
         'link:Get deep links'
@@ -351,6 +354,31 @@ _remctl() {
                 '--json[JSON output]'
             return
             ;;
+        section-create)
+            _arguments \
+                '(-l --list)'{-l,--list}'[Target list]:list:' \
+                '--list-id[Target list by stable numeric ID]:id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        section-rename)
+            _arguments \
+                '--new-name[New section name]:name:' \
+                '(-l --list)'{-l,--list}'[Section list]:list:' \
+                '--list-id[Section list by stable numeric ID]:id:' \
+                '--section-id[Target section by stable ID]:section-id:' \
+                '--json[JSON output]'
+            return
+            ;;
+        section-delete)
+            _arguments \
+                '(-l --list)'{-l,--list}'[Section list]:list:' \
+                '--list-id[Section list by stable numeric ID]:id:' \
+                '--section-id[Target section by stable ID]:section-id:' \
+                '--force[Skip confirmation prompt]' \
+                '--json[JSON output]'
+            return
+            ;;
     esac
     _describe 'command' commands
 }
@@ -363,7 +391,7 @@ _remctl() {
     local cur prev commands
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections sharees stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
+    commands="lists smart-lists templates template-info show add done undone edit delete search today upcoming overdue flagged urgent flag unflag tags subtasks info sections section-create section-rename section-delete sharees stats link open export import list-symbols list-create smart-list-create smart-list-edit smart-list-delete template-create template-apply template-delete list-edit list-pin list-unpin list-rename list-delete onboard doctor setup permissions completion"
 
     local cmd="${COMP_WORDS[1]}"
     if [ "$cmd" = "add" ]; then
@@ -441,6 +469,15 @@ _remctl() {
     elif [ "$cmd" = "list-delete" ]; then
         COMPREPLY=( $(compgen -W "--list-id --force --json" -- "$cur") )
         return
+    elif [ "$cmd" = "section-create" ]; then
+        COMPREPLY=( $(compgen -W "--list -l --list-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "section-rename" ]; then
+        COMPREPLY=( $(compgen -W "--new-name --list -l --list-id --section-id --json" -- "$cur") )
+        return
+    elif [ "$cmd" = "section-delete" ]; then
+        COMPREPLY=( $(compgen -W "--list -l --list-id --section-id --force --json" -- "$cur") )
+        return
     elif [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
     fi
@@ -473,6 +510,9 @@ complete -c remctl -n "__fish_use_subcommand" -a tags -d "List all tags"
 complete -c remctl -n "__fish_use_subcommand" -a subtasks -d "Show subtasks"
 complete -c remctl -n "__fish_use_subcommand" -a info -d "Full detail view"
 complete -c remctl -n "__fish_use_subcommand" -a sections -d "Show sections"
+complete -c remctl -n "__fish_use_subcommand" -a section-create -d "Create a section in a list"
+complete -c remctl -n "__fish_use_subcommand" -a section-rename -d "Rename a section in a list"
+complete -c remctl -n "__fish_use_subcommand" -a section-delete -d "Delete a section in a list"
 complete -c remctl -n "__fish_use_subcommand" -a sharees -d "Show people available for assignment in a shared list"
 complete -c remctl -n "__fish_use_subcommand" -a stats -d "Statistics"
 complete -c remctl -n "__fish_use_subcommand" -a link -d "Get deep links"
@@ -587,6 +627,19 @@ complete -c remctl -n "__fish_seen_subcommand_from list-rename" -l list-id -d "R
 complete -c remctl -n "__fish_seen_subcommand_from list-rename" -l new-name -d "New list name" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-delete" -l list-id -d "Delete list by stable numeric ID" -r
 complete -c remctl -n "__fish_seen_subcommand_from list-delete" -l force -d "Skip confirmation prompt"
+complete -c remctl -n "__fish_seen_subcommand_from section-create" -s l -l list -d "Target list" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-create" -l list-id -d "Target list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-create" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from section-rename" -l new-name -d "New section name" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-rename" -s l -l list -d "Section list" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-rename" -l list-id -d "Section list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-rename" -l section-id -d "Target section by stable ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-rename" -l json -d "JSON output"
+complete -c remctl -n "__fish_seen_subcommand_from section-delete" -s l -l list -d "Section list" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l list-id -d "Section list by stable numeric ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l section-id -d "Target section by stable ID" -r
+complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l force -d "Skip confirmation prompt"
+complete -c remctl -n "__fish_seen_subcommand_from section-delete" -l json -d "JSON output"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l private -d "Use unsupported private ReminderKit metadata writes"
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section -d "Assign to existing section" -r
 complete -c remctl -n "__fish_seen_subcommand_from add" -l section-id -d "Assign to section by stable ID" -r

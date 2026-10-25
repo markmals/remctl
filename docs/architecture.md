@@ -130,6 +130,8 @@ Private writes cover the parts of Reminders that EventKit does not:
 
 - **Reminder metadata:** synced web rich links, synced tags, sections, rich
   subtasks, image attachments, the real flag, urgent state, and Early Reminders.
+- **Sections:** create, rename, and delete a list's sections; every section write
+  is read back from the store before the command reports it.
 - **List metadata:** exact `#RRGGBB` colors, official list symbols, emoji
   badges, Groceries conversion/locale and item categorization, and list /
   smart-list pin state.

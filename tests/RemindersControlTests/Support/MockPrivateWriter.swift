@@ -26,6 +26,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
         case createTemplate(name: String, sourceListId: String, includeCompleted: Bool)
         case applyTemplate(templateId: String)
         case deleteTemplate(templateId: String)
+        case createSection(listId: String, name: String, existingSectionIds: [String])
+        case renameSection(sectionId: String, name: String)
+        case deleteSection(sectionId: String)
     }
     private(set) var calls: [Call] = []
     var result = PrivateResult(status: "updated")
@@ -42,6 +45,9 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     /// fan-out (the partial-failure path) while the earlier steps still succeed.
     var urgentResult: PrivateResult?
     var throwError: Error?
+    /// Runs after each call is recorded, so a test can apply the write to its fixture store and
+    /// let the command's readback verification see it.
+    var onCall: ((Call) -> Void)?
 
     private func resultOr(_ status: String) throws -> PrivateResult {
         if let e = throwError { throw e }
@@ -71,4 +77,14 @@ final class MockPrivateWriter: PrivateWriter, @unchecked Sendable {
     func createTemplate(name: String, sourceListId: String, includeCompleted: Bool) async throws -> PrivateResult { calls.append(.createTemplate(name: name, sourceListId: sourceListId, includeCompleted: includeCompleted)); return try resultOr("created") }
     func applyTemplate(templateId: String) async throws -> PrivateResult { calls.append(.applyTemplate(templateId: templateId)); return try resultOr("updated") }
     func deleteTemplate(templateId: String) async throws -> PrivateResult { calls.append(.deleteTemplate(templateId: templateId)); return try resultOr("deleted") }
+    func createSection(listId: String, name: String, existingSectionIds: [String]) async throws -> PrivateResult { try record(.createSection(listId: listId, name: name, existingSectionIds: existingSectionIds)) }
+    func renameSection(sectionId: String, name: String) async throws -> PrivateResult { try record(.renameSection(sectionId: sectionId, name: name)) }
+    func deleteSection(sectionId: String) async throws -> PrivateResult { try record(.deleteSection(sectionId: sectionId)) }
+
+    private func record(_ call: Call) throws -> PrivateResult {
+        calls.append(call)
+        if let e = throwError { throw e }
+        onCall?(call)
+        return result
+    }
 }

@@ -88,13 +88,11 @@ public enum PrivateChanges {
         }
 
         // 3. add_section_and_assign — create a section by name and assign this reminder to it. The
-        //    list's current section CKIDs ride along so the helper appends instead of replacing the
+        //    list's current section order rides along so the helper appends instead of replacing the
         //    whole ordering (upstream ac73ea8).
         if let newSection {
             let sectionListPk = listPk ?? store.reminder(identifier: reminderCkid)?.int("ZLIST")
-            let existingSectionIds = sectionListPk.map { pk in
-                store.sections(listPk: pk).compactMap { $0.string("ZCKIDENTIFIER") }.filter { !$0.isEmpty }
-            } ?? []
+            let existingSectionIds = sectionListPk.map { store.sectionOrder(listPk: $0) } ?? []
             results.append(try step("add_section_and_assign", await p.addSectionAndAssign(
                 id: reminderCkid, name: newSection, existingSectionIds: existingSectionIds)))
         }

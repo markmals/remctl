@@ -27,6 +27,7 @@ EventKit (public) and ReminderKit (private metadata) both run in-process; there 
 | Move a reminder to another list | `edit <id> -l LIST` or `edit <id> --list-id ID` | `info <id> --json` or `show <destination> --json` |
 | Synced rich URL, synced tags, section, shared-list assignment, subtask, image, real flag, urgent, Early Reminder, location alarm | `add`/`edit` with `--url`, `-t`, `--section`, `--assign`/`--unassign`, `--subtask`, `--image`, `--flagged`, `--urgent`, `--early-reminder`, `--location-*` | `info <id> --json`; UI/device check when sync matters |
 | List appearance, Groceries metadata, list/smart-list pin | `list-create`, `list-edit`, `list-pin`, `list-unpin` | `lists --json` (color/badge/Groceries/pin); `smart-lists --json` (smart-list appearance/pin) |
+| Create, rename, delete a list's sections | `section-create NAME -l LIST`, `section-rename NAME --new-name NEW -l LIST`, `section-delete NAME -l LIST --force` (or `--section-id`) | `sections --json`; each write already reports `verified: true` |
 | Custom smart list create/edit/delete | `smart-list-create`, `smart-list-edit`, `smart-list-delete` | `smart-lists --json` |
 | Saved Reminders templates | `templates`, `template-info`, `template-create`, `template-apply`, `template-delete` | `templates --json`, `template-info`, then `show <new list> --json` after apply |
 

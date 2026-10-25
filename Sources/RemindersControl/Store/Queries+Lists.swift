@@ -382,22 +382,25 @@ public func resolveRequiredListTarget(store: RemindersStore, name: String?, list
     -> (id: Int, title: String, objectUUID: String?, isGroup: Bool)
 {
     if name == nil && listId == nil {
-        throw CLIError("pass a list name or --list-id.")
+        throw CLIError("pass a list name or --list-id.", code: "invalid_list_target")
     }
     if name != nil && listId != nil {
-        throw CLIError("pass either a list name or --list-id, not both.")
+        throw CLIError("pass either a list name or --list-id, not both.", code: "invalid_list_target")
     }
     let requested = listId != nil ? "id \(listId!)" : (name ?? "")
     switch store.resolveListRef(name: name, listId: listId) {
     case .found(let id, let title, let uuid):
         return (id, title, uuid, false)
     case .group(let id, let title, let uuid, let children):
-        guard allowGroups else { throw CLIError(listIsGroupMessage(title: title, children: children)) }
+        guard allowGroups else {
+            throw CLIError(listIsGroupMessage(title: title, children: children), code: "list_is_group")
+        }
         return (id, title, uuid, true)
     case .ambiguous(let candidates):
         let options = candidates.map { "\($0.id) (\($0.title))" }.joined(separator: ", ")
-        throw CLIError("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)")
+        throw CLIError("multiple lists match '\(requested)'. Use the exact list name or --list-id with one of: \(options)",
+                       code: "list_ambiguous")
     case .notFound:
-        throw CLIError("list not found: \(requested)")
+        throw CLIError("list not found: \(requested)", code: "list_not_found")
     }
 }

@@ -13,7 +13,7 @@ Run `remctl --help` for the parser-generated overview and `remctl <command> --he
 - **Exit codes:** argument-parse errors (unknown flag, bad choice, missing argument) exit `64` (Swift Argument Parser's `EX_USAGE`). In-command validation errors (e.g. an unparseable due date) exit `1`/`2`.
 - **Atomic validation:** if `-d/--due`, `--recurrence`, `--alarm`, `--priority`, or a location payload is present and cannot be validated, the command fails *before* creating or editing anything. With `--json`, an invalid due date emits a structured `invalid_due_date` error on stderr with accepted examples — retry with a corrected value rather than creating then patching. `import` validates the whole file the same way (structured `invalid_import`) before its first write.
 - **Refusals Reminders would reject:** a relative alarm (`15m`, `1h`, `1d`) needs a due date to count back from, so `add`/`edit` refuse one when the reminder would have none (`relative_alarm_requires_due_date`), and `edit -d clear` on a repeating reminder is refused before any write (`repeating_reminder_requires_due_date`) unless the same edit also passes `--recurrence clear`. Both exit `1` and emit the structured code on stderr under `--json`.
-- **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
+- **Destructive commands need `--force` when nobody can answer:** `delete`, `list-delete`, `section-delete`, `smart-list-delete`, and `template-delete` prompt on stderr only when stdin is a terminal and `--json` is off. With `--json`, or with a piped/redirected stdin, they refuse instead of blocking — exit `1`, `{"status":"error","code":"confirmation_required",…}` on stderr, nothing written. Pass `--force` to proceed.
 
 ---
 
@@ -334,6 +334,15 @@ Delete a list (by name or `--list-id`); `--force` skips confirmation (and is req
 ```bash
 remctl list-delete "Project Y" --force
 remctl list-delete --list-id 144 --force
+```
+
+### `section-create <name>` / `section-rename [NAME]` / `section-delete [NAME]`
+Create, rename, or delete a section in one list, named with `-l/--list` or `--list-id` (list groups are refused). `section-rename` takes `--new-name`; rename and delete target the section by name or `--section-id` (as `--section`/`--section-id` resolve on `add`/`edit`). A name another section of the list already uses (compared case-insensitively) is refused before writing (`section_exists`). A new section is appended to the list's current section order, so creating one keeps the order Reminders shows. Deleting a section keeps its reminders in the list, unsectioned; `--force` skips confirmation (and is required with `--json` or a non-interactive stdin). Every write is read back from the store and reported with `verified: true`; if the store never shows it, the command fails with `section_write_unverified`. Under `--json`, errors are structured on stderr (`list_not_found`, `list_is_group`, `section_not_found`, `section_exists`, `private_write_failed`, …).
+```bash
+remctl section-create "Research" -l Projects --json
+remctl section-rename "Research" --new-name "Reading" -l Projects
+remctl section-rename --section-id DCD255E2-7CF5-4B45-9566-3F9A5D84AFA8 --new-name "Reading" --list-id 153
+remctl section-delete "Reading" -l Projects --force --json
 ```
 
 ### `list-symbols`
